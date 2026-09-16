@@ -5,6 +5,14 @@ a local run. It reads authorized projections of a stored world; it does not own
 economic mutation, bypass the ledger, or turn private provider/event payloads
 into display data.
 
+City evidence now includes historical household and public bank inspectors in
+the Keyboard explorer. A person's **Inspect household** button opens recorded
+core membership and the selected day's child needs; selecting a member returns
+to that person on the map. Household selection remains intact when a prior day
+has no visible record. Banks show public status at that day. See the
+[city society lens contract](plans/2026-09-07-city-society-lenses.md) for partial
+visibility, care/purchase meanings and supported fields.
+
 ![World Pulse live briefing in Civic Atlas](images/civic-atlas-world-pulse.png)
 
 ## Start with the safe profile
@@ -42,24 +50,45 @@ Atlas flow; the second group contains deeper evidence surfaces.
 | Destination | Route | Use |
 |---|---|---|
 | Pulse | `/runs/:runId/overview` | Read the briefing, regional atlas, ledger invariant, and ranked committed events |
-| City | `/runs/:runId/live-city` | Explore **The recorded day** in the full-screen city renderer |
+| City | `/runs/:runId/world` | Explore Atlas, Diorama, recorded day and the public-object list with one inspector |
 | People | `/runs/:runId/people` | Inspect Living Agents, journeys, projects, and evidence classes |
 | Commons | `/runs/:runId/commons` | Read the public information economy |
 | Evidence Lab | `/runs/:runId/investigations` | Trace committed events and maintain authorized investigation records |
-| City evidence | `/runs/:runId/world` | Inspect agents, places, construction, and the embedded Atlas/2.5D evidence controls |
+| Legacy City link | `/runs/:runId/live-city` | Redirect to the unified City's recorded-day view with observer context preserved |
 | Institutions | `/runs/:runId/organizations` | Filter firms and public organizations and inspect typed records |
 | Markets | `/runs/:runId/markets` | Inspect orders, trades, FX, and circuit-breaker evidence |
 | Politics & Law | `/runs/:runId/politics-law` | Inspect legislation, lobbying, legal records, and M&A |
 | Communications | `/runs/:runId/news-communications` | Use ordinary, agent-scoped, or authorized truth views |
 | Experiments | `/runs/:runId/experiments` | Inspect evidence, rehearsals, forecasts, campaigns, and inputs |
 
-**City** and **City evidence** are deliberately different. City is a
-full-screen recorded-world experience with its own chrome and a **Workspaces**
-return link. City evidence stays inside the World OS shell and provides the
-analytical Atlas/2.5D layers. Both read recorded projections.
+**City** now unifies the recorded-day and analytical views inside the World OS
+shell. Existing City links preserve observer context and open the recorded-day
+view. All renderers read the same admitted recorded projections.
+
+City evidence now also offers a searchable **List** of public objects, with
+40 records per page and the same selection/evidence sheet as the map. On desktop,
+the map fills at least 65% of the visible main workspace at the tested 1280×900
+and 1440×1000 sizes. Camera controls sit in the inspector; City details and
+instrumentation can be collapsed. Person/household and business/workplace
+breadcrumbs use the recorded public relationships.
+
+**Save observation** and **Save event bookmark** keep the displayed tick,
+selection, filters and camera in your separate local operator workspace. Up to
+20 observations are retained for each run and visibility context. Saving in
+live mode freezes the displayed tick; restoring never advances the simulation.
+On a concurrent-edit conflict, use **Reload observations** before saving again.
+See the [workspace navigation contract](plans/2026-09-07-city-workspace-navigation.md)
+for storage, privacy and failure behavior.
 
 The rail can collapse to icons and scrolls on narrow screens without removing
 destinations. **Classic Observatory** at the bottom returns to `/`.
+
+The **Experiments → Price studies** workspace supports reviewed scripted and
+configured decision-policy studies from fresh or explicitly selected saved
+worlds. Both price domains share the same comparison. Policy evidence retains
+model draws and the original provider allowance; launch and resume require
+deliberate operator actions. See the [price study workflow](research/price-lab.md)
+and [policy operator contract](plans/2026-09-07-policy-operator-workflow.md).
 
 ## Navigate and search
 
@@ -99,11 +128,11 @@ history useful without adding one entry per keystroke.
 | Workspace | Menus and selections | Canonical URL state |
 |---|---|---|
 | Pulse | Region and committed-event selection; Run, Pause, Step on a live authorized run | Shared `fork` and numeric `tick`; validated region/event focus |
-| City | Full-screen recorded day and Workspaces return | Selected run plus shared observer context when supplied |
+| City | Unified Atlas, Diorama, recorded day and public-object list | Selected run plus shared observer context and validated city view state |
 | People | Directory search, person selection, paging, project kind/status, project and evidence links | `q`, `project_kind`, `project_status`; `/people/:agentId`; optional `project` |
 | Commons | Chronological or Hot feed; causal-trace links | Chronological is the default with no `feed`; Hot uses `feed=hot` |
 | Evidence Lab | Investigation selection/create, graph/table selection, zoom, edit, pin, hypothesis, export, and navigation guards | Validated event/investigation focus plus shared cursor |
-| City evidence | Atlas/2.5D; All, Work, Comms, Markets, Civic, Health; Core, Everyone, Clusters; search, active-only, region/place/evidence selection | Validated `region`, `place`, agent/project/view selections plus shared cursor |
+| City evidence | Atlas/2.5D/recorded day/List; evidence layers, population, search, follow and selected-object inspector | Shared cursor; validated object selection, `view=list`, `camera`, `follow`, `layer`, `population`, `q`, `activeOnly`; bookmarks restore the same state |
 | Institutions | Search; type, sector, region, status, active-only; typed detail; contracts and disclosures | `q`, `type`, `sector`, `region`, `status`, `active=1`; `/organizations/:type/:id` |
 | Markets | Orders, Trades, FX, Circuit breakers; side and status filters | Default Orders omits `view`; other tabs use `view`; filters use `side` and `status` |
 | Politics & Law | Legislation, Lobbying, Legal, M&A | The enabled default omits `view`; other tabs use `view` |

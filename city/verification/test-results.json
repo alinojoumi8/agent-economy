@@ -1,0 +1,50 @@
+{
+  "full_python_suite": {
+    "passed": 1427,
+    "skipped": 7,
+    "failed_initially": 1,
+    "duration_seconds": 3698.16,
+    "failure": "test_noop_migration_covers_optional_verify_paths",
+    "cause": "Synthetic future migration19 collided with new actual migration19",
+    "resolution": "Use SCHEMA_VERSION + 1 for the synthetic migration",
+    "full_invocation_repeated": false
+  },
+  "final_regressions": {
+    "passed": 74,
+    "failed": 0,
+    "duration_seconds": 48.78,
+    "files": [
+      "tests/test_semantics8_migration_branches.py",
+      "tests/test_semantics8_foundations.py",
+      "tests/test_urban_development.py",
+      "tests/test_recorded_replay_golden.py",
+      "tests/test_documentation.py"
+    ]
+  },
+  "dashboard_unit": {
+    "passed": 143,
+    "failed": 0
+  },
+  "browser_original_full_suite": {
+    "passed": 57,
+    "failed": 0
+  },
+  "browser_expanded_city_suite": {
+    "passed": 9,
+    "failed": 0,
+    "overlaps_original_suite": true
+  },
+  "independent_review": {
+    "actionable_findings_remaining": 0,
+    "targeted_tests_passed": 7,
+    "invalid_event_pointer_cases_rejected": [
+      "wrong_event",
+      "dangling_id",
+      "boolean_id"
+    ]
+  },
+  "notes": [
+    "New replay and read-only fixes have additional focused regression evidence in verification.md.",
+    "Linux local execution; no Windows/macOS or integrated-GPU certification."
+  ]
+}

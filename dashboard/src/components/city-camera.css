@@ -1,0 +1,60 @@
+.city-camera {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .35rem;
+  min-width: 0;
+  margin: 0;
+  padding: .45rem .65rem;
+  border: 0;
+}
+.city-camera button, .city-follow button {
+  min-height: 36px;
+  min-width: 36px;
+  padding: .3rem .6rem;
+  border: 1px solid var(--ops-rule, #647887);
+  border-radius: 3px;
+  background: var(--ae-surface-2, #eef2f0);
+  color: var(--ae-text-hi, #12233f);
+  cursor: pointer;
+  font: inherit;
+  font-size: .75rem;
+}
+.city-camera button:disabled, .city-follow button:disabled { opacity: .5; cursor: default; }
+.city-camera button:focus-visible, .city-follow button:focus-visible { outline: 2px solid #d2a351; outline-offset: 2px; }
+.city-follow { display: flex; align-items: center; flex-wrap: wrap; gap: .6rem; padding: .35rem .65rem; font-size: .75rem; }
+.city-follow p { margin: 0; }
+.city-follow button[aria-pressed="true"] { border-color: #d2a351; }
+.city-atlas-viewport { position: absolute; inset: 0; overflow: hidden; cursor: grab; touch-action: pan-y; }
+.city-atlas-viewport:active { cursor: grabbing; }
+.city-atlas-plane { position: absolute; inset: 0; transform-origin: 0 0; }
+.city-atlas-plane .civic-city__agent,
+.city-atlas-plane .civic-city__firm,
+.city-atlas-plane .civic-city__place,
+.city-atlas-plane .civic-city__construction,
+.city-atlas-plane .civic-city__cluster {
+  transform: translate(-50%, -50%) scale(var(--city-camera-inverse));
+  transition: box-shadow 140ms ease;
+}
+/* A business owns the click when its workplace occupies the exact same pixel.
+   The keyboard explorer and business inspector expose both objects. */
+.city-atlas-plane .civic-city__place { pointer-events: auto; z-index: 2; }
+.city-atlas-plane .civic-city__place:is(:hover, :focus-visible, .is-selected) { z-index: 9; }
+.city-atlas-plane .civic-city__agent:is(:hover, .is-selected) {
+  transform: translate(-50%, -50%) scale(calc(var(--city-camera-inverse) * 1.28));
+}
+.city-atlas-plane .civic-city__district-label {
+  transform: scale(var(--city-camera-inverse)); transform-origin: top left;
+}
+.city-atlas-plane .civic-city__construction > span { display: none; }
+.city-atlas-plane .civic-city__construction:is(:hover, :focus-visible, .is-selected) > span { display: block; }
+.civic-city__map-field { overflow: hidden; }
+.recorded-day .live-city__field { transform-origin: 0 0; background: transparent; transition: none; }
+.recorded-day .live-city--embedded[data-beat="morning"] { background-color: var(--ae-city-sky-morning); }
+.recorded-day .live-city--embedded[data-beat="evening"] { background-color: var(--ae-city-sky-evening); }
+.recorded-day .live-city__lockon-plate,
+.recorded-day .live-city__territory { scale: var(--recorded-camera-inverse, 1); transform-origin: top left; }
+.recorded-day__follow-status { margin: .2rem .65rem; font-size: .75rem; }
+@media (max-width: 600px) {
+  .city-camera button, .city-follow button { min-height: 44px; min-width: 44px; }
+}

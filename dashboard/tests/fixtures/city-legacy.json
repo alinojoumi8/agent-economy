@@ -1,0 +1,108 @@
+{
+  "source_profile": "runs/base.yaml",
+  "provider": "scripted",
+  "capture_note": "Public projection from a fresh temporary provider-free run; rows truncated for adapter contract tests; no live secrets.",
+  "envelope": {
+    "run_id": "legacy-fixture",
+    "fork_id": null,
+    "tick": 0,
+    "semantics_version": 7,
+    "projection_version": 1,
+    "policy_version": 1,
+    "view_key": "ordinary-fixture",
+    "snapshot_version": "legacy-captured-tick0",
+    "event_cursor": 0,
+    "projection": "world.map",
+    "data": {
+      "regions": [],
+      "agents": [
+        {
+          "id": 1,
+          "name": "Governor Vale",
+          "role": "central_banker",
+          "occupation": "central banker",
+          "region_id": null,
+          "population_tier": "core",
+          "slot": null,
+          "place_id": null,
+          "place_name": null,
+          "x": null,
+          "y": null
+        },
+        {
+          "id": 2,
+          "name": "Officer 1",
+          "role": "credit_officer",
+          "occupation": "credit officer",
+          "region_id": null,
+          "population_tier": "core",
+          "slot": null,
+          "place_id": null,
+          "place_name": null,
+          "x": null,
+          "y": null
+        },
+        {
+          "id": 3,
+          "name": "Officer 2",
+          "role": "credit_officer",
+          "occupation": "credit officer",
+          "region_id": null,
+          "population_tier": "core",
+          "slot": null,
+          "place_id": null,
+          "place_name": null,
+          "x": null,
+          "y": null
+        },
+        {
+          "id": 4,
+          "name": "Editor The Ledger",
+          "role": "editor",
+          "occupation": "editor",
+          "region_id": null,
+          "population_tier": "core",
+          "slot": null,
+          "place_id": null,
+          "place_name": null,
+          "x": null,
+          "y": null
+        }
+      ],
+      "population_mode": "all",
+      "population_summary": {
+        "total": 107,
+        "core": 107,
+        "periphery": 0,
+        "rendered_agents": 107,
+        "clustered_agents": 0
+      },
+      "organizations": [
+        {
+          "id": 1,
+          "name": "Food Co 1",
+          "sector": "food",
+          "status": "listed",
+          "region_id": null,
+          "place_id": null,
+          "place_name": null,
+          "x": null,
+          "y": null
+        },
+        {
+          "id": 2,
+          "name": "Retail Co 2",
+          "sector": "retail",
+          "status": "listed",
+          "region_id": null,
+          "place_id": null,
+          "place_name": null,
+          "x": null,
+          "y": null
+        }
+      ],
+      "places": [],
+      "presence": []
+    }
+  }
+}

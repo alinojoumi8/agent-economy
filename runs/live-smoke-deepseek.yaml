@@ -1,4 +1,4 @@
-# Small, paid, bounded DeepSeek V4 Flash profile for the same acceptance
+# Small, paid, bounded DeepSeek V4.1 Flash profile for the same acceptance
 # mechanics as live-smoke.yaml. Every model-eligible call is fail-closed to the
 # official DeepSeek endpoint and exact model identifier.
 extends: live-smoke.yaml
@@ -19,16 +19,16 @@ llm:
         # Non-thinking mode avoids multi-turn reasoning-content replay while
         # preserving the JSON action contract used by the simulation.
         thinking: {type: disabled}
-  route_contract: {provider: deepseek, model: deepseek-v4-flash}
-  default_route: {provider: deepseek, model: deepseek-v4-flash}
+  route_contract: {provider: deepseek, model: deepseek-flash}
+  default_route: {provider: deepseek, model: deepseek-flash}
   routes:
-    citizen:        {provider: deepseek, model: deepseek-v4-flash}
-    founder:        {provider: deepseek, model: deepseek-v4-flash}
-    central_banker: {provider: deepseek, model: deepseek-v4-flash}
-    credit_officer: {provider: deepseek, model: deepseek-v4-flash}
-    reporter:       {provider: deepseek, model: deepseek-v4-flash}
-    editor:         {provider: deepseek, model: deepseek-v4-flash}
-    vc_partner:     {provider: deepseek, model: deepseek-v4-flash}
-    oracle:         {provider: deepseek, model: deepseek-v4-flash}
+    citizen:        {provider: deepseek, model: deepseek-flash}
+    founder:        {provider: deepseek, model: deepseek-flash}
+    central_banker: {provider: deepseek, model: deepseek-flash}
+    credit_officer: {provider: deepseek, model: deepseek-flash}
+    reporter:       {provider: deepseek, model: deepseek-flash}
+    editor:         {provider: deepseek, model: deepseek-flash}
+    vc_partner:     {provider: deepseek, model: deepseek-flash}
+    oracle:         {provider: deepseek, model: deepseek-flash}
   pricing:
-    deepseek-v4-flash: {in: 0.14, out: 0.28, cache: 0.0028}
+    deepseek-flash: {in: 0.30, out: 1.20, cache: 0.006}

@@ -7,9 +7,14 @@ from typing import Any
 from .activity import ActivityFact, project_activity
 from .workspaces import _agent_regions_at, _balances_as_of, _dicts
 from .construction import (
+    _public_person,
     construction_projects_as_of,
     construction_projects_for_agent,
+    hidden_home_place_ids,
 )
+from engine.project_rights import interests_at
+from engine.population_history import ResidenceHistory, ResidenceError
+from .population import PopulationProjectionError, population_at, population_counts, cash_by_person_at
 
 
 PROJECT_KINDS = frozenset({
@@ -23,7 +28,7 @@ PROJECT_KINDS = frozenset({
     "public_output",
     "construction",
 })
-PROJECT_STATUSES = frozenset({"active", "completed", "cancelled"})
+PROJECT_STATUSES = frozenset({"active", "completed", "cancelled", "paused"})
 
 
 def _evidence(kind: str, record_id: int | str, tick: int) -> dict[str, Any]:
@@ -110,18 +115,22 @@ def _living_state(
     runtime: list[dict[str, Any]] | None,
 ) -> dict[str, Any]:
     tick = int(as_of_tick)
+    cohort = population_at(store, tick)
+    all_construction = construction_projects_as_of(store, as_of_tick=tick)
+    hidden_homes = hidden_home_place_ids(store, tick, all_construction)
     regions = {
         int(row["id"]): {"id": int(row["id"]), "name": str(row["name"])}
         for row in store.query("SELECT id,name FROM regions ORDER BY id")
     }
     agent_rows = _dicts(store.query(
         "SELECT id,name,kind,role,occupation,population_tier,pinned_core,"
-        "arrived_tick,died_tick,checking_account_id,savings_account_id "
+        "arrived_tick,died_tick,region_id,checking_account_id,savings_account_id "
         "FROM agents WHERE arrived_tick<=? AND (died_tick IS NULL OR died_tick>?) "
         "ORDER BY id", (tick, tick)))
     if agent_id is not None:
         agent_rows = [row for row in agent_rows if int(row["id"]) == int(agent_id)]
-    region_ids = _agent_regions_at(store, agent_rows, tick)
+    region_ids = _agent_regions_at(store, agent_rows, tick, population=cohort)
+    historical_cash = cash_by_person_at(store, tick) if cohort is not None else None
     agent_ids = {int(row["id"]) for row in agent_rows}
     balances = _balances_as_of(
         store,
@@ -302,13 +311,18 @@ def _living_state(
         aid = int(row["agent_id"])
         if aid not in agent_ids:
             continue
-        completed_tick = (
+        raw_status = str(row["status"])
+        # ``completed_tick`` is also stamped on rejected migrations (the tick the
+        # request was refused), so only a ``completed`` row is an arrival.
+        settled_tick = (
             int(row["completed_tick"])
             if row["completed_tick"] is not None and int(row["completed_tick"]) <= tick
             else None
         )
-        raw_status = str(row["status"])
-        cancelled = completed_tick is None and raw_status in {"cancelled", "rejected", "failed"}
+        completed_tick = settled_tick if raw_status == "completed" else None
+        cancelled = raw_status in {"cancelled", "rejected", "failed"} and (
+            row["completed_tick"] is None or settled_tick is not None
+        )
         status = "completed" if completed_tick is not None else "cancelled" if cancelled else "active"
         stage = "arrived" if completed_tick is not None else "cancelled" if cancelled else "requested"
         requested = int(row["requested_tick"])
@@ -323,7 +337,7 @@ def _living_state(
             project_id=pid, kind="migration",
             title=f"Migration to {destination['name'] if destination else 'another region'}",
             owner_agent_id=aid, stage=stage, status=status, started_tick=requested,
-            updated_tick=completed_tick or requested, completed_tick=completed_tick,
+            updated_tick=settled_tick or requested, completed_tick=completed_tick,
             milestone_count=len(refs), evidence_refs=refs, region=destination,
             metrics={"origin_region": origin},
         ))
@@ -343,6 +357,8 @@ def _living_state(
         tuple[str, int | None], list[dict[str, Any]]
     ] = defaultdict(list)
     for (aid, source_type), row in latest_leases.items():
+        if row["place_id"] in hidden_homes:
+            continue
         agent = agents_by_id[aid]
         core = (
             str(agent.get("population_tier") or "") == "core"
@@ -438,9 +454,11 @@ def _living_state(
 
     # Civic case records include confidential application details. Ordinary
     # observers receive only region/stage aggregates and no applicant linkage.
+    # A single citizen's journey lists only that citizen's own work; the
+    # region-wide permit aggregates belong to the population view alone.
     case_rows = _dicts(store.query(
         "SELECT region_id,created_tick,submitted_tick,decided_tick FROM service_cases "
-        "WHERE created_tick<=? ORDER BY created_tick,id", (tick,)))
+        "WHERE created_tick<=? ORDER BY created_tick,id", (tick,))) if agent_id is None else []
     case_groups: dict[tuple[int | None, str], list[dict[str, Any]]] = defaultdict(list)
     for row in case_rows:
         decided = row["decided_tick"] is not None and int(row["decided_tick"]) <= tick
@@ -478,9 +496,9 @@ def _living_state(
 
     construction = (
         construction_projects_for_agent(
-            store, agent_id=int(agent_id), as_of_tick=tick)
+            store, agent_id=int(agent_id), as_of_tick=tick, visible_projects=all_construction)
         if agent_id is not None
-        else construction_projects_as_of(store, as_of_tick=tick)
+        else all_construction
     )
     for item in construction:
         pid = f"construction:{item['project_id']}"
@@ -490,6 +508,10 @@ def _living_state(
             int(item["initiator_agent_id"])
             if item.get("initiator_agent_id") is not None else None
         )
+        ownership = item.get("ownership")
+        if ownership is not None:
+            # A shared title is not the original initiator's current property.
+            owner_agent_id = int(owner["id"]) if owner.get("type") == "agent" else None
         status_value = (
             str(item["status"])
             if item["status"] in {"completed", "cancelled"} else "active"
@@ -544,10 +566,19 @@ def _living_state(
                 else "committed"),
             privacy=str(item["privacy"]),
         ))
+        if ownership is not None:
+            projects[-1].update(ownership=ownership,
+                beneficial_owner_ids=[person["agent_id"] for person in ownership["owners"] if person["agent_id"] is not None],
+                steward_agent_id=ownership["operator"]["agent_id"] if ownership["operator"] is not None else None)
         for ordinal, milestone in enumerate(item.get("milestones") or []):
             ref = milestone.get("evidence_ref") or _evidence(
                 "construction_project", str(item["project_id"]),
                 int(milestone["tick"]))
+            milestone_owner = owner_agent_id
+            if ownership is not None:
+                owners_then = interests_at(store, int(item["project_id"]), int(milestone["tick"]), enabled=True)
+                candidate = owners_then[0]["agent_id"] if len(owners_then) == 1 else None
+                milestone_owner = candidate if _public_person(store, candidate, tick) is not None else None
             activities.append(_activity(
                 activity_id=(
                     f"construction:{item['project_id']}:"
@@ -556,13 +587,33 @@ def _living_state(
                 kind="construction",
                 stage=str(milestone["stage"]),
                 title=f"{item['name']}: {milestone['stage']}",
-                agent_id=owner_agent_id,
+                agent_id=milestone_owner,
                 project_id=pid,
                 source="committed",
                 evidence_ref=ref,
             ))
 
     latest_activity: dict[int, int] = defaultdict(int)
+    if cohort is not None:
+        for aid in agent_ids:
+            for record in store.query(
+                    'SELECT * FROM person_residence_events WHERE agent_id=? AND tick<=? ORDER BY event_id', (aid, tick)):
+                # Validate each displayed event, not just the final residence.
+                try:
+                    ResidenceHistory(store)._validate_record(record)
+                except (ResidenceError, ValueError, TypeError) as exc:
+                    raise PopulationProjectionError() from exc
+                activities.append(_activity(activity_id=f"population:{record['id']}",
+                    tick=record['tick'], kind='residence', stage=record['cause'],
+                    title=('Returned to the modeled economy' if record['cause'] == 'return' else
+                           'Departed the modeled economy' if record['cause'] == 'departure' else
+                           'Recorded as a resident'), agent_id=aid, source='committed',
+                    evidence_ref=_evidence('event', record['event_id'], record['tick'])))
+        for item in projects:
+            residence_state = cohort.get(item['owner_agent_id'], {}).get('state')
+            if (residence_state == 'outside' and item['status'] == 'active'
+                    and item['kind'] in {'skill', 'employment', 'residence', 'workplace', 'migration'}):
+                item.update(status='paused', stage='outside', source='derived')
     for item in activities:
         if item["agent_id"] is not None:
             aid = int(item["agent_id"])
@@ -581,7 +632,7 @@ def _living_state(
         workplace = active_leases.get((aid, "routine_work"))
 
         def projected_place(lease: dict[str, Any] | None) -> dict[str, Any] | None:
-            if lease is None:
+            if lease is None or lease["place_id"] in hidden_homes:
                 return None
             region = (
                 regions.get(int(lease["region_id"]))
@@ -664,6 +715,14 @@ def _living_state(
             aid, int(row["arrived_tick"])
         )
         row["runtime"] = runtime_map.get(aid)
+        if cohort is not None:
+            row['modeled_residence'] = cohort[aid]
+            row['cash_by_currency'] = historical_cash.get(aid, {})
+            # A single nominal total cannot represent cash in several currencies.
+            row['balance_cents'] = None
+            if cohort[aid]['state'] == 'outside':
+                row.update(employment=None, compute=None, residence=None, workplace=None, runtime=None)
+        row.pop('region_id', None)
         agents.append(row)
 
     agents.sort(key=lambda row: (
@@ -677,7 +736,9 @@ def _living_state(
     activities.sort(
         key=lambda row: (-int(row["tick"]), str(row["activity_id"]))
     )
-    return {"agents": agents, "projects": projects, "activities": activities}
+    selected_cohort = ({row['id']: cohort[row['id']] for row in agents} if cohort is not None else None)
+    return {"agents": agents, "projects": projects, "activities": activities,
+            'population_counts': population_counts(selected_cohort)}
 
 
 def build_living_agents_workspace(
@@ -715,6 +776,7 @@ def build_living_agents_workspace(
     )
     return {
         "summary": {
+            **state['population_counts'],
             "tick": int(as_of_tick),
             "living_agents": len(state["agents"]),
             "active_employments": sum(
@@ -791,6 +853,8 @@ def build_agent_journey(
             "died_tick": agent["died_tick"],
         },
         "current_state": {
+            **({key: agent[key] for key in ('modeled_residence', 'cash_by_currency')}
+               if 'modeled_residence' in agent else {}),
             "region": agent["region"],
             "employment": agent["employment"],
             "balance_cents": agent["balance_cents"],

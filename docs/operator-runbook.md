@@ -1,5 +1,10 @@
 # Operator runbook
 
+For Hostinger VPS with off-server SFTP backups, use the
+[Hostinger guide](hostinger-vps.md). The original S3/MinIO reference deployment
+below remains available. [Storage and recovery](storage-and-recovery.md) covers
+retention, memory preservation, local policy overrides and verified archives.
+
 ## Safe startup
 
 Run offline before using paid providers:
@@ -142,6 +147,12 @@ docker compose --env-file .env -f deploy/compose.yaml run --rm app snapshot-all 
 docker compose --env-file .env -f deploy/compose.yaml run --rm app verify-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
 docker compose --env-file .env -f deploy/compose.yaml run --rm app restore-snapshot --config /app/config/hosted.docker.yaml --tenant-id <TENANT_UUID> --run-id <RUN_UUID>
 ```
+
+`snapshot-all` attempts every active run before it reports: a run whose writer
+lease is held by a live supervisor is skipped, and the command exits non-zero
+with the list of skipped or failed runs only after the remaining runs have been
+published. The writer lease is renewed while a large database is being backed
+up, hashed, and uploaded.
 
 Restore refuses to overwrite an existing run unless `--replace` is explicit.
 Keep the privileged migration DSN out of the serving container, preserve

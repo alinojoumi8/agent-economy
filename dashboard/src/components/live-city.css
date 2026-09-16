@@ -1,12 +1,9 @@
 /*
- * LIVE CITY — the map is the page.
+ * RECORDED CITY — a presentation of one validated, committed city frame.
  *
  * Everything resolves from src/design/tokens.css; there is no raw hex here. The
- * field is fixed to the viewport rather than laid out inside a panel, because a
- * city inside a card reads as a chart of a city. Chrome floats on top of it in
- * translucent slabs, and the geography runs underneath them to the window edge —
- * while the projection's inset keeps every recorded point clear of the slabs, so
- * nothing is drawn where it cannot be seen.
+ * controls and evidence are in document flow. The isolated map stage reserves
+ * clearance for recorded points, de-collision offsets and labels.
  *
  * MOTION LIVES IN JS, NOT HERE. Chip position is a transform written by the
  * animation loop each frame. No CSS transition touches chip position: a
@@ -724,6 +721,37 @@
   opacity: .55;
 }
 
+/* ---- following by keyboard: the pin a click makes, with no pointer needed ---- */
+
+.live-city__follow {
+  display: grid;
+  gap: var(--ae-space-1);
+}
+
+.live-city__follow > span {
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  opacity: .55;
+}
+
+.live-city__follow select {
+  min-height: 28px;
+  width: 100%;
+  padding: 0 var(--ae-space-2);
+  border-radius: var(--ae-radius-sm);
+  border: 1px solid var(--ae-city-line);
+  background: var(--ae-city-line-soft);
+  color: var(--ae-city-ink);
+  font: inherit;
+  font-size: var(--ae-fs-5);
+}
+
+.live-city__follow select:focus-visible {
+  outline: 2px solid var(--ae-city-focus);
+  outline-offset: 2px;
+}
+
 /* ---- the detail camera: the crowded ground, magnified in the empty ground ---- */
 
 /*
@@ -950,4 +978,119 @@
 .live-city__key--talk {
   background: var(--ae-accent);
   border-radius: 50% 50% 50% 1px;
+}
+.live-city__playback {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.live-city__playback .button {
+  justify-self: start;
+  color: var(--ae-city-ink);
+  background: var(--ae-city-sky-business);
+  border: 1px solid var(--ae-city-land-edge);
+  min-height: 44px;
+}
+
+.live-city__playback .button:focus-visible {
+  outline: 2px solid var(--ae-city-focus);
+  outline-offset: 3px;
+}
+
+/* The shared city owns selection, evidence and the viewport. */
+.recorded-day {
+  min-width: 0;
+  margin-right: var(--civic-lens-reserve);
+  color: var(--ae-city-ink);
+  background: var(--ae-city-sky-business);
+}
+.recorded-day__header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .45rem 1rem;
+  padding: .7rem 1rem .3rem;
+}
+.recorded-day__header h3 { margin: 0; font-size: 1.15rem; }
+.recorded-day__header span { font-size: .75rem; }
+.recorded-day .live-city__clock {
+  position: relative;
+  inset: auto;
+  width: auto;
+  padding: .4rem 1rem;
+  border: 0;
+  border-radius: 0;
+  background: none;
+  backdrop-filter: none;
+  gap: .35rem;
+}
+.recorded-day .live-city__clock strong { font-size: .9rem; }
+.recorded-day .live-city__clock > small { display: none; }
+.recorded-day .live-city__clock > .ae-cap { margin: 0; }
+.recorded-day .live-city__playback {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: .4rem .6rem;
+  font-size: .75rem;
+}
+.recorded-day .live-city__playback > span { flex-basis: auto; }
+.recorded-day .live-city__playback label { display: flex; align-items: center; gap: .4rem; }
+.recorded-day button, .recorded-day select {
+  min-height: 36px;
+  padding: .3rem .55rem;
+  border: 1px solid var(--ae-city-line);
+  border-radius: 3px;
+  background: var(--ae-city-panel);
+  color: var(--ae-city-ink);
+  font-size: .75rem;
+}
+.recorded-day .live-city__playback .button { min-height: 36px; padding: .3rem .55rem; }
+.recorded-day button:disabled { opacity: .45; }
+.recorded-day__truth, .recorded-day__notice, .recorded-day__coverage {
+  margin: 0;
+  padding: .35rem 1rem .7rem;
+  font-size: .75rem;
+  line-height: 1.4;
+}
+.live-city--embedded {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  height: 520px;
+  min-width: 0;
+  contain: strict;
+}
+.recorded-day .live-city__readout {
+  flex-wrap: wrap;
+  gap: .5rem 1.2rem;
+  padding: .6rem 1rem;
+  border-top: 1px solid var(--ae-city-line);
+}
+.recorded-day .live-city__readout dd { font-size: .95rem; }
+.recorded-day__notes { padding: .6rem 1rem; border-top: 1px solid var(--ae-city-line); font-size: .8rem; }
+.recorded-day__notes summary { cursor: pointer; }
+.recorded-day .live-city__legend, .recorded-day .live-city__disclosure {
+  position: static;
+  inset: auto;
+  width: auto;
+  display: grid;
+  gap: .6rem;
+  padding: .7rem 0;
+  border: 0;
+  background: none;
+  backdrop-filter: none;
+}
+.recorded-day .live-city__provenance { white-space: normal; flex-wrap: wrap; }
+.recorded-day__open-evidence { display: none; }
+@media (max-width: 980px) {
+  .recorded-day { margin-right: 0; }
+  .recorded-day__open-evidence { display: inline-block; }
+}
+@media (max-width: 460px) {
+  .live-city--embedded { height: 480px; }
+  .recorded-day .live-city__lockon-plate { max-width: 170px; overflow-wrap: anywhere; }
 }

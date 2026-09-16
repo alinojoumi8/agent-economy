@@ -5,7 +5,7 @@ from typing import Any, Mapping
 
 
 MIN_ENGINE_SEMANTICS_VERSION = 1
-CURRENT_ENGINE_SEMANTICS_VERSION = 14
+CURRENT_ENGINE_SEMANTICS_VERSION = 20
 
 
 class UnsupportedEngineSemantics(ValueError):

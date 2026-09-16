@@ -1,0 +1,1448 @@
+{
+  "status": "complete",
+  "seconds": 1800,
+  "startupMs": 562.177365,
+  "gpu": "ANGLE (Google, Vulkan 1.3.0 (SwiftShader Device (Subzero) (0x0000C0DE)), SwiftShader driver)",
+  "errors": [],
+  "samples": [
+    {
+      "elapsedMs": 10235.699999988079,
+      "frames": 274,
+      "renderedFrames": 276,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8209140
+    },
+    {
+      "elapsedMs": 20392,
+      "frames": 555,
+      "renderedFrames": 557,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8383840
+    },
+    {
+      "elapsedMs": 30547.19999998808,
+      "frames": 826,
+      "renderedFrames": 828,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8444372
+    },
+    {
+      "elapsedMs": 40686.30000001192,
+      "frames": 1105,
+      "renderedFrames": 1107,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8491344
+    },
+    {
+      "elapsedMs": 50846.90000003576,
+      "frames": 1382,
+      "renderedFrames": 1384,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8500744
+    },
+    {
+      "elapsedMs": 60967.60000002384,
+      "frames": 1651,
+      "renderedFrames": 1653,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8507232
+    },
+    {
+      "elapsedMs": 71080.30000001192,
+      "frames": 1922,
+      "renderedFrames": 1924,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8520204
+    },
+    {
+      "elapsedMs": 81245,
+      "frames": 2200,
+      "renderedFrames": 2202,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8521800
+    },
+    {
+      "elapsedMs": 91404.60000002384,
+      "frames": 2485,
+      "renderedFrames": 2487,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8530244
+    },
+    {
+      "elapsedMs": 101565.30000001192,
+      "frames": 2765,
+      "renderedFrames": 2767,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8543992
+    },
+    {
+      "elapsedMs": 111710.10000002384,
+      "frames": 3040,
+      "renderedFrames": 3042,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8553044
+    },
+    {
+      "elapsedMs": 121898.19999998808,
+      "frames": 3308,
+      "renderedFrames": 3310,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8584652
+    },
+    {
+      "elapsedMs": 132040.10000002384,
+      "frames": 3585,
+      "renderedFrames": 3587,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8609220
+    },
+    {
+      "elapsedMs": 142203.19999998808,
+      "frames": 3867,
+      "renderedFrames": 3869,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8611948
+    },
+    {
+      "elapsedMs": 152351.80000001192,
+      "frames": 4147,
+      "renderedFrames": 4149,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8620612
+    },
+    {
+      "elapsedMs": 162508.40000003576,
+      "frames": 4421,
+      "renderedFrames": 4423,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8625644
+    },
+    {
+      "elapsedMs": 172662,
+      "frames": 4694,
+      "renderedFrames": 4696,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8631944
+    },
+    {
+      "elapsedMs": 182800.5,
+      "frames": 4969,
+      "renderedFrames": 4971,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8636996
+    },
+    {
+      "elapsedMs": 192952.40000003576,
+      "frames": 5250,
+      "renderedFrames": 5252,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8639340
+    },
+    {
+      "elapsedMs": 203114.80000001192,
+      "frames": 5533,
+      "renderedFrames": 5535,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8649360
+    },
+    {
+      "elapsedMs": 213285.10000002384,
+      "frames": 5822,
+      "renderedFrames": 5824,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8646940
+    },
+    {
+      "elapsedMs": 223396.90000003576,
+      "frames": 6106,
+      "renderedFrames": 6108,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8729096
+    },
+    {
+      "elapsedMs": 233511,
+      "frames": 6387,
+      "renderedFrames": 6389,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8735180
+    },
+    {
+      "elapsedMs": 243667.30000001192,
+      "frames": 6673,
+      "renderedFrames": 6675,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8679880
+    },
+    {
+      "elapsedMs": 253805.5,
+      "frames": 6955,
+      "renderedFrames": 6957,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8738656
+    },
+    {
+      "elapsedMs": 263962.3000000119,
+      "frames": 7234,
+      "renderedFrames": 7236,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8690140
+    },
+    {
+      "elapsedMs": 274112.5,
+      "frames": 7514,
+      "renderedFrames": 7516,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8686508
+    },
+    {
+      "elapsedMs": 284278.6999999881,
+      "frames": 7793,
+      "renderedFrames": 7795,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8688368
+    },
+    {
+      "elapsedMs": 294434.3000000119,
+      "frames": 8070,
+      "renderedFrames": 8072,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8691924
+    },
+    {
+      "elapsedMs": 304595.10000002384,
+      "frames": 8348,
+      "renderedFrames": 8350,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8699556
+    },
+    {
+      "elapsedMs": 314723.1999999881,
+      "frames": 8622,
+      "renderedFrames": 8624,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8696968
+    },
+    {
+      "elapsedMs": 324874.5,
+      "frames": 8896,
+      "renderedFrames": 8898,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8705496
+    },
+    {
+      "elapsedMs": 335032.10000002384,
+      "frames": 9177,
+      "renderedFrames": 9179,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8710864
+    },
+    {
+      "elapsedMs": 345193,
+      "frames": 9459,
+      "renderedFrames": 9461,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8710444
+    },
+    {
+      "elapsedMs": 355334.6999999881,
+      "frames": 9740,
+      "renderedFrames": 9742,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8713788
+    },
+    {
+      "elapsedMs": 365484.8000000119,
+      "frames": 10020,
+      "renderedFrames": 10022,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8713316
+    },
+    {
+      "elapsedMs": 375655.60000002384,
+      "frames": 10304,
+      "renderedFrames": 10306,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8718644
+    },
+    {
+      "elapsedMs": 385792.8000000119,
+      "frames": 10579,
+      "renderedFrames": 10581,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8718040
+    },
+    {
+      "elapsedMs": 395944.10000002384,
+      "frames": 10857,
+      "renderedFrames": 10859,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8719064
+    },
+    {
+      "elapsedMs": 406101.10000002384,
+      "frames": 11136,
+      "renderedFrames": 11138,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8718536
+    },
+    {
+      "elapsedMs": 416254.1999999881,
+      "frames": 11413,
+      "renderedFrames": 11415,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8725368
+    },
+    {
+      "elapsedMs": 426414.90000003576,
+      "frames": 11698,
+      "renderedFrames": 11700,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8729480
+    },
+    {
+      "elapsedMs": 436588.90000003576,
+      "frames": 11966,
+      "renderedFrames": 11968,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8730048
+    },
+    {
+      "elapsedMs": 446728.1999999881,
+      "frames": 12234,
+      "renderedFrames": 12236,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8737728
+    },
+    {
+      "elapsedMs": 456915.8000000119,
+      "frames": 12510,
+      "renderedFrames": 12512,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8739084
+    },
+    {
+      "elapsedMs": 467065.90000003576,
+      "frames": 12774,
+      "renderedFrames": 12776,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8774872
+    },
+    {
+      "elapsedMs": 477227.40000003576,
+      "frames": 13042,
+      "renderedFrames": 13044,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8794228
+    },
+    {
+      "elapsedMs": 487373.3000000119,
+      "frames": 13325,
+      "renderedFrames": 13327,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8789612
+    },
+    {
+      "elapsedMs": 497519.10000002384,
+      "frames": 13609,
+      "renderedFrames": 13611,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8819204
+    },
+    {
+      "elapsedMs": 507664.60000002384,
+      "frames": 13889,
+      "renderedFrames": 13891,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8829604
+    },
+    {
+      "elapsedMs": 517775.8000000119,
+      "frames": 14180,
+      "renderedFrames": 14182,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8900536
+    },
+    {
+      "elapsedMs": 527934.6999999881,
+      "frames": 14457,
+      "renderedFrames": 14459,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8932956
+    },
+    {
+      "elapsedMs": 538122.1999999881,
+      "frames": 14737,
+      "renderedFrames": 14739,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8935736
+    },
+    {
+      "elapsedMs": 548242.5,
+      "frames": 15016,
+      "renderedFrames": 15018,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8988940
+    },
+    {
+      "elapsedMs": 558397.1000000238,
+      "frames": 15296,
+      "renderedFrames": 15298,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8937216
+    },
+    {
+      "elapsedMs": 568534,
+      "frames": 15577,
+      "renderedFrames": 15579,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8935672
+    },
+    {
+      "elapsedMs": 578700.6000000238,
+      "frames": 15862,
+      "renderedFrames": 15864,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8933764
+    },
+    {
+      "elapsedMs": 588861.1999999881,
+      "frames": 16145,
+      "renderedFrames": 16147,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8937784
+    },
+    {
+      "elapsedMs": 598980.4000000358,
+      "frames": 16423,
+      "renderedFrames": 16425,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8935728
+    },
+    {
+      "elapsedMs": 609156,
+      "frames": 16700,
+      "renderedFrames": 16702,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8953592
+    },
+    {
+      "elapsedMs": 619303.5,
+      "frames": 16979,
+      "renderedFrames": 16981,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8951644
+    },
+    {
+      "elapsedMs": 629471.6000000238,
+      "frames": 17263,
+      "renderedFrames": 17265,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8953948
+    },
+    {
+      "elapsedMs": 639595.9000000358,
+      "frames": 17544,
+      "renderedFrames": 17546,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8953144
+    },
+    {
+      "elapsedMs": 649734.9000000358,
+      "frames": 17825,
+      "renderedFrames": 17827,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8953780
+    },
+    {
+      "elapsedMs": 659860.3000000119,
+      "frames": 18105,
+      "renderedFrames": 18107,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8947840
+    },
+    {
+      "elapsedMs": 669977.5,
+      "frames": 18382,
+      "renderedFrames": 18384,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954372
+    },
+    {
+      "elapsedMs": 680150.5,
+      "frames": 18654,
+      "renderedFrames": 18656,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954256
+    },
+    {
+      "elapsedMs": 690284.1999999881,
+      "frames": 18933,
+      "renderedFrames": 18935,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954864
+    },
+    {
+      "elapsedMs": 700427.6000000238,
+      "frames": 19216,
+      "renderedFrames": 19218,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8925832
+    },
+    {
+      "elapsedMs": 710571.1000000238,
+      "frames": 19503,
+      "renderedFrames": 19505,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954584
+    },
+    {
+      "elapsedMs": 720730.8000000119,
+      "frames": 19785,
+      "renderedFrames": 19787,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954432
+    },
+    {
+      "elapsedMs": 730858.6000000238,
+      "frames": 20053,
+      "renderedFrames": 20055,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8950936
+    },
+    {
+      "elapsedMs": 740970.8000000119,
+      "frames": 20330,
+      "renderedFrames": 20332,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954388
+    },
+    {
+      "elapsedMs": 751127.6999999881,
+      "frames": 20607,
+      "renderedFrames": 20609,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954828
+    },
+    {
+      "elapsedMs": 761291.4000000358,
+      "frames": 20879,
+      "renderedFrames": 20881,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8957216
+    },
+    {
+      "elapsedMs": 771436.5,
+      "frames": 21161,
+      "renderedFrames": 21163,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954456
+    },
+    {
+      "elapsedMs": 781603.6000000238,
+      "frames": 21446,
+      "renderedFrames": 21448,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954564
+    },
+    {
+      "elapsedMs": 791755.6000000238,
+      "frames": 21730,
+      "renderedFrames": 21732,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954332
+    },
+    {
+      "elapsedMs": 801903.1000000238,
+      "frames": 22012,
+      "renderedFrames": 22014,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8950320
+    },
+    {
+      "elapsedMs": 812085,
+      "frames": 22297,
+      "renderedFrames": 22299,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8956672
+    },
+    {
+      "elapsedMs": 822231.5,
+      "frames": 22585,
+      "renderedFrames": 22587,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954652
+    },
+    {
+      "elapsedMs": 832380.6999999881,
+      "frames": 22867,
+      "renderedFrames": 22869,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954160
+    },
+    {
+      "elapsedMs": 842534.4000000358,
+      "frames": 23146,
+      "renderedFrames": 23148,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8953468
+    },
+    {
+      "elapsedMs": 852714.1999999881,
+      "frames": 23431,
+      "renderedFrames": 23433,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8958136
+    },
+    {
+      "elapsedMs": 862865.6999999881,
+      "frames": 23705,
+      "renderedFrames": 23707,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8954700
+    },
+    {
+      "elapsedMs": 873031.4000000358,
+      "frames": 23982,
+      "renderedFrames": 23984,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8955476
+    },
+    {
+      "elapsedMs": 883181.8000000119,
+      "frames": 24257,
+      "renderedFrames": 24259,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8960188
+    },
+    {
+      "elapsedMs": 893337.8000000119,
+      "frames": 24537,
+      "renderedFrames": 24539,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8957424
+    },
+    {
+      "elapsedMs": 903525.1999999881,
+      "frames": 24809,
+      "renderedFrames": 24811,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8957632
+    },
+    {
+      "elapsedMs": 913671.5,
+      "frames": 25083,
+      "renderedFrames": 25085,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8959724
+    },
+    {
+      "elapsedMs": 923816.6999999881,
+      "frames": 25360,
+      "renderedFrames": 25362,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8959664
+    },
+    {
+      "elapsedMs": 934002.8000000119,
+      "frames": 25638,
+      "renderedFrames": 25640,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8959096
+    },
+    {
+      "elapsedMs": 944164.5,
+      "frames": 25920,
+      "renderedFrames": 25922,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8959412
+    },
+    {
+      "elapsedMs": 954299.1000000238,
+      "frames": 26204,
+      "renderedFrames": 26206,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8960796
+    },
+    {
+      "elapsedMs": 964416.1000000238,
+      "frames": 26480,
+      "renderedFrames": 26482,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8958616
+    },
+    {
+      "elapsedMs": 974545.6999999881,
+      "frames": 26757,
+      "renderedFrames": 26759,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8963064
+    },
+    {
+      "elapsedMs": 984700.4000000358,
+      "frames": 27042,
+      "renderedFrames": 27044,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8952108
+    },
+    {
+      "elapsedMs": 994836.1000000238,
+      "frames": 27322,
+      "renderedFrames": 27324,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8956804
+    },
+    {
+      "elapsedMs": 1005013.9000000358,
+      "frames": 27608,
+      "renderedFrames": 27610,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8959668
+    },
+    {
+      "elapsedMs": 1015167.8000000119,
+      "frames": 27888,
+      "renderedFrames": 27890,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8963984
+    },
+    {
+      "elapsedMs": 1025347.9000000358,
+      "frames": 28171,
+      "renderedFrames": 28173,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8963592
+    },
+    {
+      "elapsedMs": 1035490.8000000119,
+      "frames": 28456,
+      "renderedFrames": 28458,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8963364
+    },
+    {
+      "elapsedMs": 1045630.8000000119,
+      "frames": 28741,
+      "renderedFrames": 28743,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8964220
+    },
+    {
+      "elapsedMs": 1055789.4000000358,
+      "frames": 29025,
+      "renderedFrames": 29027,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8964016
+    },
+    {
+      "elapsedMs": 1065967.4000000358,
+      "frames": 29314,
+      "renderedFrames": 29316,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8964484
+    },
+    {
+      "elapsedMs": 1076127.800000012,
+      "frames": 29603,
+      "renderedFrames": 29605,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8970012
+    },
+    {
+      "elapsedMs": 1086301.800000012,
+      "frames": 29881,
+      "renderedFrames": 29883,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8961124
+    },
+    {
+      "elapsedMs": 1096456.199999988,
+      "frames": 30157,
+      "renderedFrames": 30159,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966256
+    },
+    {
+      "elapsedMs": 1106620.5,
+      "frames": 30439,
+      "renderedFrames": 30441,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966188
+    },
+    {
+      "elapsedMs": 1116799.199999988,
+      "frames": 30715,
+      "renderedFrames": 30717,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8965948
+    },
+    {
+      "elapsedMs": 1126971.800000012,
+      "frames": 30990,
+      "renderedFrames": 30992,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8960340
+    },
+    {
+      "elapsedMs": 1137114.199999988,
+      "frames": 31266,
+      "renderedFrames": 31268,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8965768
+    },
+    {
+      "elapsedMs": 1147281.300000012,
+      "frames": 31537,
+      "renderedFrames": 31539,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8969320
+    },
+    {
+      "elapsedMs": 1157449.699999988,
+      "frames": 31809,
+      "renderedFrames": 31811,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8968772
+    },
+    {
+      "elapsedMs": 1167612.6000000238,
+      "frames": 32093,
+      "renderedFrames": 32095,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8965836
+    },
+    {
+      "elapsedMs": 1177780.6000000238,
+      "frames": 32373,
+      "renderedFrames": 32375,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8968852
+    },
+    {
+      "elapsedMs": 1187943,
+      "frames": 32648,
+      "renderedFrames": 32650,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966368
+    },
+    {
+      "elapsedMs": 1198099.9000000358,
+      "frames": 32919,
+      "renderedFrames": 32921,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8967856
+    },
+    {
+      "elapsedMs": 1208246.800000012,
+      "frames": 33195,
+      "renderedFrames": 33197,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966760
+    },
+    {
+      "elapsedMs": 1218418.9000000358,
+      "frames": 33468,
+      "renderedFrames": 33470,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8967124
+    },
+    {
+      "elapsedMs": 1228564,
+      "frames": 33752,
+      "renderedFrames": 33754,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966832
+    },
+    {
+      "elapsedMs": 1238709.1000000238,
+      "frames": 34035,
+      "renderedFrames": 34037,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8968276
+    },
+    {
+      "elapsedMs": 1248865.9000000358,
+      "frames": 34320,
+      "renderedFrames": 34322,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966556
+    },
+    {
+      "elapsedMs": 1259017.6000000238,
+      "frames": 34607,
+      "renderedFrames": 34609,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8970268
+    },
+    {
+      "elapsedMs": 1269176,
+      "frames": 34886,
+      "renderedFrames": 34888,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966456
+    },
+    {
+      "elapsedMs": 1279317.300000012,
+      "frames": 35161,
+      "renderedFrames": 35163,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966684
+    },
+    {
+      "elapsedMs": 1289452.699999988,
+      "frames": 35441,
+      "renderedFrames": 35443,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966340
+    },
+    {
+      "elapsedMs": 1299611.9000000358,
+      "frames": 35719,
+      "renderedFrames": 35721,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8960608
+    },
+    {
+      "elapsedMs": 1309774.6000000238,
+      "frames": 35991,
+      "renderedFrames": 35993,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8964400
+    },
+    {
+      "elapsedMs": 1319930.800000012,
+      "frames": 36263,
+      "renderedFrames": 36265,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966740
+    },
+    {
+      "elapsedMs": 1330120.1000000238,
+      "frames": 36548,
+      "renderedFrames": 36550,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8969368
+    },
+    {
+      "elapsedMs": 1340268,
+      "frames": 36827,
+      "renderedFrames": 36829,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966524
+    },
+    {
+      "elapsedMs": 1350426.4000000358,
+      "frames": 37117,
+      "renderedFrames": 37119,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8967344
+    },
+    {
+      "elapsedMs": 1360538.4000000358,
+      "frames": 37403,
+      "renderedFrames": 37405,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966656
+    },
+    {
+      "elapsedMs": 1370698.5,
+      "frames": 37690,
+      "renderedFrames": 37692,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966312
+    },
+    {
+      "elapsedMs": 1380828.9000000358,
+      "frames": 37973,
+      "renderedFrames": 37975,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8966116
+    },
+    {
+      "elapsedMs": 1390953.699999988,
+      "frames": 38244,
+      "renderedFrames": 38246,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 9020500
+    },
+    {
+      "elapsedMs": 1401059,
+      "frames": 38518,
+      "renderedFrames": 38520,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8965660
+    },
+    {
+      "elapsedMs": 1411205.6000000238,
+      "frames": 38790,
+      "renderedFrames": 38792,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8960640
+    },
+    {
+      "elapsedMs": 1421330.199999988,
+      "frames": 39062,
+      "renderedFrames": 39064,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8963800
+    },
+    {
+      "elapsedMs": 1431480.199999988,
+      "frames": 39337,
+      "renderedFrames": 39339,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8967116
+    },
+    {
+      "elapsedMs": 1441631.5,
+      "frames": 39616,
+      "renderedFrames": 39618,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8970316
+    },
+    {
+      "elapsedMs": 1451780.800000012,
+      "frames": 39897,
+      "renderedFrames": 39899,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8967984
+    },
+    {
+      "elapsedMs": 1461960.6000000238,
+      "frames": 40175,
+      "renderedFrames": 40177,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8969636
+    },
+    {
+      "elapsedMs": 1472123,
+      "frames": 40457,
+      "renderedFrames": 40459,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8972988
+    },
+    {
+      "elapsedMs": 1482260.699999988,
+      "frames": 40741,
+      "renderedFrames": 40743,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8972812
+    },
+    {
+      "elapsedMs": 1492409.699999988,
+      "frames": 41021,
+      "renderedFrames": 41023,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8973756
+    },
+    {
+      "elapsedMs": 1502521.6000000238,
+      "frames": 41299,
+      "renderedFrames": 41301,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8975488
+    },
+    {
+      "elapsedMs": 1512682.800000012,
+      "frames": 41574,
+      "renderedFrames": 41576,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8986424
+    },
+    {
+      "elapsedMs": 1522831.9000000358,
+      "frames": 41860,
+      "renderedFrames": 41862,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983904
+    },
+    {
+      "elapsedMs": 1533004.5,
+      "frames": 42141,
+      "renderedFrames": 42143,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8986264
+    },
+    {
+      "elapsedMs": 1543169.300000012,
+      "frames": 42410,
+      "renderedFrames": 42412,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8982988
+    },
+    {
+      "elapsedMs": 1553339.5,
+      "frames": 42690,
+      "renderedFrames": 42692,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983004
+    },
+    {
+      "elapsedMs": 1563511.199999988,
+      "frames": 42967,
+      "renderedFrames": 42969,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983944
+    },
+    {
+      "elapsedMs": 1573641.800000012,
+      "frames": 43239,
+      "renderedFrames": 43241,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8982364
+    },
+    {
+      "elapsedMs": 1583748.300000012,
+      "frames": 43515,
+      "renderedFrames": 43517,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8981700
+    },
+    {
+      "elapsedMs": 1593905.5,
+      "frames": 43794,
+      "renderedFrames": 43796,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983408
+    },
+    {
+      "elapsedMs": 1604068,
+      "frames": 44072,
+      "renderedFrames": 44074,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8985400
+    },
+    {
+      "elapsedMs": 1614253.9000000358,
+      "frames": 44349,
+      "renderedFrames": 44351,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8977692
+    },
+    {
+      "elapsedMs": 1624424.1000000238,
+      "frames": 44622,
+      "renderedFrames": 44624,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984088
+    },
+    {
+      "elapsedMs": 1634597.199999988,
+      "frames": 44897,
+      "renderedFrames": 44899,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983816
+    },
+    {
+      "elapsedMs": 1644756.9000000358,
+      "frames": 45178,
+      "renderedFrames": 45180,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983180
+    },
+    {
+      "elapsedMs": 1654906.4000000358,
+      "frames": 45462,
+      "renderedFrames": 45464,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983224
+    },
+    {
+      "elapsedMs": 1665067,
+      "frames": 45742,
+      "renderedFrames": 45744,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983596
+    },
+    {
+      "elapsedMs": 1675227.300000012,
+      "frames": 46027,
+      "renderedFrames": 46029,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984388
+    },
+    {
+      "elapsedMs": 1685382.1000000238,
+      "frames": 46311,
+      "renderedFrames": 46313,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984408
+    },
+    {
+      "elapsedMs": 1695569.6000000238,
+      "frames": 46596,
+      "renderedFrames": 46598,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984132
+    },
+    {
+      "elapsedMs": 1705714.699999988,
+      "frames": 46879,
+      "renderedFrames": 46881,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983996
+    },
+    {
+      "elapsedMs": 1715878.1000000238,
+      "frames": 47164,
+      "renderedFrames": 47166,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984320
+    },
+    {
+      "elapsedMs": 1726035.300000012,
+      "frames": 47439,
+      "renderedFrames": 47441,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 25 draw calls / 26,856 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8987648
+    },
+    {
+      "elapsedMs": 1736182.9000000358,
+      "frames": 47716,
+      "renderedFrames": 47718,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983896
+    },
+    {
+      "elapsedMs": 1746344.800000012,
+      "frames": 47995,
+      "renderedFrames": 47997,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983856
+    },
+    {
+      "elapsedMs": 1756532.6000000238,
+      "frames": 48267,
+      "renderedFrames": 48269,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984640
+    },
+    {
+      "elapsedMs": 1766701.1000000238,
+      "frames": 48554,
+      "renderedFrames": 48556,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8988116
+    },
+    {
+      "elapsedMs": 1776869.1000000238,
+      "frames": 48827,
+      "renderedFrames": 48829,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 27 draw calls / 26,940 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8984096
+    },
+    {
+      "elapsedMs": 1787028,
+      "frames": 49103,
+      "renderedFrames": 49105,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983748
+    },
+    {
+      "elapsedMs": 1797180.800000012,
+      "frames": 49378,
+      "renderedFrames": 49380,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 8983916
+    },
+    {
+      "elapsedMs": 1800162.800000012,
+      "frames": 49459,
+      "renderedFrames": 49461,
+      "canvases": 1,
+      "render": "s12-t2-e9-fixture \u00b7 layout 1 \u00b7 29 draw calls / 27,016 triangles / 28 geometries / 0 textures",
+      "heapBytes": 9040944
+    }
+  ],
+  "meanAnimationFps": 27.474737284872052,
+  "meanRenderedFps": 27.47418177955887,
+  "implementation_commit": "d335fdd",
+  "viewport": {
+    "width": 1920,
+    "height": 1080
+  },
+  "render_scale": 0.75,
+  "renderer_source_sha256": "d0b08245297f75ab775b5e24d1c638aa376da50007bab6a6e27dd87e3325ca24",
+  "hardware": {
+    "cpu": "AMD Ryzen Threadripper 2990WX 32-Core Processor",
+    "physical_gpu": "NVIDIA GeForce GTX 1080 Ti",
+    "test_renderer": "SwiftShader software",
+    "integrated_gpu_verified": false
+  }
+}

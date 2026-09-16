@@ -217,12 +217,17 @@ def test_bundle_validation_missing_invalid_and_size_mismatch(economy, tmp_path):
         validate_bundle(wrong_size)
 
 
-def test_content_address_collision_fails_closed(economy, tmp_path, monkeypatch):
+def test_content_address_collision_fails_closed(economy, tmp_path):
     root = tmp_path / "exports"
     bundle = export_bundle(economy.store, root)
     assert bundle.is_dir()
-    monkeypatch.setattr(
-        export_module, "validate_bundle", lambda _path: {"bundle_sha256": "wrong"})
+    manifest_path = bundle / "manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("bundle_sha256")
+    manifest["revised_metadata"] = True
+    manifest["bundle_sha256"] = hashlib.sha256(json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
+    manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
     with pytest.raises(ExportBundleError, match="path conflicts"):
         export_bundle(economy.store, root)
 

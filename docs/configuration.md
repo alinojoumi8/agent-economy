@@ -26,6 +26,11 @@ in `run_meta`, so a database remains self-describing.
 
 Profiles never silently change provider, model, endpoint, or credential type.
 
+The [Hostinger VPS configuration](../config/hosted.hostinger.yaml) uses filesystem
+recovery copies and SFTP Litestream streaming. Local runs can opt into
+`--storage-policy config/storage.production.yaml`, including on resume without
+rewriting scientific configuration. See [storage policy fields and limits](storage-and-recovery.md).
+
 ## Environment variables
 
 Secrets belong in the ignored `.env` file or process environment.
@@ -62,12 +67,13 @@ keys. Never put populated values in YAML, docs, reports, issues, or commits.
 | Key | Meaning |
 |---|---|
 | `seed` | World, persona, targeting, and lifecycle reproducibility |
-| `engine_semantics_version` | Runtime compatibility contract; the implemented maximum is `14`, the default evolving-live profile uses `11`, and frozen production/research profiles retain their recorded version |
+| `engine_semantics_version` | Runtime compatibility contract; the implemented maximum is `15`, the default evolving-live profile uses `11`, and frozen production/research profiles retain their recorded version |
 | `population.size` | Sampled citizen count; institutional/founder agents are added |
 | `population.baseline_citizens_core` | Persisted semantics-7 opt-in that pins non-regional baseline citizens and later arrivals to the fully scheduled core tier |
 | `banks`, `firms`, `exchange` | Deterministic banking, production, and market parameters |
 | `central_bank` | Policy target, neutral rate, and step bounds |
 | `lifecycle`, `government`, `vc`, `health` | Optional P1 systems |
+| `households` | Semantics 15 child needs and declared birth interventions; see the [household guide](semantics15-households.md) and [provider-free rehearsal](../runs/household-rehearsal.yaml) |
 | `behavior`, `conversations` | Wake cadence, run threshold, and social volume |
 | `checkpoint_every`, `checkpoint_dir` | Recovery cadence and storage |
 | `speed_delay_s` | Wall-clock pause between ticks; does not change simulation time |

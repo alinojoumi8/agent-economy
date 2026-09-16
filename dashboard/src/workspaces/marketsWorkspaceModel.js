@@ -53,6 +53,9 @@ function normalizedRows(value, fields) {
     .sort(compareTickId);
 }
 
+/* The projection returns at most this many trades and FX trades (the newest). */
+export const MARKET_WINDOW = 100;
+
 export function normalizeMarketsWorkspace(data = {}) {
   const source = data && typeof data === "object" ? data : {};
   const orders = normalizedRows(source.orders, ORDER_FIELDS);
@@ -70,6 +73,9 @@ export function normalizeMarketsWorkspace(data = {}) {
       tradeCount: trades.length,
       tradeVolume: volumes.length ? volumes.reduce((sum, value) => sum + Number(value), 0) : null,
       fxTradeCount: fxTrades.length,
+      // A full window means the run holds at least this many; the counts and
+      // volume describe the window, never the run total.
+      windowed: trades.length >= MARKET_WINDOW || fxTrades.length >= MARKET_WINDOW,
     },
     currencies: records(source.currencies).map(row => sanitize(row, CURRENCY_FIELDS))
       .filter(row => row.code)

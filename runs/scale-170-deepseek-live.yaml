@@ -1,4 +1,4 @@
-# Paid target-scale canary: the same 100-agent core uses DeepSeek V4 Flash.
+# Paid target-scale canary: the same 100-agent core uses DeepSeek V4.1 Flash.
 # It extends the provider-free scale contract directly so no unused provider or
 # credential is configured. Every gateway route is fail-closed to DeepSeek.
 extends: scale-170-rehearsal.yaml
@@ -35,12 +35,12 @@ llm:
       timeout_s: 120
       healthcheck_path: /models
       max_tokens_field: max_tokens
-      documented_model_version: DeepSeek-V4-Flash-0731
+      documented_model_version: DeepSeek-V4.1-Flash
       request_defaults:
         stream: false
         thinking: {type: disabled}
-  route_contract: {provider: deepseek, model: deepseek-v4-flash}
-  default_route: &deepseek_route {provider: deepseek, model: deepseek-v4-flash}
+  route_contract: {provider: deepseek, model: deepseek-flash}
+  default_route: &deepseek_route {provider: deepseek, model: deepseek-flash}
   routes:
     citizen: *deepseek_route
     decision: *deepseek_route
@@ -65,4 +65,4 @@ llm:
     newsroom: *deepseek_route
     oracle: *deepseek_route
   pricing:
-    deepseek-v4-flash: {in: 0.14, out: 0.28, cache: 0.0028}
+    deepseek-flash: {in: 0.30, out: 1.20, cache: 0.006}

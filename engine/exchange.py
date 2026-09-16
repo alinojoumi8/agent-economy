@@ -30,6 +30,7 @@ class Exchange:
                  circuit_breaker_drop: Optional[float] = None):
         self.store = store
         self.ledger = ledger
+        self.estate_securities = None
         # Optional circuit breaker (TECH-SPEC §9): halt a symbol for the rest of
         # the session once it falls this fraction below the previous close.
         self.circuit_breaker_drop = circuit_breaker_drop
@@ -101,6 +102,12 @@ class Exchange:
 
             best_buy = sorted(buys, key=buy_key)[0]
             best_sell = sorted(sells, key=sell_key)[0]
+            if self.estate_securities is not None and self.estate_securities.enabled:
+                invalid = [order for order in (best_buy, best_sell) if not self.estate_securities.valid_order(order, tick)]
+                if invalid:
+                    for order in invalid:
+                        self._cancel_order(order["id"])
+                    continue
 
             bp = best_buy["limit_price_cents"]
             sp = best_sell["limit_price_cents"]
@@ -142,7 +149,9 @@ class Exchange:
             buyer_acct = self.ledger.agent_checking_id(buyer_id)
             if buyer_acct is None:
                 self._cancel_order(best_buy["id"]); continue
-            seller_acct = self.ledger.agent_checking_id(seller_id)
+            seller_acct = (self.estate_securities.sale_account(best_sell)
+                if self.estate_securities is not None and self.estate_securities.enabled
+                else self.ledger.agent_checking_id(seller_id))
             buyer_currency = str(self.store.scalar(
                 "SELECT currency_code FROM accounts WHERE id=?", (buyer_acct,),
                 default="") or "")
@@ -188,17 +197,28 @@ class Exchange:
         return fills
 
     def _settle(self, tick, firm_id, buy, sell, buyer_id, seller_id, qty, price) -> None:
+        if self.estate_securities is not None and self.estate_securities.enabled:
+            with self.store.savepoint("estate_aware_equity_trade"), self.estate_securities.e.estate_cases._batch():
+                self._settle_trade(tick, firm_id, buy, sell, buyer_id, seller_id, qty, price)
+        else:
+            self._settle_trade(tick, firm_id, buy, sell, buyer_id, seller_id, qty, price)
+
+    def _settle_trade(self, tick, firm_id, buy, sell, buyer_id, seller_id, qty, price) -> None:
         cost = qty * price
         buyer_acct = self.ledger.agent_checking_id(buyer_id)
-        seller_acct = self.ledger.agent_checking_id(seller_id)
-        self.ledger.transfer(tick, buyer_acct, seller_acct, cost, kind="equity_trade",
+        seller_acct = (self.estate_securities.sale_account(sell)
+            if self.estate_securities is not None and self.estate_securities.enabled
+            else self.ledger.agent_checking_id(seller_id))
+        transaction = self.ledger.transfer(tick, buyer_acct, seller_acct, cost, kind="equity_trade",
                              memo=f"buy {qty} shares of firm {firm_id} @ {price}")
         self._adjust_shares(firm_id, "agent", seller_id, -qty)
         self._adjust_shares(firm_id, "agent", buyer_id, +qty)
 
-        self.store.insert("trades", tick=tick, firm_id=firm_id, buy_order_id=buy["id"],
+        trade = self.store.insert("trades", tick=tick, firm_id=firm_id, buy_order_id=buy["id"],
                           sell_order_id=sell["id"], buyer_id=buyer_id, seller_id=seller_id,
                           qty=qty, price_cents=price)
+        if self.estate_securities is not None and self.estate_securities.enabled:
+            self.estate_securities.record_sale(tick, trade, sell, transaction, buyer_acct)
         for o in (buy, sell):
             rem = int(o["qty_remaining"]) - qty
             self.store.execute(

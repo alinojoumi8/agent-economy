@@ -21,6 +21,14 @@ stored.
   original receipt; late or projection-mismatched actions are `stale`.
 - A disconnected, suspended, late, revoked, or otherwise non-submitting actor
   uses `safe_do_nothing_v1`; the actor is not impersonated, deleted, or killed.
+- `world.read` gates the world projection (`ae_world_observe` and the turn
+  mailbox). Per-bank deposit and reserve-ratio metrics appear in it only when
+  the run's `information.citizen_bank_visibility` is `full_balance_sheet`; an
+  external actor sees exactly what a native citizen sees.
+- A turn targets the connection's next due tick: the next wake tick under its
+  `wake_interval_ticks`, skipping a tick whose decision mailbox has already
+  closed because it is being processed. Submissions for any other tick are
+  `stale`.
 - In an explicitly selected Semantics 14 run, each due external actor also gets
   one immutable attendance row. An explicit `do_nothing` is submitted
   attendance; a deterministic fallback is missed attendance.

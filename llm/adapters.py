@@ -66,6 +66,9 @@ class AdapterResult:
     out_tokens: int = 0
     cached_in_tokens: int = 0
     raw: dict = field(default_factory=dict)
+    # Separate provider-reported totals from legacy fallback estimates. Keeping
+    # the existing fields unchanged preserves historical gateway accounting.
+    reported_usage: tuple[int, int] | None = None
 
 
 class AdapterHTTPError(RuntimeError):
@@ -246,7 +249,9 @@ class OpenAICompatAdapter(Adapter):
             in_tokens=int(usage.get("prompt_tokens", 0)) or sum(estimate_tokens(m["content"]) for m in messages),
             out_tokens=int(usage.get("completion_tokens", 0)) or estimate_tokens(text),
             cached_in_tokens=cached_in,
-            raw=data)
+            raw=data,
+            reported_usage=(usage["prompt_tokens"], usage["completion_tokens"])
+            if "prompt_tokens" in usage and "completion_tokens" in usage else None)
 
     async def healthcheck(self, model: str) -> dict:
         import httpx
@@ -323,9 +328,16 @@ class AnthropicAdapter(Adapter):
         usage = data.get("usage", {})
         cached_in = int(usage.get("cache_read_input_tokens", 0) or 0)
         cache_write = int(usage.get("cache_creation_input_tokens", 0) or 0)
+        reported = None
+        if "input_tokens" in usage and "output_tokens" in usage and all(
+                type(usage.get(key, 0)) is int for key in (
+                    "input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")):
+            reported = ((usage["input_tokens"] + cached_in + cache_write, usage["output_tokens"])
+                        if min(usage["input_tokens"], cached_in, cache_write, usage["output_tokens"]) >= 0
+                        else (-1, -1))
         return AdapterResult(text=text, in_tokens=int(usage.get("input_tokens", 0)) + cached_in + cache_write,
                              out_tokens=int(usage.get("output_tokens", 0)),
-                             cached_in_tokens=cached_in, raw=data)
+                             cached_in_tokens=cached_in, raw=data, reported_usage=reported)
 
 
 class CLIAdapter(Adapter):

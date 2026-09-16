@@ -1,0 +1,75 @@
+# Scripted research benchmark validated in a paired 180-day, seed-1 pilot.
+# Recovery bundles demand allocation, pricing and hiring; it is not calibrated.
+# See docs/plans/2026-09-10-native-employment-diagnosis.md for evidence and limits.
+banks:
+  count: 2
+behavior:
+  inventory_aware_shopping: true
+budget:
+  cap_usd: 1.0
+  conversation_pairs: 0
+  oracle_reserve_usd: 0.0
+  thresholds:
+  - 0.6
+  - 0.8
+  - 0.95
+checkpoint_every: 0
+city:
+  enabled: true
+  residential_districts_per_region: 2
+engine_semantics_version: 20
+family_decisions:
+  formation_interval_days: 1
+  proposal_ttl_days: 30
+  scripted_matching: true
+firms:
+  count: 3
+  listed: 1
+  recruit_to_target: true
+lifecycle:
+  birth_annual_prob: 0.05
+  population_mode: drift
+living_world:
+  core_agents: 32
+  enabled: true
+  regions:
+  - currency: USD
+    key: northstar
+    legal_ruleset: northstar-us-inspired-1.0
+    name: Northstar
+    population: 32
+    rate_ppm: 1000000
+    specialization:
+    - technology
+    - services
+    - finance
+    x: 0.5
+    y: 0.5
+llm:
+  default_route:
+    model: scripted
+    provider: scripted
+  routes: {}
+outlets:
+- id: 1
+  name: A
+  slant: pro-market-sensational
+- id: 2
+  name: B
+  slant: cautious-pro-labor
+population:
+  size: 14
+seed: 1
+shocks: []
+speed_delay_s: 0
+supply_recovery:
+  activation_tick: 1
+  cash_payroll_coverage_periods: 2
+  demand_buffer_ticks: 5
+  enabled: true
+  gross_margin_coverage_bps: 12500
+  max_headcount_per_firm: 3
+  max_hires_per_firm_per_period: 1
+  policy_version: supply-recovery-v1
+  sales_observation_ticks: 30
+  wage_floor_cents: 250000

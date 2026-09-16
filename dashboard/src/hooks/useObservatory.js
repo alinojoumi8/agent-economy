@@ -38,11 +38,22 @@ export function observatoryRefreshDeadline(timeoutMs = REFRESH_TIMEOUT_MS) {
   const timer = globalThis.setTimeout(() => controller.abort(), timeoutMs);
   return {
     signal: controller.signal,
+    timeoutMs,
     cancel: () => globalThis.clearTimeout(timer),
   };
 }
 
-export async function settleObservatoryRequests(requests) {
+export function observatoryRequestFailure(reason, deadline = null) {
+  // The deadline aborts every still-pending panel request at once, and fetch
+  // reports that as a bare AbortError ("signal is aborted without reason").
+  // Name the cause so the banner reads "institutions: timed out after 15 s".
+  if (deadline?.signal?.aborted && reason?.name === "AbortError") {
+    return `timed out after ${Math.round(deadline.timeoutMs / 1000)} s`;
+  }
+  return reason instanceof Error ? reason.message : String(reason);
+}
+
+export async function settleObservatoryRequests(requests, { deadline = null } = {}) {
   const entries = Object.entries(requests);
   const settled = await Promise.allSettled(entries.map(([, request]) => request));
   const values = {};
@@ -53,12 +64,26 @@ export async function settleObservatoryRequests(requests) {
       values[key] = result.value;
       return;
     }
-    errors.push({
-      key,
-      message: result.reason instanceof Error ? result.reason.message : String(result.reason),
-    });
+    errors.push({ key, message: observatoryRequestFailure(result.reason, deadline) });
   });
   return { values, errors };
+}
+
+export function acceptFetchedStatus(current, fetched) {
+  // A /api/run/status response that started before a WebSocket tick frame can
+  // land after it. When the merged status already sits at a later tick of the
+  // same run, keep it rather than letting the Day counter run backwards.
+  const fetchedTick = fetched?.tick;
+  const currentTick = current?.tick;
+  const sameRun = fetched?.run_id == null || current?.run_id == null
+    || fetched.run_id === current.run_id;
+  if (sameRun
+      && typeof fetchedTick === "number" && Number.isFinite(fetchedTick)
+      && typeof currentTick === "number" && Number.isFinite(currentTick)
+      && fetchedTick < currentTick) {
+    return current;
+  }
+  return fetched;
 }
 
 export function useObservatory({ hosted = false } = {}) {
@@ -107,7 +132,7 @@ export function useObservatory({ hosted = false } = {}) {
           startups: get("/api/v2/startups"),
           markets: get("/api/v2/markets"),
           datasets: get("/api/v2/datasets"),
-        });
+        }, { deadline });
         const calibrationErrors = errors
           .filter(item => item.key === "calibrationRun" || item.key === "calibrationAll")
           .map(item => `${item.key === "calibrationRun" ? "run" : "all"}: ${item.message}`);
@@ -115,9 +140,12 @@ export function useObservatory({ hosted = false } = {}) {
           item => item.key !== "calibrationRun" && item.key !== "calibrationAll",
         );
         const has = key => Object.prototype.hasOwnProperty.call(values, key);
-        setStatusFresh(has("status") && requestErrors.length === 0);
+        // Run controls act on /api/run/status alone, so only that request decides
+        // whether they are live; a slow institutions or news panel must not lock
+        // Run, Pause and Stop for the whole next poll interval.
+        setStatusFresh(has("status"));
         setData(current => ({
-          status: has("status") ? values.status : current.status,
+          status: has("status") ? acceptFetchedStatus(current.status, values.status) : current.status,
           acceptance: has("acceptance") ? values.acceptance : current.acceptance,
           participant: has("participant") ? values.participant : current.participant,
           metrics: has("metrics") ? values.metrics : current.metrics,
@@ -180,6 +208,13 @@ export function useObservatory({ hosted = false } = {}) {
       clientLog("dashboard.action.failed", {
         path, error_type: reason?.constructor?.name || typeof reason, error: message,
       }, "error");
+      // A rejected control (409 stale tick, 403 role) means this view of the run
+      // is behind the server's. Refresh before rethrowing so the caller re-enables
+      // its controls against current status rather than the one it just failed
+      // on. The refresh reports through the same banner, so the action's own
+      // message is restated once it settles.
+      await refresh({ quiet: true });
+      setError(message);
       throw reason;
     }
   }, [refresh]);
