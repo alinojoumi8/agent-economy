@@ -146,7 +146,9 @@ export class CityScene {
     ground.position.y=-.6;this.ground.add(ground);
     // Base streets remain stable when the entity filter changes.
     const scenery=buildCityScenery(this.projection.instances);
-    this.scenery.add(...[...scenery.children]);
+    // A geography-free world has no scenery. Three's add() with no arguments
+    // treats undefined as an invalid object; transfer only actual children.
+    for(const child of [...scenery.children])this.scenery.add(child);
     this.updateMarkers();
     if(!this.initiallyFramed){
       this.initiallyFramed=true;

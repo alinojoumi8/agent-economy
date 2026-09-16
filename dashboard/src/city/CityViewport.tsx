@@ -14,7 +14,6 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   const [layer,setLayer]=useState('all'),[region,setRegion]=useState('all'),[search,setSearch]=useState('');
   const preview=useCallback((proposal:CityProposal)=>scene.current?.preview(proposal),[]);
   const [stats,setStats]=useState<SceneStats|null>(null);
-  const statsTime=useRef(0);
   const pickRef=useRef<(key:string)=>void>(()=>{});
   const parsed=useMemo(()=>{try{return {city:envelope?projectCity(envelope):null,error:''};}catch(e){return {city:null,error:e instanceof Error?e.message:'Invalid city data.'};}},[envelope]);
   const city=parsed.city;
@@ -35,13 +34,20 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   useEffect(()=>{
     if(!host.current)return;
     let instance:CityScene|undefined;
+    let statsTimer:ReturnType<typeof setTimeout>|undefined;
+    let latestStats:SceneStats|undefined;
     try{
       instance=new CityScene(host.current,key=>pickRef.current(key),()=>setReady(true),setGraphicsError,value=>{
-        if(performance.now()-statsTime.current>1000){statsTime.current=performance.now();setStats(value);}
+        latestStats=value;
+        // Publish the final sample even when a paused city stops rendering.
+        if(statsTimer===undefined)statsTimer=setTimeout(()=>{
+          statsTimer=undefined;
+          if(latestStats)setStats(latestStats);
+        },250);
       });
       scene.current=instance;
     }catch(e){setGraphicsError('3D graphics are unavailable on this device. The 2D atlas remains available.');}
-    return()=>{instance?.dispose();scene.current=null;};
+    return()=>{clearTimeout(statsTimer);instance?.dispose();scene.current=null;};
   },[]);
   useEffect(()=>{if(city)scene.current?.update(city,visible,selected?.key||null,events,running);else scene.current?.clear();},[city,visible,selected?.key,events,running]);
   const evidenceUrl=(item:CityInstance)=>{

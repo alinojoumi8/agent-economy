@@ -122,7 +122,7 @@ export function FreshnessBadge({
     : historical
       ? `as of tick ${tick}`
       : transport.status === "live"
-        ? `cursor ${transport.cursor}`
+        ? envelope ? `tick ${envelope.tick}` : `feed cursor ${transport.cursor}`
         : transport.status === "connecting"
           /* Nothing has connected yet, so there is nothing to reconnect to. */
           ? "waiting for the live feed"
@@ -161,7 +161,7 @@ export function FreshnessBadge({
         <div><dt>Transport</dt><dd>{transport.status}</dd></div>
         {sourceMode === "projection" && <>
           <div><dt>Dataset</dt><dd>{value(envelope?.projection)}</dd></div>
-          <div><dt>Event cursor</dt><dd>{value(eventCursor)}</dd></div>
+          <div><dt>Event cursor (not a simulation tick)</dt><dd>{value(eventCursor)}</dd></div>
           <div><dt>Snapshot</dt><dd>{value(envelope?.snapshot_version)}</dd></div>
           <div><dt>Semantics</dt><dd>{value(semanticsVersion)}</dd></div>
           <div><dt>Projection</dt><dd>{value(projectionVersion)}</dd></div>

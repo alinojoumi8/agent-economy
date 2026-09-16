@@ -3,6 +3,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import { post } from "../api.js";
+import { RunReportNotice, type RunReportState } from "../components/RunReportNotice";
 import { projectionApi, workspaceApi } from "../app/api";
 import {
   commonObserverParamsFromState,
@@ -64,7 +65,7 @@ type PulseWorldProjection = {
   };
 };
 
-type RunStatus = {
+type RunStatus = RunReportState & {
   status?: string;
   running?: boolean;
 };
@@ -259,6 +260,7 @@ export function WorldPulseWorkspace() {
           Run controls unavailable until authoritative status arrives.
         </p>}
         {controlError && <p className="world-pulse-control-error" role="alert">{controlError}</p>}
+        {live && <RunReportNotice status={run.data} />}
       </div>
     </header>
 

@@ -182,6 +182,32 @@ documented provider setup and explicit live-inference authorization.
 
 ## Test layers
 
+### Bounded DeepSeek and MiniMax UI rehearsal
+
+Use the Passport-enabled local profile when checking the UI with these two
+providers and standard browser OAuth:
+
+```powershell
+.\.venv\Scripts\python.exe run.py --config runs/hermes-deepseek-minimax.yaml --ticks 3 --serve --preflight-live --approve-live-inference
+```
+
+It requires `DEEPSEEK_API_KEY` and `MINIMAX_API_KEY`, caps recorded inference
+spend at $2, routes VC decisions to MiniMax-M3 and other cognition to
+deepseek-flash, and starts paused. Choose Run; at tick 3 it pauses at the
+session boundary. Stop + report finalizes the result. No Kimi or Ollama route
+is used. Provider availability is verified before creating the world.
+
+The Join and My Agents menus expose the existing local Passport flow.
+Connecting a real external agent requires the owner's browser consent;
+running native agents alone does not connect Hermes. OAuth discovery advertises
+only citizen scopes, excluding moderation. Start a fresh client authorization
+after switching worlds: old client registrations and temporary callback URLs
+may no longer be valid. Profiles without Passport consent show an explanatory
+page instead of a missing-tenant/connection validation error, and grant no access.
+
+Workspace navigation resets scroll by pathname: a new page begins at its
+heading, while query-only filters retain the current reading position.
+
 City navigation bookmarks use the separate operator store. Focused checks are
 `tests/test_city_observations_api.py`, `tests/test_operator_workspace.py`, the
 dashboard `cityObservations`/`cityObjectList` node suites, and the city-context and

@@ -304,6 +304,19 @@ test("estate money follows the selected day on desktop and mobile", async ({ pag
   expect(diagnostics.requestFailures).toEqual([]);
 });
 
+test("workspace navigation opens the next page at its heading", async ({ page }) => {
+  await setup(page);
+  await page.setViewportSize({ width: 690, height: 630 });
+  await page.goto("/runs/run-demo/overview");
+  await expect(page.getByRole("heading", { name: "World Pulse", exact: true })).toBeVisible();
+  await page.evaluate(() => window.scrollTo(0, 300));
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBeGreaterThan(0);
+  await page.getByRole("navigation", { name: "Civic Atlas workspaces" })
+    .getByRole("link", { name: "People", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "People", exact: true, level: 1 })).toBeVisible();
+  await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
+});
+
 test("workspace rail exposes every canonical destination with observer context", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/overview?fork=fork-1&tick=3");

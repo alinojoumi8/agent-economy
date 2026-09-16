@@ -1086,6 +1086,26 @@ test("World Pulse controls fail closed without authoritative run status", async 
   await expect(controls.getByRole("button", { name: "Step" })).toBeDisabled();
 });
 
+test("World Pulse preserves the incomplete-day report explanation after reload", async ({ page }) => {
+  let stopped = false;
+  const deferred = { reason: "report_deferred_partial_tick", active_tick: 7, phase: "EVENING" };
+  await page.route("**/api/run/status", route => route.fulfill({ json: {
+    status: stopped ? "finished" : "paused", tick: 6, running: false,
+    pause_reason: stopped ? deferred : null,
+  } }));
+  await page.route("**/api/run/stop", route => {
+    stopped = true;
+    return route.fulfill({ json: { status: "finished", report_path: null, report_deferred: deferred } });
+  });
+  await page.goto("/runs/run-demo/overview");
+  const controls = page.getByRole("group", { name: "Run controls" });
+  await controls.getByRole("button", { name: "Stop + report" }).click();
+  await expect(page.getByRole("status").filter({ hasText: "No end-of-run report was generated" })).toContainText("day 7 (EVENING)");
+  await expect(controls.getByRole("button", { name: "Run", exact: true })).toBeDisabled();
+  await page.reload();
+  await expect(page.getByRole("status").filter({ hasText: "No end-of-run report was generated" })).toBeVisible();
+});
+
 test("World Pulse keeps historical evidence separate from current controls", async ({ page }) => {
   let runStatusRequests = 0;
   page.on("request", request => {

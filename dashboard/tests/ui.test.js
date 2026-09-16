@@ -630,7 +630,14 @@ test("freshness badge does not claim to reconnect before any connection exists",
     const live = renderToStaticMarkup(React.createElement(FreshnessBadge, {
       transport: { ...transport, status: "live", cursor: 4 }, tick: "live",
     }));
-    assert.match(live, /Live: cursor 4/);
+    assert.match(live, /Live: feed cursor 4/);
+    const projected = renderToStaticMarkup(React.createElement(FreshnessBadge, {
+      transport: { ...transport, status: "live", cursor: 34 }, tick: "live",
+      envelope: { tick: 17, event_cursor: 34 },
+    }));
+    assert.match(projected, /Live: tick 17/);
+    assert.match(projected, /Event cursor \(not a simulation tick\)/);
+    assert.doesNotMatch(projected, /Live: tick 34/);
   } finally {
     await vite.close();
   }

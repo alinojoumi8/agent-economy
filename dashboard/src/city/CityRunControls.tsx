@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { workspaceApi } from '../app/api';
+import { RunReportNotice, type RunReportState } from '../components/RunReportNotice';
 
-type RunStatus={status:string;tick:number;running:boolean;remaining_ticks?:number|null};
+type RunStatus=RunReportState & {status:string;tick:number;running:boolean;remaining_ticks?:number|null};
 export function CityRunControls({runId,stale,participantActive=false,hasQueuedAction=false}:{runId:string;stale:boolean;participantActive?:boolean;hasQueuedAction?:boolean}){
   const client=useQueryClient(),[busy,setBusy]=useState(''),[error,setError]=useState('');
   const query=useQuery({queryKey:['city-run-status',runId],queryFn:({signal})=>workspaceApi<RunStatus>('/api/run/status',{signal}),refetchInterval:1000});
@@ -23,5 +24,6 @@ export function CityRunControls({runId,stale,participantActive=false,hasQueuedAc
     <button disabled={!status||terminal||busy==='stop'} onClick={()=>control('stop')} title="Finish this run and generate its report">{busy==='stop'?'Stopping…':'Stop + report'}</button>
     {participantActive&&<span>{hasQueuedAction?'Citizen action queued. Advance one tick to resolve it.':'Queue a citizen action (including Do nothing) before advancing.'} Release the citizen to use continuous Run.</span>}
     {error&&<p role="alert">{error}</p>}
+    <RunReportNotice status={status} />
   </div>;
 }

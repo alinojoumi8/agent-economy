@@ -5,6 +5,20 @@ async function openCity(page:import('@playwright/test').Page){
   await installCityFixture(page);await page.goto('/runs/city-fixture/world?cityView=3d');
   await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
 }
+
+test('worlds without recorded places rebuild without invalid scene objects',async({page})=>{
+  const errors:string[]=[];
+  page.on('console',message=>{if(message.type()==='error')errors.push(message.text());});
+  page.on('pageerror',error=>errors.push(error.message));
+  await installCityFixture(page,{agents:8,places:0});
+  await page.goto('/runs/city-fixture/world?cityView=3d');
+  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
+  await page.getByLabel('Search city').fill('Citizen 1');
+  await expect(page.locator('#city-entity-select option')).toHaveCount(1);
+  await page.getByLabel('Search city').fill('');
+  await expect(page.locator('#city-entity-select option')).toHaveCount(10);
+  expect(errors).toEqual([]);
+});
 test('300 agents / 100 places render; keyboard selection, camera, evidence and history work',async({page})=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await openCity(page);
   await expect(page.locator('#city-entity-select option')).toHaveCount(402);
@@ -45,6 +59,9 @@ test('streets and housing keep rendering resources bounded when layers change',a
   const evidence=page.locator('.city3d-notes code');
   await expect(evidence).toContainText('geometries');
   const geometries=async()=>Number((await evidence.innerText()).match(/(\d+) geometries/)![1]);
+  // The canvas mounts before the first renderer telemetry sample. A zero
+  // placeholder is not the resource baseline of the populated city.
+  await expect.poll(geometries).toBeGreaterThan(0);
   const baseline=await geometries();
   for(let i=0;i<4;i++){
     await page.locator('.city3d-toolbar select').first().selectOption('place');
