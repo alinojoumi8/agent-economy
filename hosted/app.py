@@ -239,7 +239,7 @@ class RunUpdateBody(_StrictBody):
 
 class RunControlBody(_StrictBody):
     action: Literal["start", "pause", "stop", "step", "speed", "snapshot"]
-    max_ticks: int | None = Field(default=None, ge=1, le=1_000_000)
+    max_ticks: int | None = Field(default=None, ge=1, le=1000)
     delay_s: float | None = Field(default=None, ge=0, le=3600)
 
     @model_validator(mode="after")
@@ -250,6 +250,8 @@ class RunControlBody(_StrictBody):
             raise ValueError("delay_s is only valid for speed control")
         if self.action != "start" and self.max_ticks is not None:
             raise ValueError("max_ticks is only valid for start control")
+        if self.action == "start" and self.max_ticks is None:
+            self.max_ticks = 100
         return self
 
 

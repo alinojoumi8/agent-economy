@@ -4,16 +4,53 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import hashlib
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
 from pathlib import Path, PurePosixPath
 import re
 import subprocess
 import tempfile
+import threading
 import time
 
 NAME = re.compile(r"catalog-(\d{8}T\d{6}Z)\.dump")
 STATE = Path("/tmp/catalog-backup-success.json")
+
+
+def last_success():
+    """Return zero on missing/corrupt/future receipts so monitoring fails closed."""
+    try:
+        value = json.loads(STATE.read_text(encoding="utf-8"))["completed_at"]
+        if isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value <= time.time():
+            return float(value)
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return 0.0
+
+
+class MetricsHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/metrics":
+            self.send_error(404)
+            return
+        payload = ("# TYPE agent_economy_catalog_backup_last_success_seconds gauge\n"
+                   f"agent_economy_catalog_backup_last_success_seconds {last_success()}\n").encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; version=0.0.4")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+    def log_message(self, *args):
+        pass
+
+
+class MetricsServer(HTTPServer):
+    def get_request(self):
+        connection, address = super().get_request()
+        connection.settimeout(5)
+        return connection, address
 
 
 def digest(path):
@@ -107,7 +144,9 @@ def backup_once():
             server.batch([f'rm "{server.remote}/{item}"', f'rm "{server.remote}/{item}.json"'])
         receipt = {"completed_at": time.time(), "name": name, "sha256": checksum,
                    "bytes": dump.stat().st_size, "pruned": len(stale)}
-        STATE.write_text(json.dumps(receipt), encoding="utf-8")
+        staged_state = STATE.with_suffix(".pending")
+        staged_state.write_text(json.dumps(receipt), encoding="utf-8")
+        os.replace(staged_state, STATE)
         print(json.dumps(receipt), flush=True)
 
 
@@ -142,7 +181,7 @@ def main(argv=None):
     parser.add_argument("--output")
     args = parser.parse_args(argv)
     if args.command == "health":
-        if not STATE.is_file() or time.time() - json.loads(STATE.read_text())["completed_at"] > 90 * 60:
+        if time.time() - last_success() > 90 * 60:
             raise SystemExit(1)
     elif args.command == "fetch":
         if not args.name or not args.output:
@@ -151,6 +190,8 @@ def main(argv=None):
     elif args.command == "once":
         backup_once()
     else:
+        server = MetricsServer(("0.0.0.0", 9091), MetricsHandler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
         while True:
             try:
                 backup_once()

@@ -1,0 +1,13 @@
+# Disposable Linux recovery/operations runner. Never deploy this test image.
+FROM postgres:17-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv openssh-client ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH" PYTHONUNBUFFERED=1 PYTHONUTF8=1
+WORKDIR /app
+COPY requirements.lock tests/requirements-storage.lock /tmp/requirements/
+RUN pip install --no-cache-dir --require-hashes -r /tmp/requirements/requirements.lock -r /tmp/requirements/requirements-storage.lock
+COPY . .
+RUN python deploy/hostinger/install_litestream.py --output /usr/local/bin/litestream
+ENV AE_LITESTREAM_BIN=/usr/local/bin/litestream
+ENTRYPOINT ["python", "-m", "pytest"]

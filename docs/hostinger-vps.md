@@ -193,6 +193,11 @@ need more capacity or a reviewed policy adjustment.
 
 ## Repeatable recovery checks
 
+For the combined catalog/world replacement drill, alert delivery, bounded
+hosted execution and upgrade/rollback procedure, see
+[production operations](production-operations.md). Alertmanager requires the
+ignored `secrets/alert_webhook_url` file before starting the complete stack.
+
 Run the real-binary drill on Linux, WSL with a Linux filesystem, or CI:
 
 ```bash
