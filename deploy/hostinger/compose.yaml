@@ -144,6 +144,26 @@ services:
       retries: 1
     restart: unless-stopped
 
+  alertmanager:
+    image: prom/alertmanager:v0.28.1@sha256:27c475db5fb156cab31d5c18a4251ac7ed567746a2483ff264516437a39b15ba
+    command: [--config.file=/etc/alertmanager/alertmanager.yml, --storage.path=/alertmanager, --data.retention=120h, --cluster.listen-address=]
+    networks: [backend, outbound]
+    read_only: true
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    volumes:
+      - ./alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      - type: bind
+        source: ./secrets/alert_webhook_url
+        target: /run/secrets/alert_webhook_url
+        read_only: true
+        bind: {create_host_path: false}
+      - alertmanager-data:/alertmanager
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: "3"}
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:v3.5.0
     command:
@@ -191,3 +211,4 @@ volumes:
   caddy-data: {}
   caddy-config: {}
   prometheus-data: {}
+  alertmanager-data: {}
