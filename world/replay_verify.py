@@ -14,6 +14,8 @@ from world.replay_storage import (
     ReplayResourceLimitError,
 )
 
+from engine.payloads import configure_payload_reads, unpack_payload
+
 
 # Metadata and checkpoint paths are operational, not simulated world state.
 EXCLUDED_TABLES = {
@@ -152,7 +154,7 @@ def _connect(path: str | Path) -> sqlite3.Connection:
     uri = f"file:{resolved.as_posix()}?mode=ro"
     conn = sqlite3.connect(uri, uri=True)
     try:
-        conn.row_factory = sqlite3.Row
+        configure_payload_reads(conn)
         conn.execute("PRAGMA query_only=ON")
         conn.execute("BEGIN")
         return conn
@@ -222,6 +224,7 @@ def _tables(conn: sqlite3.Connection) -> list[str]:
 
 
 def _canonical_value(column: str, value: Any) -> Any:
+    value = unpack_payload(value)
     if value is None or isinstance(value, (int, float)):
         return value
     if isinstance(value, bytes):

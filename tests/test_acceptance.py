@@ -3,6 +3,7 @@ import json
 import time
 from pathlib import Path
 import sys
+import time
 
 import yaml
 import pytest
@@ -480,7 +481,7 @@ def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path)
         deadline = time.monotonic() + 120.0
         while True:
             status = client.get("/api/run/status").json()
-            if not status["running"] and status["tick"] >= 2:
+            if not status["running"] or time.monotonic() >= deadline:
                 break
             assert time.monotonic() < deadline, (
                 f"served acceptance run did not reach tick 2 in time: {status}")

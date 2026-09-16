@@ -1,0 +1,35 @@
+enabled: true
+public_base_url: ${AGENT_ECONOMY_PUBLIC_BASE_URL}
+session_cookie_name: __Host-ae_session
+session_ttl_seconds: 43200
+database:
+  dsn_env: AGENT_ECONOMY_HOSTED_DATABASE_URL
+  password_env: AGENT_ECONOMY_HOSTED_DATABASE_PASSWORD
+  runtime_role: agent_economy_app
+  supervisor_dsn_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_URL
+  supervisor_password_env: AGENT_ECONOMY_HOSTED_SUPERVISOR_DATABASE_PASSWORD
+  supervisor_role: agent_economy_supervisor
+  migration_lock_key: 7321104221
+  connect_timeout_seconds: 10
+artifacts:
+  backend: filesystem
+  root: /var/lib/agent-economy/artifacts
+runtime:
+  run_directory: /var/lib/agent-economy/runs
+  snapshot_directory: /var/lib/agent-economy/snapshots
+  checkpoint_directory: /var/lib/agent-economy/checkpoints
+  writer_lease_seconds: 60
+  shutdown_grace_seconds: 30
+  recovery_mode: litestream
+  litestream_config: /app/deploy/hostinger/litestream.yml
+  litestream_binary: /usr/local/bin/litestream
+  snapshot_interval_ticks: 0
+  snapshot_keep_last: 4
+  storage_policy:
+    checkpoint_keep_last: 4
+    checkpoint_max_bytes: 21474836480
+    min_free_bytes: 5368709120
+    max_run_bytes: 10737418240
+    max_tenant_bytes: 53687091200
+    compress_payloads: true
+    durable_writes: true

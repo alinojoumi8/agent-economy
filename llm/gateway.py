@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
+from engine.storage_policy import StoragePolicy
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, AdapterTimeoutError, build_adapters
 from .completion_guard import BudgetExceeded, CompletionGuard
 from .readiness import ProviderConfigurationError, validate_llm_config
@@ -649,6 +650,9 @@ class Gateway:
     def __init__(self, store, config: dict, *, completion_guard: CompletionGuard | None = None):
         self.store = store
         self.config = config
+        storage_policy = StoragePolicy.from_mapping(config.get("storage_policy"))
+        if storage_policy is not None:
+            storage_policy.apply(store)
         llm_cfg = config.get("llm", {})
         sampling = llm_cfg.get("research_sampling")
         if sampling is not None and (not isinstance(sampling, dict)

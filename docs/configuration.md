@@ -26,6 +26,11 @@ in `run_meta`, so a database remains self-describing.
 
 Profiles never silently change provider, model, endpoint, or credential type.
 
+The [Hostinger VPS configuration](../config/hosted.hostinger.yaml) uses filesystem
+recovery copies and SFTP Litestream streaming. Local runs can opt into
+`--storage-policy config/storage.production.yaml`, including on resume without
+rewriting scientific configuration. See [storage policy fields and limits](storage-and-recovery.md).
+
 ## Environment variables
 
 Secrets belong in the ignored `.env` file or process environment.

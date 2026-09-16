@@ -12,6 +12,8 @@ from typing import Any, Callable
 
 from .export_storage import ExportBundleError, ExportLimits, ExportResourceLimitError, ExportResources
 from .export_validation import validate_parquet_tables
+from engine.payloads import unpack_payload
+
 from .hashing import (
     _contract_for_database,
     canonical_hashes,
@@ -127,7 +129,7 @@ def _export_table(
             resources.record_size(source)
             row = []
             for index, column in enumerate(column_names):
-                value = source[index]
+                value = unpack_payload(source[index])
                 if column in redacted_columns:
                     if value is not None:
                         redaction_counts[column] += 1
