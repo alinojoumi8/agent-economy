@@ -34,6 +34,14 @@ The [operator runbook](../operator-runbook.md) contains reference-stack commands
 Compose syntax check or CI database test does not establish a hosted staging
 environment.
 
+The pinned MinIO server and client releases are fetched from the vendor's Quay
+registry with verified multi-platform digests. The original Docker Hub server
+image failed to pull during candidate CI on 2026-09-16. These pins restore the
+existing reference fixtures; they do not establish a maintained production
+object-store dependency. MinIO now distributes its community edition as source
+only. Production selection must include a supported S3 service or a reviewed,
+patched build and update process. See the [upstream distribution notice](https://github.com/minio/minio#source-only-distribution).
+
 ## External client execution
 
 The [acceptance checklist](../world-os/EXTERNAL-AGENT-ACCEPTANCE.md) remains

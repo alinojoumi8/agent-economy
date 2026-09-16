@@ -662,7 +662,7 @@ jobs:
             -p 127.0.0.1:59000:9000 \
             -e MINIO_ROOT_USER="$MINIO_ROOT_USER" \
             -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
-            minio/minio:RELEASE.2025-04-22T22-12-26Z \
+            quay.io/minio/minio:RELEASE.2025-04-22T22-12-26Z@sha256:a1ea29fa28355559ef137d71fc570e508a214ec84ff8083e39bc5428980b015e \
             server /data
           for attempt in $(seq 1 60); do
             if docker exec ae-r22-ci-postgres \
@@ -686,7 +686,7 @@ jobs:
             -e MINIO_ROOT_PASSWORD="$MINIO_ROOT_PASSWORD" \
             -e S3_ACCESS_KEY_ID="$S3_ACCESS_KEY_ID" \
             -e S3_SECRET_ACCESS_KEY="$S3_SECRET_ACCESS_KEY" \
-            minio/mc:RELEASE.2025-04-16T18-13-26Z -ec '
+            quay.io/minio/mc:RELEASE.2025-04-16T18-13-26Z@sha256:aead63c77f9db9107f1696fb08ecb0faeda23729cde94b0f663edf4fe09728e3 -ec '
               mc alias set local http://127.0.0.1:59000 "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD";
               mc mb --ignore-existing local/agent-economy-runs;
               mc anonymous set none local/agent-economy-runs;
