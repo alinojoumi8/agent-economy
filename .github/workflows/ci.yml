@@ -43,6 +43,8 @@ jobs:
           python-version: "3.12"
       - name: Install locked orchestration dependencies
         run: python -m pip install --require-hashes -r requirements.lock
+      - name: Verify monitoring and hosted execution limits
+        run: python -m pytest -q tests/test_ops_monitoring.py tests/test_hosted_load_test.py tests/test_hosted_app.py
       - name: Restore account and world state and probe the recovered HTTPS service
         run: python -m scripts.run_ops_drill --output tmp/ci-recovery
       - name: Deliver firing and resolved alerts to a disposable receiver
