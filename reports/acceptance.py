@@ -32,11 +32,41 @@ SCHEDULED_E2E_LATENCY_KIND = "scheduled_e2e_v1"
 _SCHEDULED_TIMER_DETAIL_KIND = "scheduled_e2e_timer_v1"
 
 
+def configured_llm_routes(config: dict) -> list[dict]:
+    """Every route mapping the gateway can dispatch to, across all route groups.
+
+    The gateway routes from ``default_route`` and ``routes`` but also from
+    ``tier_routes``, ``premium_routes``, and ``citizen_model_cohorts`` (each of
+    which may carry ``primary``/``fallback`` pairs). The approval gate must see
+    the same universe, or a cohort-only live profile could bill a provider
+    without ``--approve-live-inference``.
+    """
+    llm = config.get("llm", {}) or {}
+    candidates: list = [llm.get("default_route", {}) or {}]
+    for group in ("routes", "tier_routes", "premium_routes"):
+        values = llm.get(group, {}) or {}
+        if isinstance(values, dict):
+            candidates.extend(values.values())
+    cohorts = llm.get("citizen_model_cohorts", []) or []
+    if isinstance(cohorts, list):
+        candidates.extend(cohorts)
+    routes: list[dict] = []
+    for candidate in candidates:
+        if not isinstance(candidate, dict):
+            continue
+        if "primary" in candidate or "fallback" in candidate:
+            for key in ("primary", "fallback"):
+                if isinstance(candidate.get(key), dict):
+                    routes.append(candidate[key])
+        else:
+            routes.append(candidate)
+    return routes
+
+
 def uses_paid_providers(config: dict) -> bool:
     """Return whether any configured route can call a non-local provider."""
-    llm = config.get("llm", {})
-    routes = [llm.get("default_route", {}), *llm.get("routes", {}).values()]
-    providers = {str(route.get("provider", "scripted")) for route in routes}
+    providers = {
+        str(route.get("provider", "scripted")) for route in configured_llm_routes(config)}
     return bool(providers.difference({"scripted", "mock", "replay"}))
 
 

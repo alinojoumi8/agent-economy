@@ -1,0 +1,90 @@
+# Bounded local Passport/MCP world using only DeepSeek and MiniMax.
+# python run.py --config runs/hermes-deepseek-minimax.yaml --ticks 3 --serve --preflight-live --approve-live-inference
+extends: hermes-local.yaml
+communications:
+  autonomous_scripted_enabled: false
+budget:
+  cap_usd: 2.0
+  conversation_pairs: 4
+  oracle_plan_in_reserve: true
+  oracle_reserve_usd: 0.2
+  report_reserve_usd: 0.25
+  thresholds:
+  - 0.6
+  - 0.8
+  - 0.95
+llm:
+  concurrency: 3
+  conversation_max_tokens: 16384
+  decision_max_tokens: 16384
+  default_route:
+    model: deepseek-flash
+    provider: deepseek
+  founder_max_tokens: 16384
+  institutional_role_purposes: true
+  live_only: true
+  memory_max_tokens: 16384
+  newsroom_max_tokens: 1200
+  pricing:
+    MiniMax-M3:
+      cache: 0.06
+      in: 0.3
+      out: 1.2
+    deepseek-flash:
+      cache: 0.006
+      in: 0.3
+      out: 1.2
+  provider_retries: 1
+  providers:
+    deepseek:
+      api_key_env: DEEPSEEK_API_KEY
+      base_url: https://api.deepseek.com
+      concurrency: 6
+      healthcheck_path: /models
+      kind: openai_compat
+      max_tokens_field: max_tokens
+      prompt_cache_mode: provider_automatic
+      request_defaults:
+        stream: false
+        thinking:
+          type: disabled
+      timeout_s: 60
+    minimax:
+      api_key_env: MINIMAX_API_KEY
+      base_url: https://api.minimax.io/v1
+      concurrency: 2
+      healthcheck_path: /models
+      kind: openai_compat
+      max_tokens_field: max_completion_tokens
+      prompt_cache_mode: provider_automatic
+      request_defaults:
+        max_completion_tokens: 4096
+        reasoning_split: true
+      timeout_s: 90
+  reporter_max_tokens: 1600
+  require_preflight_live: true
+  routes:
+    central_banker:
+      model: deepseek-flash
+      provider: deepseek
+    citizen:
+      model: deepseek-flash
+      provider: deepseek
+    credit_officer:
+      model: deepseek-flash
+      provider: deepseek
+    editor:
+      model: deepseek-flash
+      provider: deepseek
+    founder:
+      model: deepseek-flash
+      provider: deepseek
+    oracle:
+      model: deepseek-flash
+      provider: deepseek
+    reporter:
+      model: deepseek-flash
+      provider: deepseek
+    vc_partner:
+      model: MiniMax-M3
+      provider: minimax

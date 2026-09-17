@@ -9,6 +9,7 @@ multiplier stretches citizen cadences under budget pressure.
 from __future__ import annotations
 
 from engine.store import Store, load_json
+from engine.population_history import ResidenceHistory
 
 
 class Scheduler:
@@ -26,6 +27,7 @@ class Scheduler:
             config.get("behavior", {}).get("institutional_act_every", 1)))
         self.retired_news_every = max(1, int(
             config.get("lifecycle", {}).get("retired_news_every", 1)))
+        self.residence = ResidenceHistory(store) if self.engine_semantics_version >= 21 else None
 
     def scheduled_agents(self, tick: int, cadence_multiplier: int = 1, citizens_enabled: bool = True) -> list:
         semantics_version = int(self.config.get("engine_semantics_version", 1))
@@ -44,6 +46,8 @@ class Scheduler:
         # Resolve wake-up state in three bounded queries.  At flagship scale the
         # former per-citizen probes caused up to three extra SQLite queries for
         # every living agent on every tick.
+        if self.residence is not None:
+            agents = [person for person in agents if self.residence.is_living_resident(int(person["id"]), tick)]
         wake_state = self._wake_state(tick)
         out = []
         civic_enabled = (
@@ -55,6 +59,10 @@ class Scheduler:
             int(self.config.get("engine_semantics_version", 1)) >= 6
             and self._has_pending_liquidity_request())
         for a in agents:
+            if semantics_version >= 15 and int(a["age"]) < 18:
+                # Children have deterministic needs; adult decision seats start
+                # at majority without conferring employment or a compute grant.
+                continue
             if (self.institutional_role_purposes
                     and a["role"] in {"editor", "reporter"}):
                 # The Newsroom owns these seats and already records role-bound

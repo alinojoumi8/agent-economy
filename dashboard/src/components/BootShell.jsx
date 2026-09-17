@@ -10,8 +10,28 @@
  * `html, body, #root`, so it is the same surface the observatory settles onto
  * and there is no flash between the two.  It deliberately shows no world data:
  * nothing here is a placeholder value.
+ *
+ * When the probe has failed for good (`error`), the same chrome stays up and
+ * says so.  Mounting either shell on a guess would be worse: the local
+ * observatory on a hosted origin is the wrong app, not a degraded one.
  */
-export function BootShell() {
+export function BootShell({ error = "" }) {
+  if (error) {
+    return <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-8 px-6 py-16">
+      <div>
+        <p className="text-xs font-bold tracking-[.18em] text-[var(--civic-cobalt)] uppercase">
+          Agent Economy
+        </p>
+        <h1 className="mt-3 text-4xl font-semibold text-[var(--civic-navy)]">
+          Observatory
+        </h1>
+        <p role="alert" className="mt-4 text-sm leading-relaxed text-[var(--civic-muted)]">
+          The server did not say which deployment this is ({error}), so no
+          workspace was opened. Reload to ask again.
+        </p>
+      </div>
+    </main>;
+  }
   return <main
     className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center gap-8 px-6 py-16"
     aria-busy="true"

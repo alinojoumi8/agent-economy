@@ -1,0 +1,611 @@
+--- a/engine/migrations/registry.py
++++ b/engine/migrations/registry.py
+@@ -20,6 +20,7 @@
+     v023_daily_time,
+     v024_estate_cash,
+     v025_asset_succession,
++    v026_population_residence,
+ )
+ 
+ 
+@@ -94,6 +95,9 @@
+     Migration.create(
+         25, v025_asset_succession.NAME, v025_asset_succession.SQL,
+         verify=v025_asset_succession.verify),
++    Migration.create(
++        26, v026_population_residence.NAME, v026_population_residence.SQL,
++        verify=v026_population_residence.verify),
+ )
+ 
+ 
+--- a/engine/schema.py
++++ b/engine/schema.py
+@@ -8,7 +8,7 @@
+ 
+ from .migrations import apply_migrations
+ 
+-SCHEMA_VERSION = 25
++SCHEMA_VERSION = 26
+ 
+ 
+ class SchemaCompatibilityError(RuntimeError):
+--- a/engine/semantics.py
++++ b/engine/semantics.py
+@@ -5,7 +5,7 @@
+ 
+ 
+ MIN_ENGINE_SEMANTICS_VERSION = 1
+-CURRENT_ENGINE_SEMANTICS_VERSION = 20
++CURRENT_ENGINE_SEMANTICS_VERSION = 21
+ 
+ 
+ class UnsupportedEngineSemantics(ValueError):
+--- /dev/null
++++ b/tests/population_schema.py
+@@ -0,0 +1,26 @@
++"""Create authentic pre-population storage for additive upgrade tests."""
++from contextlib import contextmanager
++
++import pytest
++
++import engine.schema as schema
++import engine.store as store_module
++from engine.migrations import registry
++
++
++@contextmanager
++def legacy_schema25():
++    """Limit storage creation to schema 25, restoring public registration on exit.
++
++    Callers must close every writable Store before leaving this context. Stored
++    run semantics are supplied explicitly by each test and are never rewritten.
++    """
++    assert schema.SCHEMA_VERSION == store_module.SCHEMA_VERSION == 26
++    assert registry.registered_migrations()[-1].version == 26
++    with pytest.MonkeyPatch.context() as patch:
++        patch.setattr(registry, "_MIGRATIONS", tuple(
++            migration for migration in registry.registered_migrations()
++            if migration.version <= 25))
++        patch.setattr(schema, "SCHEMA_VERSION", 25)
++        patch.setattr(store_module, "SCHEMA_VERSION", 25)
++        yield
+--- a/tests/test_population_actions.py
++++ b/tests/test_population_actions.py
+@@ -100,9 +100,7 @@
+     assert world.store.scalar('SELECT COUNT(*) FROM memories WHERE agent_id=23 AND last_accessed_tick=2') > 0
+ 
+ 
+-def test_partial_household_command_requires_care_and_each_adults_own_consent(moving, monkeypatch):
+-    import engine.semantics as semantics
+-    monkeypatch.setattr(semantics, 'CURRENT_ENGINE_SEMANTICS_VERSION', 21)
++def test_partial_household_command_requires_care_and_each_adults_own_consent(moving):
+     c = moving
+     c.e.config['engine_semantics_version'] = 21
+     child = child_household(c)
+--- a/tests/test_population_authority.py
++++ b/tests/test_population_authority.py
+@@ -9,7 +9,7 @@
+ 
+ from engine.business_control import BusinessControlError
+ from engine.estates import EstateError
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.population import PopulationBoundary
+ from engine.population_history import ResidenceHistory
+ from engine.project_rights import interests_at, steward_at
+@@ -28,7 +28,7 @@
+ 
+ def enable_draft(world):
+     e = world.economy
+-    e.store.conn.executescript(SQL)
++    verify_population_schema(e.store.conn)
+     history = ResidenceHistory(e.store)
+     for row in e.store.query("SELECT agent_id FROM person_lifecycle ORDER BY agent_id"):
+         history.record_origin(row["agent_id"])
+--- a/tests/test_population_export.py
++++ b/tests/test_population_export.py
+@@ -1,6 +1,6 @@
+-"""Draft population journals remain authoritative in replay and research exports.
+-
+-Only these disposable fixtures admit the unregistered population migration.
++"""Population journals remain authoritative in replay and research exports.
++
++Schema upgrades preserve older research contracts while Semantics 21 uses v8.
+ """
+ import asyncio
+ import copy
+@@ -13,7 +13,7 @@
+ import duckdb
+ import pytest
+ 
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.store import Store, open_read_only_connection
+ from research.export_bundle import ExportBundleError, ExportLimits, export_bundle, validate_bundle
+ from research.hashing import (
+@@ -22,6 +22,7 @@
+ from world.replay_verify import verify_replay_connections
+ 
+ from .test_bounded_export import _reseal
++from .population_schema import legacy_schema25
+ from .test_population_scenario import proposal, scenario_world
+ 
+ 
+@@ -40,15 +41,18 @@
+ @pytest.mark.parametrize('semantics,version', [(1, 1), (2, 1), (8, 1), (9, 2),
+     (14, 2), (15, 3), (16, 3), (17, 4), (18, 5), (19, 6), (20, 7)])
+ def test_empty_population_extensions_preserve_each_older_contract(tmp_path, semantics, version):
+-    store = Store(str(tmp_path / 'legacy.db'), create=True)
+-    try:
+-        store.init_run_meta('legacy', 1, {'engine_semantics_version': semantics})
++    path = tmp_path / 'legacy.db'
++    with legacy_schema25(), closing(Store(str(path), create=True)) as store:
++        config = {'engine_semantics_version': semantics}
++        store.init_run_meta('legacy', 1, config)
++        assert store.scalar('SELECT schema_version FROM run_meta') == 25
+         before = canonical_hashes(store)
+         assert before['contract_id'] == f'hash-contract-v{version}'
+-        store.conn.executescript(SQL)
++    with closing(Store(str(path), create=False)) as store:
++        assert store.scalar('SELECT schema_version FROM run_meta') == 26
++        assert json.loads(store.scalar('SELECT config_json FROM run_meta')) == config
++        verify_population_schema(store.conn)
+         assert canonical_hashes(store) == before
+-    finally:
+-        store.close()
+ 
+ 
+ def test_all_population_journals_require_the_new_authoritative_contract(scenario_world):
+@@ -76,7 +80,7 @@
+ def test_incomplete_population_storage_is_rejected(tmp_path, change, message):
+     store = Store(str(tmp_path / 'draft.db'), create=True)
+     try:
+-        store.conn.executescript(SQL)
++        verify_population_schema(store.conn)
+         store.init_run_meta('draft', 1, {'engine_semantics_version': 21})
+         store.execute(change)
+         with pytest.raises(HashContractError, match=message):
+--- a/tests/test_population_metrics.py
++++ b/tests/test_population_metrics.py
+@@ -126,8 +126,7 @@
+     assert contents(c.e.store) == before
+ 
+ 
+-def test_study_outcomes_bind_residence_semantics_without_relabeling_legacy(monkeypatch):
+-    from engine import semantics
++def test_study_outcomes_bind_residence_semantics_without_relabeling_legacy():
+     from research.price_catalog import draft_price_study
+     from research.studies import StudySpec
+     from run_config import load_config
+@@ -138,11 +137,10 @@
+     raw['analysis']['outcomes'].append(dict(key='local_jobs', metric='unemployment',
+         metric_version='unique-worker-share-v7', aggregation='terminal', currency=None, purpose='exploratory'))
+     assert StudySpec.model_validate(raw).model.engine_semantics_version == 20
+-    raw['model']['engine_semantics_version'] = 21
++    raw['model']['engine_semantics_version'] = 22
+     with pytest.raises(ValueError, match='unsupported'):
+         StudySpec.model_validate(raw)
+-    # Private draft contract validation only; public admission remains unchanged.
+-    monkeypatch.setattr(semantics, 'CURRENT_ENGINE_SEMANTICS_VERSION', 21)
++    raw['model']['engine_semantics_version'] = 21
+     with pytest.raises(ValueError, match='unknown metric/version'):
+         StudySpec.model_validate(raw)
+     raw['analysis']['outcomes'][-1]['metric_version'] = 'resident-unemployment-v21'
+--- a/tests/test_population_migration_admission.py
++++ b/tests/test_population_migration_admission.py
+@@ -1,7 +1,7 @@
+-"""Exercise unregistered schema 26 through the real runner in disposable copies.
++"""Exercise registered schema 26 through the real runner in disposable copies.
+ 
+ Schema installation must preserve existing run semantics and canonical rows.
+-Public registration and the supported semantics ceiling remain unchanged.
++Legacy fixtures retain schema 25 until the upgrade under test opens a copy.
+ """
+ import asyncio
+ from contextlib import closing
+@@ -24,6 +24,7 @@
+ from world.replay_verify import verify_replay_connections
+ 
+ from .test_population_residence_history import contents
++from .population_schema import legacy_schema25
+ from .test_semantics20_civic_succession import civic_config
+ 
+ 
+@@ -44,15 +45,13 @@
+         }
+ 
+ 
+-def install_draft(monkeypatch, migration=None, *, admit_semantics=False):
+-    assert 26 not in {item.version for item in registry.registered_migrations()}
+-    migration = migration or registry.Migration.create(26,draft.NAME,draft.SQL,verify=draft.verify)
+-    monkeypatch.setattr(registry,'_MIGRATIONS',registry.registered_migrations()+(migration,))
+-    monkeypatch.setattr(schema,'SCHEMA_VERSION',26)
+-    monkeypatch.setattr(store_module,'SCHEMA_VERSION',26)
+-    if admit_semantics:
+-        monkeypatch.setattr(semantics,'CURRENT_ENGINE_SEMANTICS_VERSION',21)
+-    return migration
++def population_migration():
++    assert schema.SCHEMA_VERSION == store_module.SCHEMA_VERSION == 26
++    assert semantics.CURRENT_ENGINE_SEMANTICS_VERSION == 21
++    registered = [item for item in registry.registered_migrations() if item.version == 26]
++    assert len(registered) == 1
++    assert registered[0].checksum_sha256 == registry.migration_checksum(draft.SQL)
++    return registered[0]
+ 
+ 
+ @pytest.fixture
+@@ -62,16 +61,21 @@
+     config.update(checkpoint_every=0,speed_delay_s=0)
+     assert config['engine_semantics_version']==20
+     assert config['llm']['default_route']['provider']=='scripted'
+-    store = Store(str(path))
+-    store.init_run_meta('original-schema25',int(config['seed']),config)
+-    world = World(store,config)
+-    try:
+-        world.initialize()
+-        asyncio.run(world.step())
+-        assert world.store.tick==1
+-        assert world.economy.ledger.reconcile()[0]
+-    finally:
+-        world.close()
++    with legacy_schema25():
++        store = Store(str(path))
++        store.init_run_meta('original-schema25',int(config['seed']),config)
++        world = World(store,config)
++        try:
++            world.initialize()
++            asyncio.run(world.step())
++            assert world.store.tick==1
++            assert world.economy.ledger.reconcile()[0]
++            assert store.scalar('SELECT schema_version FROM run_meta') == 25
++            assert store.scalar('SELECT MAX(version) FROM schema_migrations') == 25
++            assert store.scalar("SELECT COUNT(*) FROM sqlite_master WHERE name='person_residence_events'") == 0
++        finally:
++            world.close()
++    population_migration()
+     before = stamp(path)
+     yield path,config
+     assert stamp(path)==before
+@@ -79,7 +83,7 @@
+ 
+ 
+ @pytest.mark.parametrize('failure',['late_sql','verification','history_receipt'])
+-def test_draft_migration_failure_rolls_back_existing_run_and_all_new_objects(source20,tmp_path,monkeypatch,failure):
++def test_population_migration_failure_rolls_back_existing_run_and_all_new_objects(source20,tmp_path,monkeypatch,failure):
+     source,_ = source20
+     target = tmp_path/'upgrade-failure.db'
+     shutil.copy2(source,target)
+@@ -91,24 +95,26 @@
+             draft.verify(conn)
+             raise RuntimeError('injected population verification failure')
+     else:
+-        with closing(Store(str(target))) as store:
++        with legacy_schema25(), closing(Store(str(target))) as store:
+             store.execute("CREATE TRIGGER refuse_population_migration BEFORE INSERT ON schema_migrations "
+                           "WHEN NEW.version=26 BEGIN SELECT RAISE(ABORT,'injected history receipt failure'); END")
+     before = state(target)
+     migration = registry.Migration.create(26,draft.NAME,sql,verify=verify)
+-    install_draft(monkeypatch,migration)
++    population_migration()
++    monkeypatch.setattr(registry, '_MIGRATIONS', tuple(
++        migration if item.version == 26 else item for item in registry.registered_migrations()))
+     with pytest.raises(registry.MigrationError,match='failed applying migration v26'):
+         Store(str(target),create=False)
+     assert state(target)==before
+ 
+ 
+-def test_additive_upgrade_and_reopen_preserve_identity_accounts_history_and_stored_rules(source20,tmp_path,monkeypatch):
++def test_additive_upgrade_and_reopen_preserve_identity_accounts_history_and_stored_rules(source20,tmp_path):
+     source,config = source20
+     target = tmp_path/'upgraded.db'
+     shutil.copy2(source,target)
+     before = state(target)
+-    migration = install_draft(monkeypatch)
+-    assert semantics.CURRENT_ENGINE_SEMANTICS_VERSION==20
++    migration = population_migration()
++    assert config['engine_semantics_version'] == 20
+     with closing(Store(str(target),create=False)) as store:
+         assert store.scalar('SELECT schema_version FROM run_meta')==26
+         assert json.loads(store.scalar('SELECT config_json FROM run_meta'))==config
+@@ -132,11 +138,11 @@
+ 
+ 
+ @pytest.mark.parametrize('corruption',['checksum','unknown_history','missing_guard'])
+-def test_upgraded_history_or_missing_guard_is_rejected_without_repair(source20,tmp_path,monkeypatch,corruption):
++def test_upgraded_history_or_missing_guard_is_rejected_without_repair(source20,tmp_path,corruption):
+     source,_ = source20
+     target = tmp_path/'corrupt-upgrade.db'
+     shutil.copy2(source,target)
+-    install_draft(monkeypatch)
++    population_migration()
+     with closing(Store(str(target))) as store:
+         if corruption=='checksum':
+             store.execute("UPDATE schema_migrations SET checksum_sha256=? WHERE version=26",('0'*64,))
+@@ -152,9 +158,9 @@
+     assert state(target)==before
+ 
+ 
+-def test_semantics20_replay_into_schema26_preserves_recorded_behavior_and_v7_exports(source20,tmp_path,monkeypatch):
++def test_semantics20_replay_into_schema26_preserves_recorded_behavior_and_v7_exports(source20,tmp_path):
+     source,config = source20
+-    install_draft(monkeypatch)
++    population_migration()
+     replay_config = dict(config,replay_source_path=str(source),replay_source_closed=True)
+     target = tmp_path/'old-semantics-replay.db'
+     store = Store(str(target))
+@@ -179,8 +185,8 @@
+             assert manifest['contract_id']=='hash-contract-v7'
+ 
+ 
+-def test_fresh_schema26_world_registers_origins_restarts_and_replays_with_v8_exports(tmp_path,monkeypatch):
+-    install_draft(monkeypatch,admit_semantics=True)
++def test_fresh_schema26_world_registers_origins_restarts_and_replays_with_v8_exports(tmp_path):
++    population_migration()
+     config = civic_config()
+     config.update(engine_semantics_version=21,checkpoint_every=0,speed_delay_s=0)
+     config.setdefault('population',{})['movement_schedule']=[]
+@@ -254,8 +260,8 @@
+     (21,'current_receipt','schema_migrations'),
+ ])
+ def test_replay_compatibility_keeps_population_data_unknown_tables_and_required_receipts_visible(
+-        tmp_path,monkeypatch,semantics_version,corruption,difference):
+-    install_draft(monkeypatch,admit_semantics=True)
++        tmp_path,semantics_version,corruption,difference):
++    population_migration()
+     source,target = tmp_path/'reference.db',tmp_path/'changed.db'
+     for path in (source,target):
+         with closing(Store(str(path))) as store:
+--- a/tests/test_population_profile_admission.py
++++ b/tests/test_population_profile_admission.py
+@@ -1,7 +1,7 @@
+-"""Explicit draft upgrades of provider-free initialization profiles.
++"""Explicit population upgrades of provider-free initialization profiles.
+ 
+ These are prescribed initial conditions. Historical profile versions keep their
+-own semantics; the public version ceiling is patched only in disposable tests.
++own semantics; disposable worlds opt in through the public version validator.
+ """
+ import asyncio
+ from contextlib import closing
+@@ -10,9 +10,8 @@
+ 
+ import pytest
+ 
+-import engine.semantics as semantics
+ from engine.households import HouseholdError
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.store import Store, open_read_only_connection
+ from research.export_bundle import export_bundle, validate_bundle
+ from run_config import load_config
+@@ -26,8 +25,7 @@
+ 
+ 
+ @pytest.mark.parametrize('profile', PROFILES, ids=['life-course','civic'])
+-def test_draft_profile_initialization_restarts_replays_and_exports(tmp_path, monkeypatch, profile):
+-    monkeypatch.setattr(semantics, 'CURRENT_ENGINE_SEMANTICS_VERSION', 21)
++def test_population_profile_initialization_restarts_replays_and_exports(tmp_path, profile):
+     config = load_config(profile)
+     assert config['llm']['default_route']['provider'] == 'scripted'
+     assert all(route['provider']=='scripted' for route in config['llm'].get('routes',{}).values())
+@@ -46,7 +44,7 @@
+         store = Store(str(path),create=fresh)
+         try:
+             if fresh:
+-                store.conn.executescript(SQL)
++                verify_population_schema(store.conn)
+                 store.init_run_meta(name,int(config['seed']),run_config)
+             world = World(store,run_config,replay=source is not None)
+             world.initialize()
+@@ -112,8 +110,7 @@
+     ('runs/v2-behavioral-rehearsal.yaml','behavioral_fixture'),
+     ('runs/v2-spec-closure-rehearsal.yaml','spec_closure_fixture'),
+ ], ids=['legacy-startup','legacy-trade'])
+-def test_legacy_genesis_fixture_upgrade_is_refused_before_world_effects(tmp_path, monkeypatch, profile, fixture):
+-    monkeypatch.setattr(semantics, 'CURRENT_ENGINE_SEMANTICS_VERSION', 21)
++def test_legacy_genesis_fixture_upgrade_is_refused_before_world_effects(tmp_path, profile, fixture):
+     config = load_config(profile)
+     assert config['engine_semantics_version'] < 15 and config[fixture]['enabled']
+     assert config['llm']['default_route']['provider'] == 'scripted'
+@@ -121,7 +118,7 @@
+     config.setdefault('lifecycle',{})['population_mode'] = 'drift'
+     store = Store(str(tmp_path/'refused.db'))
+     try:
+-        store.conn.executescript(SQL)
++        verify_population_schema(store.conn)
+         store.init_run_meta('refused-upgrade',int(config['seed']),config)
+         before = contents(store)
+         # Preserve the pre-existing Semantics-15 identity contract. These
+--- a/tests/test_population_residence_history.py
++++ b/tests/test_population_residence_history.py
+@@ -1,4 +1,4 @@
+-"""Draft residence persistence, conservation and historical population proofs.
++"""Residence persistence, conservation and historical population proofs.
+ 
+ These tests exercise the history layer only. They do not establish household
+ movement admission, absent-actor exclusion or an enabled Semantics-21 world.
+@@ -12,13 +12,14 @@
+ import pytest
+ 
+ from engine.migrations import registered_migrations
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.population_history import ResidenceError, ResidenceHistory
+ from engine.schema import SCHEMA_VERSION
+ from engine.semantics import CURRENT_ENGINE_SEMANTICS_VERSION, validate_engine_semantics_version
+ from engine.store import Store, open_read_only_connection
+ 
+ from .conftest import make_agent
++from .population_schema import legacy_schema25
+ from .test_semantics19_estate_cash import spent_loan
+ from .test_semantics20_estate_cases import estate_case
+ 
+@@ -33,8 +34,7 @@
+ @pytest.fixture
+ def residence_case(estate_case):
+     e, bank, person, wallet, heir, heir_wallet = estate_case
+-    # Explicit fixture installation: no registered migration or public opt-in.
+-    e.store.conn.executescript(SQL)
++    verify_population_schema(e.store.conn)
+     history = ResidenceHistory(e.store)
+     origins = {agent: history.record_origin(agent) for agent in (person, heir)}
+     history.record_census(0)
+@@ -42,15 +42,31 @@
+                            heir_wallet=heir_wallet, history=history, origins=origins)
+ 
+ 
+-def test_unfinished_population_boundary_is_not_advertised(store):
+-    assert SCHEMA_VERSION == 25 and CURRENT_ENGINE_SEMANTICS_VERSION == 20
+-    assert 26 not in {migration.version for migration in registered_migrations()}
++def test_population_registration_preserves_explicit_semantics_and_empty_history(store):
++    assert SCHEMA_VERSION == 26 and CURRENT_ENGINE_SEMANTICS_VERSION == 21
++    assert [migration.version for migration in registered_migrations()].count(26) == 1
++    assert validate_engine_semantics_version(20) == 20
++    assert validate_engine_semantics_version(21) == 21
+     with pytest.raises(ValueError, match="unsupported"):
+-        validate_engine_semantics_version(21)
++        validate_engine_semantics_version(22)
+     before = contents(store)
+-    with pytest.raises(ResidenceError, match="missing"):
+-        ResidenceHistory(store)
++    verify_population_schema(store.conn)
++    ResidenceHistory(store)
++    assert store.scalar('SELECT COUNT(*) FROM person_residence_events') == 0
+     assert contents(store) == before
++
++
++def test_legacy_storage_cannot_open_residence_history_without_an_upgrade(tmp_path):
++    with legacy_schema25():
++        legacy = Store(str(tmp_path / 'legacy-schema25.db'))
++        try:
++            legacy.init_run_meta('legacy-schema25', 1, {'engine_semantics_version': 20})
++            before = contents(legacy)
++            with pytest.raises(ResidenceError, match='missing'):
++                ResidenceHistory(legacy)
++            assert contents(legacy) == before
++        finally:
++            legacy.close()
+ 
+ 
+ def test_history_preserves_all_financial_and_identity_rows_and_never_refunds_arrival(residence_case):
+--- a/tests/test_population_resident_services.py
++++ b/tests/test_population_resident_services.py
+@@ -20,7 +20,7 @@
+ from agents.participant import ParticipantError, ParticipantService
+ from agents.prompts import ContextBuilder
+ from engine.core import Economy
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.population import PopulationBoundary
+ from engine.population_history import ResidenceError, ResidenceHistory
+ from engine.store import Store
+@@ -60,7 +60,7 @@
+     heir, heir_wallet = make_agent(e, bank, "Second citizen", cash=1_000_000, region_id=1, political_lean=1.0)
+     e.politics.initialize(0)
+     e.households.initialize()
+-    store.conn.executescript(SQL)
++    verify_population_schema(store.conn)
+     history = ResidenceHistory(store)
+     for row in store.query("SELECT agent_id FROM person_lifecycle ORDER BY agent_id"):
+         history.record_origin(row["agent_id"])
+--- a/tests/test_population_scenario.py
++++ b/tests/test_population_scenario.py
+@@ -1,6 +1,6 @@
+ """Declared movement inputs through real World phases, restart and replay.
+ 
+-Only disposable databases admit the unregistered semantics/migration draft.
++Disposable databases use the registered migration and explicit Semantics 21.
+ """
+ import asyncio
+ from contextlib import closing
+@@ -12,8 +12,7 @@
+ 
+ import pytest
+ 
+-import engine.semantics as semantics
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.keyed_random import person_key, stable_key
+ from engine.population_history import ResidenceError
+ from engine.population_scenario import parse_schedule
+@@ -47,8 +46,7 @@
+ 
+ 
+ @pytest.fixture
+-def scenario_world(monkeypatch, tmp_path):
+-    monkeypatch.setattr(semantics, 'CURRENT_ENGINE_SEMANTICS_VERSION', 21)
++def scenario_world(tmp_path):
+     worlds = []
+ 
+     def create(entries, name='world', *, replay_source=None, scheduled_births=(), config_overrides=None):
+@@ -62,7 +60,7 @@
+         store = Store(str(path), create=fresh)
+         try:
+             if fresh:
+-                store.conn.executescript(SQL)
++                verify_population_schema(store.conn)
+                 store.init_run_meta(name, config['seed'], config)
+             world = World(store, config, replay=replay_source is not None)
+             world.initialize()
+--- a/tests/test_population_world.py
++++ b/tests/test_population_world.py
+@@ -1,7 +1,6 @@
+-"""Whole-World checks for the unregistered population semantics draft.
+-
+-Only a disposable fixture admits version 21 and installs its draft SQL. Public
+-schema/version admission stays unchanged until the full integration is ready.
++"""Whole-World checks for the registered population semantics.
++
++Disposable worlds select version 21 through the ordinary supported config path.
+ """
+ import asyncio
+ from contextlib import closing
+@@ -10,9 +9,8 @@
+ 
+ import pytest
+ 
+-import engine.semantics as semantics
+ from engine.city import CityError
+-from engine.migrations.v026_population_residence import SQL
++from engine.migrations.v026_population_residence import verify as verify_population_schema
+ from engine.population_history import ResidenceError
+ from engine.store import Store, open_read_only_connection
+ from world.loop import World
+@@ -24,8 +22,7 @@
+ 
+ 
+ @pytest.fixture
+-def draft_world_factory(monkeypatch, tmp_path):
+-    monkeypatch.setattr(semantics, "CURRENT_ENGINE_SEMANTICS_VERSION", 21)
++def draft_world_factory(tmp_path):
+     worlds = []
+ 
+     def create(name="world", *, replay_source=None):
+@@ -37,7 +34,7 @@
+         fresh = not path.exists()
+         store = Store(str(path), create=fresh)
+         if fresh:
+-            store.conn.executescript(SQL)
++            verify_population_schema(store.conn)
+             store.init_run_meta(name, config["seed"], config)
+         try:
+             world = World(store, config, replay=replay_source is not None)
+--- a/tests/test_semantics8_foundations.py
++++ b/tests/test_semantics8_foundations.py
+@@ -59,7 +59,7 @@
+ def test_fresh_store_applies_current_migration_history(tmp_path) -> None:
+     store = Store(str(tmp_path / "fresh.db"))
+     try:
+-        assert SCHEMA_VERSION == 25
++        assert SCHEMA_VERSION == 26
+         communication_tables = {
+             row["name"] for row in store.query(
+                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+@@ -89,6 +89,7 @@
+             (23, "daily_time_and_earned_wages", "applied"),
+             (24, "estate_cash_and_bank_principal", "applied"),
+             (25, "estate_assets_and_business_succession", "applied"),
++            (26, "population_residence_history", "applied"),
+         ]
+         news_columns = {
+             row["name"] for row in store.query("PRAGMA table_info(news_articles)")

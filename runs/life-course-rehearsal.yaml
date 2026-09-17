@@ -1,0 +1,22 @@
+# Uncalibrated, provider-free life-course mechanics profile.
+# One tick is one day; demographic years remain 365 days.
+# Use a measured runtime/storage budget before a multi-decade campaign.
+extends: household-decisions-rehearsal.yaml
+engine_semantics_version: 20
+checkpoint_every: 0
+speed_delay_s: 0
+
+lifecycle:
+  population_mode: drift
+  birth_annual_prob: 0.05
+
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+
+budget:
+  # Scripted routes cost zero. Keep the governor denominator positive;
+  # the campaign harness must separately enforce a zero paid-provider cap.
+  cap_usd: 1.0
+  oracle_reserve_usd: 0.0
+  conversation_pairs: 0

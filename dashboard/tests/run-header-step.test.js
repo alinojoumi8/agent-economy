@@ -9,6 +9,22 @@ const observatorySource = readFileSync(
   new URL("../src/components/Observatory.jsx", import.meta.url), "utf8",
 );
 
+test("provider budget preserves fractional dollar caps and recorded small charges", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { RunHeader } = await vite.ssrLoadModule("/src/components/RunHeader.jsx");
+    const markup = renderToStaticMarkup(React.createElement(RunHeader, {
+      status: { tick: 1, status: "paused", governor: { total_spend_usd: 0.0025, cap_usd: 0.5 } },
+      participant: {}, connected: true, loading: false,
+      act: async () => {}, onShock: () => {}, onReplay: () => {},
+    }));
+    assert.match(markup, /\$0\.0025 \/ \$0\.5/);
+    assert.match(markup, /aria-valuenow="0\.5"/);
+  } finally {
+    await vite.close();
+  }
+});
+
 
 test("an in-flight Step is shown as running while Pause and Stop remain available", async () => {
   const vite = await createServer({

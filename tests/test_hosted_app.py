@@ -708,6 +708,19 @@ def csrf_headers(client: TestClient) -> dict[str, str]:
     return {CSRF_HEADER_NAME: value}
 
 
+def test_hosted_start_defaults_to_bounded_ticks_and_rejects_excess(client, services):
+    login(client)
+    endpoint = f"/api/v2/tenants/{TENANT_A}/runs/{RUN_A}/control"
+    response = client.post(endpoint, headers=csrf_headers(client), json={"action": "start"})
+    assert response.status_code == 200
+    controller = services[2].handles[(TENANT_A, RUN_A)].controller
+    assert controller.actions == [("start", 100)]
+    for ticks in (0, -1, 1001, 1_000_000):
+        rejected = client.post(endpoint, headers=csrf_headers(client), json={"action": "start", "max_ticks": ticks})
+        assert rejected.status_code == 422
+    assert controller.actions == [("start", 100)]
+
+
 def test_login_sets_exact_hardened_cookies_without_returning_credentials(client: TestClient):
     response = login(client)
     cookies = response.headers.get_list("set-cookie")

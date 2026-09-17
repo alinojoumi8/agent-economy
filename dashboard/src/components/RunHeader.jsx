@@ -146,7 +146,7 @@ export function RunHeader({ status, participant, connected, loading, act, onShoc
         <div className="w-full min-w-[200px] sm:ml-auto sm:w-64">
           <div className="mb-1 flex justify-between text-[10px] uppercase tracking-wider text-slate-500">
             <span>Provider budget · L{status?.governor?.level ?? 0}</span>
-            <span className="tabular">${number(spend, 2)} / {capped ? `$${number(cap, 0)}` : "uncapped"}</span>
+            <span className="tabular">${number(spend, 4)} / {capped ? `$${number(cap, 4)}` : "uncapped"}</span>
           </div>
           <div className="h-1.5 overflow-hidden rounded-full bg-ink-700" role="progressbar" aria-label={capped ? "Provider budget used" : "Provider spend uncapped"} aria-valuenow={fraction} aria-valuemin="0" aria-valuemax="100">
             <div className="h-full rounded-full bg-gradient-to-r from-mint-400 via-gold-300 to-coral-300 transition-[width]" style={{ width: `${fraction}%` }} />

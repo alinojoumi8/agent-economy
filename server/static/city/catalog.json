@@ -1,0 +1,257 @@
+{
+  "assets": [
+    {
+      "dimensions": [
+        3.2,
+        3.4,
+        2.8
+      ],
+      "key": "residence",
+      "variants": {
+        "high": {
+          "bytes": 15940,
+          "material_count": 4,
+          "materials": [
+            "AE Blue Glass",
+            "AE Dark",
+            "AE Slate",
+            "AE Terracotta"
+          ],
+          "sha256": "87a4e9f4a8bebaffe1ec557d7f8af43fc911e8483d184762c549fa9a344bc941",
+          "triangles": 122,
+          "url": "/city/residence-high.glb"
+        },
+        "low": {
+          "bytes": 10040,
+          "material_count": 4,
+          "materials": [
+            "AE Blue Glass",
+            "AE Dark",
+            "AE Slate",
+            "AE Terracotta"
+          ],
+          "sha256": "40227a64ef3cd2b593666f285157d4cf081717db617f77ca25423c574a4831bf",
+          "triangles": 80,
+          "url": "/city/residence-low.glb"
+        }
+      }
+    },
+    {
+      "dimensions": [
+        4.2,
+        7.7,
+        4.2
+      ],
+      "key": "office",
+      "variants": {
+        "high": {
+          "bytes": 44548,
+          "material_count": 3,
+          "materials": [
+            "AE Blue Glass",
+            "AE Concrete",
+            "AE Slate"
+          ],
+          "sha256": "16abfeb47e0eadb2d6a04b24d6ea333b8b88dccda3eae1e12224ebf2a7c9703d",
+          "triangles": 356,
+          "url": "/city/office-high.glb"
+        },
+        "low": {
+          "bytes": 11340,
+          "material_count": 3,
+          "materials": [
+            "AE Blue Glass",
+            "AE Concrete",
+            "AE Slate"
+          ],
+          "sha256": "b7d18c0f430f8ae2928d2f9d2da549662a47da074c3a60989ba02543cd46a748",
+          "triangles": 92,
+          "url": "/city/office-low.glb"
+        }
+      }
+    },
+    {
+      "dimensions": [
+        5.4,
+        3.5,
+        3.8
+      ],
+      "key": "workshop",
+      "variants": {
+        "high": {
+          "bytes": 20288,
+          "material_count": 4,
+          "materials": [
+            "AE Blue Glass",
+            "AE Dark",
+            "AE Sandstone",
+            "AE Slate"
+          ],
+          "sha256": "d706e7bc2ef2f64e456743cd342671ed78783258f0ac0f75525e0b539c3ec90c",
+          "triangles": 188,
+          "url": "/city/workshop-high.glb"
+        },
+        "low": {
+          "bytes": 10800,
+          "material_count": 3,
+          "materials": [
+            "AE Dark",
+            "AE Sandstone",
+            "AE Slate"
+          ],
+          "sha256": "b348d15a5389d3aefddc4ed7eba647d0b9837308e38ee74926b4697448ac18dd",
+          "triangles": 96,
+          "url": "/city/workshop-low.glb"
+        }
+      }
+    },
+    {
+      "dimensions": [
+        5.2,
+        4.0,
+        4.4
+      ],
+      "key": "bank",
+      "variants": {
+        "high": {
+          "bytes": 19140,
+          "material_count": 2,
+          "materials": [
+            "AE Civic Cobalt",
+            "AE Concrete"
+          ],
+          "sha256": "1d55fd17b2f4c56dbb5be49b5c7bb408c7ff6e1cb2f517ef0ff16ad909910a34",
+          "triangles": 232,
+          "url": "/city/bank-high.glb"
+        },
+        "low": {
+          "bytes": 11464,
+          "material_count": 2,
+          "materials": [
+            "AE Civic Cobalt",
+            "AE Concrete"
+          ],
+          "sha256": "bf462016b402ee633819da154aaaaf2afe80a5411d3f63db26d70da46bb6933f",
+          "triangles": 112,
+          "url": "/city/bank-low.glb"
+        }
+      }
+    },
+    {
+      "dimensions": [
+        6.4,
+        5.2,
+        4.8
+      ],
+      "key": "civic_hall",
+      "variants": {
+        "high": {
+          "bytes": 13824,
+          "material_count": 4,
+          "materials": [
+            "AE Blue Glass",
+            "AE Civic Cobalt",
+            "AE Concrete",
+            "AE Dark"
+          ],
+          "sha256": "25e0c1e437f3862aa679318f68fdb6a67acad1a17b01ca40b60c589263a6bb3f",
+          "triangles": 124,
+          "url": "/city/civic_hall-high.glb"
+        },
+        "low": {
+          "bytes": 10644,
+          "material_count": 3,
+          "materials": [
+            "AE Civic Cobalt",
+            "AE Concrete",
+            "AE Dark"
+          ],
+          "sha256": "b36ba30a4ce95555a71b150dbf98e5bc37962d83411969dc1e765dd67cd90fca",
+          "triangles": 100,
+          "url": "/city/civic_hall-low.glb"
+        }
+      }
+    },
+    {
+      "dimensions": [
+        3.8,
+        3.6,
+        3.8
+      ],
+      "key": "neutral",
+      "variants": {
+        "high": {
+          "bytes": 21948,
+          "material_count": 3,
+          "materials": [
+            "AE Blue Glass",
+            "AE Dark",
+            "AE Neutral"
+          ],
+          "sha256": "21e767a3affd314d4c7ba66ccaae0c1fd1193c7dfd35bbd5bbfda8c3fd7d03d0",
+          "triangles": 176,
+          "url": "/city/neutral-high.glb"
+        },
+        "low": {
+          "bytes": 9888,
+          "material_count": 3,
+          "materials": [
+            "AE Blue Glass",
+            "AE Dark",
+            "AE Neutral"
+          ],
+          "sha256": "78aad71bec2dbe24d1214654b963f577b9f177172e2b258028481a0e2ebda0e4",
+          "triangles": 80,
+          "url": "/city/neutral-low.glb"
+        }
+      }
+    },
+    {
+      "dimensions": [
+        0.8,
+        1.8,
+        0.8
+      ],
+      "key": "agent",
+      "variants": {
+        "high": {
+          "bytes": 15960,
+          "material_count": 3,
+          "materials": [
+            "AE Agent Cyan",
+            "AE Concrete",
+            "AE Dark"
+          ],
+          "sha256": "a479cecfd9d553b97183b55d8f9edadda2bdacfa49407efbfee9ff8edb741ef7",
+          "triangles": 152,
+          "url": "/city/agent-high.glb"
+        },
+        "low": {
+          "bytes": 8100,
+          "material_count": 3,
+          "materials": [
+            "AE Agent Cyan",
+            "AE Concrete",
+            "AE Dark"
+          ],
+          "sha256": "c2a66fc8027f822489992edc74236683ce519bd06908cc07069fdb7df0d7a4cc",
+          "triangles": 60,
+          "url": "/city/agent-low.glb"
+        }
+      }
+    }
+  ],
+  "coordinate_system": {
+    "authoring": "Z_UP",
+    "export": "Y_UP",
+    "ground_plane": "y=0",
+    "unit": "meter"
+  },
+  "delivery_budget_bytes": 10000000,
+  "generator": {
+    "blender_version": "5.2.1 LTS",
+    "source": "city/blender/export_assets.py",
+    "source_sha256": "36298bada80963f012ca71c49944e6614417a26bf27d0674e319c7510b26766c"
+  },
+  "schema_version": 1
+}

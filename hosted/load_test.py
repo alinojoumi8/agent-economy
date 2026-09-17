@@ -142,9 +142,17 @@ async def run_load_test(
     timeout_seconds: float = 10.0,
     transport: httpx.AsyncBaseTransport | None = None,
     build_ref: str | None = None,
+    max_p95_ms: float | None = None,
 ) -> dict[str, Any]:
     """Run authenticated own-scope reads and cross-tenant denial probes."""
 
+    if max_p95_ms is not None and (
+        isinstance(max_p95_ms, bool)
+        or not isinstance(max_p95_ms, (int, float))
+        or not math.isfinite(max_p95_ms)
+        or not 0 < max_p95_ms <= MAX_TIMEOUT_SECONDS * 1000
+    ):
+        raise ValueError("max_p95_ms must be finite and between 0 and 120000 milliseconds")
     if len(users) < 2:
         raise ValueError("at least two tenant users are required")
     if len(users) > MAX_LOAD_USERS:
@@ -308,6 +316,7 @@ async def run_load_test(
         if result.operation.startswith("cross_") and result.passed
     )
     complete_isolation_probe = cross_tenant_denials >= len(users)
+    latency_budget_met = max_p95_ms is None or _percentile(latencies, 0.95) <= max_p95_ms
     return {
         "schema_version": 1,
         "recorded_at": datetime.now(timezone.utc).isoformat(),
@@ -324,13 +333,15 @@ async def run_load_test(
         "complete_isolation_probe": complete_isolation_probe,
         "operation_counts": dict(sorted(operation_counts.items())),
         "elapsed_seconds": elapsed_seconds,
+        "max_p95_ms": max_p95_ms,
+        "latency_budget_met": latency_budget_met,
         "latency_ms": {
             "p50": _percentile(latencies, 0.50),
             "p95": _percentile(latencies, 0.95),
             "max": round(max(latencies, default=0.0), 3),
         },
         "status": (
-            "passed" if not failures and results and complete_isolation_probe else "failed"
+            "passed" if not failures and results and complete_isolation_probe and latency_budget_met else "failed"
         ),
         "failures": [asdict(result) for result in failures[:20]],
     }
@@ -372,6 +383,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--timeout-seconds", type=float, default=10.0)
     parser.add_argument("--allow-insecure-loopback", action="store_true")
     parser.add_argument("--build-ref")
+    parser.add_argument("--max-p95-ms", type=float)
     parser.add_argument("--output", type=Path)
     return parser
 
@@ -387,6 +399,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             allow_insecure_loopback=args.allow_insecure_loopback,
             timeout_seconds=args.timeout_seconds,
             build_ref=args.build_ref,
+            max_p95_ms=args.max_p95_ms,
         )
     )
     if args.output is not None:

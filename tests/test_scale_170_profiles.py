@@ -24,7 +24,7 @@ LIVE_PROFILE_CASES = [
         DEEPSEEK,
         "DEEPSEEK_API_KEY",
         "deepseek",
-        "deepseek-v4-flash",
+        "deepseek-flash",
         6,
         25.0,
     ),
@@ -181,7 +181,7 @@ def test_scale_170_deepseek_profile_identifies_the_documented_model_version():
 
     assert config["llm"]["providers"]["deepseek"][
         "documented_model_version"
-    ] == "DeepSeek-V4-Flash-0731"
+    ] == "DeepSeek-V4.1-Flash"
 
 
 def test_scale_170_minimax_disables_thinking_for_bounded_json_contracts():

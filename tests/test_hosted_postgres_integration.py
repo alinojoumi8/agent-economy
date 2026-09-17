@@ -8,7 +8,7 @@ from uuid import uuid4
 
 import pytest
 
-from hosted.catalog import HostedCatalog, TENANT_CONTEXT_SQL
+from hosted.catalog import CatalogConflict, CatalogError, HostedCatalog, TENANT_CONTEXT_SQL
 from hosted.catalog_auth import CatalogAuthService
 from hosted.migrations import migrate
 from hosted.security import hash_password
@@ -55,6 +55,27 @@ def supervisor_catalog(catalog: HostedCatalog) -> HostedCatalog:
     )
     supervisor.assert_runtime_security()
     return supervisor
+
+
+def test_anonymous_registration_cap_serializes_concurrent_writers(catalog, monkeypatch):
+    import psycopg
+    with psycopg.connect(RUNTIME_DSN) as connection:
+        before = connection.execute("SELECT COUNT(*) FROM external_oauth_clients").fetchone()[0]
+    monkeypatch.setattr("hosted.catalog.MAX_OAUTH_CLIENTS", before + 1)
+    def register(index):
+        try:
+            return catalog.register_external_oauth_client(
+                client_name=f"Bounded fixture {index}",
+                redirect_uris=["https://client.example/callback"],
+                grant_types=["authorization_code", "refresh_token"], response_types=["code"])
+        except CatalogError as exc:
+            assert "registration capacity" in str(exc)
+            return None
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = list(executor.map(register, range(12)))
+    assert sum(result is not None for result in results) == 1
+    with psycopg.connect(RUNTIME_DSN) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM external_oauth_clients").fetchone()[0] == before + 1
 
 
 @pytest.fixture(scope="module")
@@ -208,3 +229,31 @@ def test_runtime_role_can_complete_login_and_append_redacted_audit(two_tenants) 
 
     assert str(authenticated.user.user_id) == str(admin_a.id)
     assert str(authenticated.session.tenant_id) == str(tenant_a.id)
+
+def test_runtime_role_can_update_only_the_external_agent_quota(two_tenants) -> None:
+    import psycopg
+
+    (tenant_a, admin_a, _run_a), (_tenant_b, admin_b, _run_b) = two_tenants
+    catalog = HostedCatalog(RUNTIME_DSN)
+    # The admin endpoint updates tenants.max_external_agents_per_run through the
+    # web role; without its column-scoped grant this raised InsufficientPrivilege
+    # and surfaced as a 503 on every correctly provisioned deployment.
+    assert catalog.set_external_agent_policy(
+        tenant_a.id, actor_user_id=admin_a.id, max_external_agents_per_run=7,
+    ) == {"max_external_agents_per_run": 7}
+
+    # The grant is exactly that column: every other tenant field stays read-only.
+    with psycopg.connect(RUNTIME_DSN) as connection:
+        connection.execute(TENANT_CONTEXT_SQL, (str(tenant_a.id),))
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            connection.execute(
+                "UPDATE tenants SET display_name='renamed' WHERE id=%s",
+                (str(tenant_a.id),),
+            )
+        connection.rollback()
+
+    # A foreign tenant's administrator is not an administrator here.
+    with pytest.raises(CatalogConflict):
+        catalog.set_external_agent_policy(
+            tenant_a.id, actor_user_id=admin_b.id, max_external_agents_per_run=3,
+        )

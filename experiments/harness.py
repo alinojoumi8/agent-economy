@@ -21,12 +21,11 @@ Spec (YAML file or dict):
     event_outcomes: [bank_failure, bankruptcy, death]
 
 Run: `python run.py --experiment spec.yaml` or `python -m experiments.harness spec.yaml`.
-Run databases land in data/experiments/<name>/ (kept out of data/runs so the
-replay catalogue stays a catalogue of real runs).
+Every invocation claims a fresh batch below data/experiments/<name>/ and
+reports/out/studies/<name>/. Source/replay databases and receipts are preserved.
 """
 from __future__ import annotations
 
-import asyncio
 import html as _html
 import json
 import logging
@@ -37,7 +36,9 @@ from pathlib import Path
 import yaml
 
 from engine.store import Store
-from world.loop import World
+from research.analysis import paired_summary
+from research.artifacts import create_batch, publish_bytes, publish_json, safe_key
+from research.attempts import execute_attempt, verify_attempt
 from observability import get_logger, log_event as operational_log
 from run_config import deep_merge, load_config
 
@@ -63,6 +64,11 @@ def load_spec(path_or_dict) -> dict:
     spec.setdefault("control", True)
     spec.setdefault("metrics", ["unemployment", "cpi", "index", "gdp_proxy"])
     spec.setdefault("event_outcomes", ["bank_failure", "bankruptcy", "death"])
+    safe_key(spec["name"])
+    if (type(spec["ticks"]) is not int or spec["ticks"] < 1
+            or not spec["seeds"] or any(type(seed) is not int for seed in spec["seeds"])
+            or len(set(spec["seeds"])) != len(spec["seeds"])):
+        raise ValueError("experiment requires a positive integer horizon and unique integer seeds")
     return spec
 
 
@@ -73,41 +79,32 @@ def _run_arm(spec: dict, seed: int, arm: str, data_dir: Path) -> dict:
     cfg["checkpoint_every"] = 0
     cfg["speed_delay_s"] = 0.0
     cfg["shocks"] = spec.get("shocks", []) if arm == "treatment" else []
-    run_id = f"{spec['name']}_s{seed}_{arm}"
-    db = data_dir / f"{run_id}.db"
-    if db.exists():
-        db.unlink()   # experiments are derived artifacts; a re-run replaces them
-    store = Store(str(db))
-    store.init_run_meta(run_id, seed, cfg)
-    world = World(store, cfg)
-    world.initialize()
+    def collect(store: Store) -> dict:
+        result = {"metrics": {}, "series": {}, "events": {}}
+        for name in spec["metrics"]:
+            series = store.metric_series(name)
+            result["series"][name] = series
+            result["metrics"][name] = float(series[-1][1]) if series else None
+        for kind in spec["event_outcomes"]:
+            result["events"][kind] = int(store.scalar(
+                "SELECT COUNT(*) FROM events WHERE kind=?", (kind,), default=0))
+        spend = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
+        result["spend_usd"] = round(spend, 4)
+        return result
 
-    async def go():
-        await world.run(max_ticks=int(spec["ticks"]))
-    asyncio.run(go())
-
-    ok, diag = world.economy.ledger.reconcile()
-    result = {"run_id": run_id, "seed": seed, "arm": arm, "ticks": store.tick,
-              "reconciled": ok, "metrics": {}, "series": {}, "events": {}}
-    for name in spec["metrics"]:
-        series = store.metric_series(name)
-        result["series"][name] = series
-        result["metrics"][name] = float(series[-1][1]) if series else None
-    for kind in spec["event_outcomes"]:
-        result["events"][kind] = int(store.scalar(
-            "SELECT COUNT(*) FROM events WHERE kind=?", (kind,), default=0))
-    spend = float(store.scalar("SELECT COALESCE(SUM(cost_usd),0) FROM llm_calls", default=0.0))
-    result["spend_usd"] = round(spend, 4)
-    store.close()
-    return result
+    return execute_attempt(
+        run_id=f"{spec['name']}_s{seed}_{arm}", seed=seed, arm=arm, config=cfg,
+        ticks=spec["ticks"], data_dir=data_dir, collect=collect)
 
 
 # ── the experiment ───────────────────────────────────────────────────────────
 def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
                    data_root: str = "data/experiments", quiet: bool = False) -> dict:
     spec = load_spec(spec_path_or_dict)
-    data_dir = Path(data_root) / spec["name"]
-    data_dir.mkdir(parents=True, exist_ok=True)
+    batch = create_batch(spec["name"], {"runner": "experiment-v2", "spec": spec,
+                                       "minimum_pairs": 2},
+                         data_root=data_root, out_dir=out_dir)
+    data_dir = Path(batch["data_dir"])
     arms = ["treatment"] + (["control"] if spec["control"] else [])
     operational_log(logger, logging.INFO, "experiment.started",
                     name=spec["name"], seeds=len(spec["seeds"]), arms=arms,
@@ -126,20 +123,26 @@ def run_experiment(spec_path_or_dict, out_dir: str = "reports/out",
                                 error_type=type(exc).__name__, error=str(exc))
                 raise
             results.append(result)
-            operational_log(logger, logging.INFO, "experiment.arm.completed",
+            operational_log(logger, logging.INFO, "experiment.arm.completed" if
+                            result["execution_status"] == "completed" else "experiment.arm.incomplete",
                             name=spec["name"], seed=seed, arm=arm,
                             ticks=result["ticks"], reconciled=result["reconciled"],
                             spend_usd=result["spend_usd"])
 
+    for row in results:
+        if row["eligibility"]["status"] == "eligible":
+            reasons = verify_attempt(row, expected_ticks=spec["ticks"])
+            if reasons:
+                row["eligibility"] = {"status": "ineligible", "reasons": reasons}
     summary = _summarize(spec, results)
-    report_path = _write_report(spec, results, summary, out_dir)
+    report_path = _write_report(spec, results, summary, batch["report_dir"])
     summary["report_path"] = report_path
     payload = {"spec": {k: spec[k] for k in ("name", "seeds", "ticks", "control",
                                                "metrics", "event_outcomes")},
-               "results": results, "summary": summary}
-    json_path = Path(out_dir) / f"experiment_{spec['name']}.json"
-    json_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+               "batch": batch, "results": results, "summary": summary}
+    json_path = Path(batch["report_dir"]) / f"experiment_{spec['name']}.json"
     summary["json_path"] = str(json_path)
+    publish_json(json_path, payload)
     operational_log(logger, logging.INFO, "experiment.completed",
                     name=spec["name"], runs=len(results), report_path=report_path)
     if not quiet:
@@ -157,23 +160,22 @@ def _stats(values: list[float]) -> dict:
 
 
 def _summarize(spec: dict, results: list[dict]) -> dict:
-    by_arm = {arm: [r for r in results if r["arm"] == arm]
-              for arm in {r["arm"] for r in results}}
-    metrics = {}
-    for name in spec["metrics"]:
-        metrics[name] = {arm: _stats([r["metrics"].get(name) for r in rs])
-                         for arm, rs in by_arm.items()}
-        t, c = metrics[name].get("treatment"), metrics[name].get("control")
-        if t and c and t["mean"] is not None and c["mean"] is not None:
-            metrics[name]["effect_mean"] = round(t["mean"] - c["mean"], 4)
-    events = {}
-    for kind in spec["event_outcomes"]:
-        events[kind] = {arm: _stats([float(r["events"].get(kind, 0)) for r in rs])
-                        for arm, rs in by_arm.items()}
-        t, c = events[kind].get("treatment"), events[kind].get("control")
-        if t and c and t["mean"] is not None and c["mean"] is not None:
-            events[kind]["effect_mean"] = round(t["mean"] - c["mean"], 4)
-    return {"metrics": metrics, "events": events,
+    arms = ["treatment", "control"] if spec["control"] else ["treatment"]
+    baseline = "control" if spec["control"] else "treatment"
+    analyses = {}
+    for source, names in (("metrics", spec["metrics"]), ("events", spec["event_outcomes"])):
+        rows = [{**row, "metrics": {name: row[source].get(name) for name in names}}
+                for row in results]
+        analyses[source] = paired_summary(
+            rows, baseline, expected_ticks=spec["ticks"], expected_arms=arms,
+            expected_seeds=spec["seeds"])
+        if spec["control"]:
+            for per in analyses[source]["metrics"].values():
+                per["effect_mean"] = per["treatment"]["paired_effect"]["mean_difference"]
+    return {"metrics": analyses["metrics"]["metrics"], "events": analyses["events"]["metrics"],
+            "coverage": analyses["metrics"]["coverage"],
+            "exclusions": analyses["metrics"]["exclusions"],
+            "analysis_kind": "model_conditional_exploratory",
             "all_reconciled": all(r["reconciled"] for r in results),
             "total_spend_usd": round(sum(r["spend_usd"] for r in results), 4)}
 
@@ -222,6 +224,10 @@ def _write_report(spec: dict, results: list[dict], summary: dict, out_dir: str) 
                          if s and s["mean"] is not None else "<td>—</td>")
         eff = per_arm.get("effect_mean")
         cells.append(f"<td><b>{eff:+}</b></td>" if eff is not None else "<td>—</td>")
+        paired = per_arm.get("treatment", {}).get("paired_effect", {})
+        cells.append(f"<td>{paired.get('n_pairs', '—')}</td>")
+        cells.append(f"<td>{esc(str(paired.get('ci95_bootstrap') or 'Unavailable'))}</td>")
+        cells.append(f"<td>{esc(str(paired.get('status', 'descriptive')))}</td>")
         return f"<tr><td>{esc(name)}</td>{''.join(cells)}</tr>"
 
     metric_rows = "".join(stat_row(n, per) for n, per in summary["metrics"].items())
@@ -235,8 +241,10 @@ def _write_report(spec: dict, results: list[dict], summary: dict, out_dir: str) 
 
     per_run_rows = "".join(
         f"<tr><td>{esc(r['run_id'])}</td><td>{r['seed']}</td><td>{r['arm']}</td>"
-        f"<td>{r['ticks']}</td>"
+        f"<td>{r['ticks']}/{r['expected_ticks']}</td>"
         f"<td>{'✓' if r['reconciled'] else 'FAIL'}</td>"
+        f"<td>{esc(r['execution_status'])}; {esc(r['eligibility']['status'])}: "
+        f"{esc(', '.join(r['eligibility']['reasons']))}</td>"
         + "".join(f"<td>{r['metrics'].get(n) if r['metrics'].get(n) is not None else '—'}</td>"
                   for n in spec["metrics"])
         + "".join(f"<td>{r['events'].get(k, 0)}</td>" for k in spec["event_outcomes"])
@@ -261,18 +269,22 @@ def _write_report(spec: dict, results: list[dict], summary: dict, out_dir: str) 
  · total LLM spend ${summary['total_spend_usd']}</p>
 
 <h2>Outcome distributions — final metric values across seeds</h2>
-<table><tr><th>Metric</th><th>Treatment mean ± std [min, max]</th><th>Control</th><th>Effect (T−C)</th></tr>
+<p>Only eligible complete-horizon worlds enter the distributions. Effects use
+matched seed pairs; missing effects are unavailable. All attempts, including
+failed or paused worlds, remain listed below. These analyses are exploratory.</p>
+<pre>{esc(json.dumps(summary['coverage'], indent=2))}</pre>
+<table><tr><th>Metric</th><th>Treatment mean ± std [min, max]</th><th>Control</th><th>Effect (T−C)</th><th>Pairs</th><th>95% paired bootstrap interval</th><th>Status</th></tr>
 {metric_rows}</table>
 
 <h2>Event-count outcomes</h2>
-<table><tr><th>Event</th><th>Treatment</th><th>Control</th><th>Effect (T−C)</th></tr>
+<table><tr><th>Event</th><th>Treatment</th><th>Control</th><th>Effect (T−C)</th><th>Pairs</th><th>95% paired bootstrap interval</th><th>Status</th></tr>
 {event_rows}</table>
 
 <h2>Metric trajectories</h2>
 <div class="grid">{''.join(charts)}</div>
 
 <h2>Per-run detail</h2>
-<table><tr><th>Run</th><th>Seed</th><th>Arm</th><th>Ticks</th><th>Books</th>
+<table><tr><th>Run</th><th>Seed</th><th>Arm</th><th>Ticks</th><th>Books</th><th>Eligibility</th>
 {''.join(f"<th>{esc(n)}</th>" for n in spec['metrics'])}
 {''.join(f"<th>{esc(k)}</th>" for k in spec['event_outcomes'])}</tr>
 {per_run_rows}</table>
@@ -284,7 +296,7 @@ def _write_report(spec: dict, results: list[dict], summary: dict, out_dir: str) 
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     path = out / f"experiment_{spec['name']}.html"
-    path.write_text(doc, encoding="utf-8")
+    publish_bytes(path, doc.encode("utf-8"))
 
     md = [f"# Experiment — {spec['name']}",
           f"{len(spec['seeds'])} seeds × {'T+C' if spec['control'] else 'T'} × {spec['ticks']} ticks · {now}",
@@ -298,7 +310,12 @@ def _write_report(spec: dict, results: list[dict], summary: dict, out_dir: str) 
     for kind, per in summary["events"].items():
         t = per.get("treatment"); c = per.get("control")
         md.append(f"- **{kind}**: T {t['mean'] if t else '—'} · C {c['mean'] if c else '—'}")
-    (out / f"experiment_{spec['name']}.md").write_text("\n".join(md), encoding="utf-8")
+    md += ["", "## Eligibility and matched coverage", "",
+           "Exploratory effects use eligible complete-horizon seed pairs only.",
+           "All attempts, including failures, are retained in the JSON report.",
+           "```json", json.dumps({"coverage": summary["coverage"],
+                                  "exclusions": summary["exclusions"]}, indent=2), "```"]
+    publish_bytes(out / f"experiment_{spec['name']}.md", "\n".join(md).encode("utf-8"))
     return str(path)
 
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from engine.civic_authority import agency_leaders_before_death
 from engine.store import load_json
-from .construction import construction_projects_as_of
+from .construction import construction_projects_as_of, hidden_home_place_ids
+from .legal_relief import monetary_relief_as_of
 
 
 def _dicts(rows) -> list[dict[str, Any]]:
@@ -60,6 +62,29 @@ def _mask_future_ticks(row: dict[str, Any], as_of_tick: int, *fields: str) -> No
             row[field] = None
 
 
+def _settlement_as_of(settlement: Any, as_of_tick: int) -> Any:
+    """Hide settlement facts that were only written after ``as_of_tick``.
+
+    ``settlement_json`` is rewritten in place when an offer is made and again
+    when it is accepted, so a historical view must not reveal a later offer or
+    its acceptance and enforcement.
+    """
+    if not isinstance(settlement, dict) or not settlement:
+        return settlement
+    offered = settlement.get("offered_tick")
+    if offered is not None and int(offered) > int(as_of_tick):
+        return {}
+    accepted = settlement.get("accepted_tick")
+    if accepted is not None and int(accepted) > int(as_of_tick):
+        visible = {
+            key: value for key, value in settlement.items()
+            if key not in {"accepted_tick", "accepted_by", "enforcement"}
+        }
+        visible["status"] = "offered"
+        return visible
+    return settlement
+
+
 def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
     rows = _dicts(store.query(
         "SELECT f.id,f.name,f.sector,f.account_id,f.founded_tick,f.listed_tick,"
@@ -86,6 +111,36 @@ def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
         row["balance_cents"] = balances.get(int(account_id), 0) if account_id is not None else None
         result.append(row)
     return result
+
+
+def build_world_map_geography(store, *, as_of_tick: int) -> dict:
+    """Resolve regional counts and residence from the same historical boundary."""
+    tick = int(as_of_tick)
+    agents = _dicts(store.query(
+        "SELECT id,region_id FROM agents WHERE arrived_tick<=? "
+        "AND (died_tick IS NULL OR died_tick>?) ORDER BY id", (tick, tick)))
+    from .population import population_at
+    cohort = population_at(store, tick)
+    agent_regions = _agent_regions_at(store, agents, tick, population=cohort)
+    population: dict[int, int] = {}
+    for region_id in agent_regions.values():
+        if region_id is not None:
+            population[region_id] = population.get(region_id, 0) + 1
+    firms = {int(row["region_id"]): int(row["n"]) for row in store.query(
+        "SELECT f.region_id,COUNT(*) AS n FROM firms f WHERE f.region_id IS NOT NULL "
+        "AND f.founded_tick<=? AND (f.bankrupt_tick IS NULL OR f.bankrupt_tick>?) "
+        "AND NOT EXISTS (SELECT 1 FROM mergers m WHERE m.target_firm_id=f.id "
+        "AND m.closed_tick IS NOT NULL AND m.closed_tick<=?) GROUP BY f.region_id",
+        (tick, tick, tick))}
+    regions = []
+    for row in store.query("SELECT * FROM regions ORDER BY id"):
+        region = dict(row)
+        region.update(specialization=load_json(region.get("specialization_json"), []),
+                      population=population.get(int(row["id"]), 0),
+                      firms=firms.get(int(row["id"]), 0))
+        regions.append(region)
+    return {"regions": regions, "agent_regions": agent_regions,
+            **({"population": cohort} if cohort is not None else {})}
 
 
 def build_world_map_organizations(store, *, as_of_tick: int) -> list[dict[str, Any]]:
@@ -151,19 +206,27 @@ def _banks_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
 
 def _agent_regions_at(
     store, agents: list[dict[str, Any]], as_of_tick: int,
+    *, population: dict | None = None,
 ) -> dict[int, int | None]:
     tick = int(as_of_tick)
+    from .population import population_at, resident_regions_at
+    cohort = population if population is not None else population_at(store, tick)
+    if cohort is not None:
+        return resident_regions_at(store, agents, tick, cohort)
     result = {
         int(agent["id"]): (
             int(agent["region_id"]) if agent.get("region_id") is not None else None
         )
         for agent in agents
     }
+    # Rejected migrations also carry a ``completed_tick`` (the tick the request
+    # was refused), so only ``completed`` rows may move a citizen.
     completed = store.query(
         "SELECT agent_id,destination_region_id FROM ("
         "SELECT agent_id,destination_region_id,ROW_NUMBER() OVER ("
         "PARTITION BY agent_id ORDER BY completed_tick DESC,id DESC) AS position "
-        "FROM migrations WHERE completed_tick IS NOT NULL AND completed_tick<=?) "
+        "FROM migrations WHERE status='completed' "
+        "AND completed_tick IS NOT NULL AND completed_tick<=?) "
         "WHERE position=1",
         (tick,),
     )
@@ -177,7 +240,7 @@ def _agent_regions_at(
         "SELECT agent_id,origin_region_id FROM ("
         "SELECT agent_id,origin_region_id,ROW_NUMBER() OVER ("
         "PARTITION BY agent_id ORDER BY completed_tick,id) AS position "
-        "FROM migrations WHERE completed_tick>?) WHERE position=1",
+        "FROM migrations WHERE status='completed' AND completed_tick>?) WHERE position=1",
         (tick,),
     )
     for row in future:
@@ -221,6 +284,8 @@ def build_world_flows(store, *, as_of_tick: int) -> list[dict[str, Any]]:
 
 def build_world_workspace(store, *, as_of_tick: int) -> dict:
     tick = int(as_of_tick)
+    from .population import population_at, population_counts, resident_presence_at
+    cohort = population_at(store, tick)
     regions = [_json_fields(row, "specialization_json") for row in _dicts(store.query(
         "SELECT id,region_key,name,currency_code,population_target,specialization_json,x,y,"
         "legal_ruleset FROM regions ORDER BY id"))]
@@ -229,7 +294,9 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "SELECT id,name,role,occupation,population_tier,region_id,arrived_tick,died_tick "
         "FROM agents WHERE arrived_tick<=? AND (died_tick IS NULL OR died_tick>?) ORDER BY id",
         (tick, tick)))
-    agent_regions = _agent_regions_at(store, agents, tick)
+    agent_regions = _agent_regions_at(store, agents, tick, population=cohort)
+    if cohort is not None:
+        agents = [agent for agent in agents if cohort[agent['id']]['state'] == 'resident']
     for agent in agents:
         _mask_future_ticks(agent, tick, "died_tick")
         agent["region_id"] = agent_regions[int(agent["id"])]
@@ -274,9 +341,18 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
             "source_type": "privacy_aggregate",
             "occupancy": int(row["occupancy"]),
         })
+    if cohort is not None:
+        core_ids = {row['id'] for row in store.query(
+            "SELECT id FROM agents WHERE population_tier='core' OR COALESCE(pinned_core,0)=1")}
+        presence = [row for row in resident_presence_at(store, tick, cohort)
+                    if row['agent_id'] is None or row['agent_id'] in core_ids]
     organizations = [row for row in _firms_as_of(store, tick) if row["active"]]
     construction_projects = construction_projects_as_of(
         store, as_of_tick=tick)
+    hidden_homes = hidden_home_place_ids(store, tick, construction_projects)
+    if hidden_homes:
+        places = [place for place in places if place["id"] not in hidden_homes]
+        presence = [row for row in presence if row["place_id"] not in hidden_homes]
     flows = build_world_flows(store, as_of_tick=tick)
     migration_count = sum(flow["kind"] == "migration" for flow in flows)
     trade_count = sum(flow["kind"] == "trade" for flow in flows)
@@ -287,6 +363,7 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "flows": flows, "construction_projects": construction_projects,
         "summary": {
             "population": len(agents), "active_organizations": len(organizations),
+            **population_counts(cohort),
             "currencies": currencies, "migration_count": migration_count,
             "trade_count": trade_count,
             "construction_projects": len(construction_projects),
@@ -299,9 +376,14 @@ def build_organizations_workspace(store, *, as_of_tick: int) -> dict:
     config = _config(store)
     firms = _firms_as_of(store, tick)
     banks = _banks_as_of(store, tick)
-    # Agencies are also created only at genesis and have no creation-tick column.
+    # Agencies are created at genesis; their directors can later die.
     agencies = _dicts(store.query(
         "SELECT a.id,a.name,a.mandate,a.capacity,a.leader_agent_id FROM agencies a ORDER BY a.id"))
+    if int(config.get("engine_semantics_version", 2)) >= 20:
+        prior_leaders = agency_leaders_before_death(store, tick)
+        for row in agencies:
+            if row["id"] in prior_leaders:
+                row["leader_agent_id"] = prior_leaders[row["id"]]
     for row in agencies:
         row.update({"type": "agency", "status": "active", "active": True})
     contracts = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
@@ -514,6 +596,16 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
     for row in matters:
         row["status"] = "resolved" if row["resolved_tick"] is not None and int(row["resolved_tick"]) <= tick else "filed"
         _mask_future_ticks(row, tick, "resolved_tick")
+        row["settlement"] = _settlement_as_of(row.get("settlement"), tick)
+        relief = monetary_relief_as_of(store, row["id"], tick)
+        if relief is not None:
+            row["monetary_relief"] = relief
+    if int(config.get("engine_semantics_version", 2)) >= 20:
+        adjudicated = {r["obligation_id"] for r in store.query("SELECT l.obligation_id FROM legal_award_obligations l "
+            "JOIN legal_awards a ON a.id=l.award_id WHERE a.tick<=?", (tick,))}
+        for row in obligations:
+            if row["id"] in adjudicated:
+                row["status"] = "adjudicated"
     mergers = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
         "SELECT id,proposed_tick,acquirer_firm_id,target_firm_id,consideration_type,price_cents,"
         "currency_code,target_approved_tick,regulator_notified_tick,closed_tick,terminated_tick,"

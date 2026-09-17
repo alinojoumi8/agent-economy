@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .ledger import Ledger, Leg, SYS_LOSS
+from .local_participation import is_local
 from .store import Store, load_json
 
 
@@ -58,6 +59,11 @@ class Bank:
         return (self.reserves(bank_id) / dep) if dep else 1.0
 
     # ── loan origination ─────────────────────────────────────────────────────
+    def expire_personal_applications(self, tick: int, agent_id: int) -> None:
+        """End an unfilled personal request without changing any existing loan."""
+        self.store.execute("UPDATE loan_applications SET status='expired',decided_tick=? "
+            "WHERE borrower_type='agent' AND borrower_id=? AND status='pending'", (tick, agent_id))
+
     @staticmethod
     def amortized_payment(principal: int, rate_bps: int, n_payments: int) -> int:
         """Level payment for a fully-amortising loan, integer cents (ceil)."""
@@ -256,10 +262,13 @@ class Bank:
         reserve_acct = int(b["reserve_account_id"])
         currency_code = str(b["currency_code"] or "USD").upper()
 
+        # Validate the complete official roster before interbank transfers or
+        # a new request can write. Unknown residence is not a policy vacancy.
+        staffed = self._has_living_central_banker() if require_authorized_decision else None
         if require_authorized_decision:
             existing = self.pending_liquidity_requests(bank_id=bank_id, limit=1)
             if existing:
-                if not self._has_living_central_banker():
+                if not staffed:
                     self._deny_unstaffed_liquidity_request(
                         tick, existing[0], phase=phase)
                     return False
@@ -291,7 +300,7 @@ class Bank:
         if require_authorized_decision:
             request_event_id = self.request_liquidity_support(
                 tick, bank_id, shortfall_cents, phase=phase, source=source)
-            if not self._has_living_central_banker():
+            if not staffed:
                 request = self.pending_liquidity_request(request_event_id)
                 if request is not None:
                     self._deny_unstaffed_liquidity_request(tick, request, phase=phase)
@@ -394,6 +403,12 @@ class Bank:
         return pending
 
     def _has_living_central_banker(self) -> bool:
+        if self.engine_semantics_version >= 21:
+            candidates = self.store.query(
+                "SELECT id FROM agents WHERE role='central_banker' AND alive=1 ORDER BY id")
+            # Evaluate all histories before accepting the first eligible actor.
+            available = [is_local(self, int(row["id"])) for row in candidates]
+            return any(available)
         return self.store.query_one(
             "SELECT 1 FROM agents WHERE role='central_banker' AND alive=1 "
             "ORDER BY id LIMIT 1") is not None
@@ -444,6 +459,8 @@ class Bank:
             "SELECT id,role,alive FROM agents WHERE id=?", (int(actor_id),))
         if not actor or not actor["alive"] or actor["role"] != "central_banker":
             return {"ok": False, "reason": "only the living central banker may decide support"}
+        if not is_local(self, int(actor_id)):
+            return {"ok": False, "reason": "central-bank support requires a local official"}
         if model_call_id is None:
             return {"ok": False, "reason": "central-bank decision requires local model provenance"}
         call = self.store.query_one(

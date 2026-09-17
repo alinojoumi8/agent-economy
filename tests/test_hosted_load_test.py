@@ -94,6 +94,32 @@ def test_load_probe_records_concurrency_and_cross_tenant_denials(monkeypatch):
     assert "@example.test" not in serialized
 
 
+def test_load_probe_fails_slow_successful_responses(monkeypatch):
+    monkeypatch.setenv("PASSWORD_A", "test-password")
+    transport = _transport()
+
+    async def slow(request):
+        await asyncio.sleep(0.01)
+        return transport.handle_request(request)
+
+    result = asyncio.run(run_load_test(
+        base_url="https://hosted.test",
+        users=[LoadUser(TENANT_A, "a@example.test", "PASSWORD_A", RUN_A),
+               LoadUser(TENANT_B, "b@example.test", "PASSWORD_A", RUN_B)],
+        requests_per_user=5, transport=httpx.MockTransport(slow), max_p95_ms=1,
+    ))
+    assert result["failed_requests"] == 0
+    assert result["complete_isolation_probe"]
+    assert not result["latency_budget_met"]
+    assert result["status"] == "failed"
+
+
+@pytest.mark.parametrize("budget", [True, 0, -1, float("nan"), float("inf"), 120001])
+def test_load_probe_rejects_invalid_latency_budget(budget):
+    with pytest.raises(ValueError, match="max_p95_ms"):
+        asyncio.run(run_load_test(base_url="https://hosted.test", users=[], max_p95_ms=budget))
+
+
 def test_load_probe_rejects_insecure_remote_and_duplicate_tenants(monkeypatch):
     monkeypatch.setenv("PASSWORD_A", "test-password")
     user = LoadUser(TENANT_A, "a@example.test", "PASSWORD_A")

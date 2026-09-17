@@ -3,6 +3,12 @@ import type { CausalEdge, CausalNode, StableReference } from "../generated/world
 
 function key(ref: StableReference): string { return `${ref.kind}:${ref.id}`; }
 
+/* Zoom moves in .2 steps and floats accumulate: four zoom-ins give
+   1.7999999999999998, which the readout shows as 180% while the + button stays
+   enabled and does nothing. One decimal is the step's own precision, so the
+   clamp lands exactly on its bounds. */
+export const clampGraphZoom = (value: number) => Math.round(Math.min(1.8, Math.max(.7, value)) * 10) / 10;
+
 export function CausalGraph({
   nodes, edges, selected, onSelect,
 }: {
@@ -23,7 +29,7 @@ export function CausalGraph({
       Graph renderer fallback active. Use the synchronized semantic table for this bounded large state.
     </div>;
   }
-  const changeZoom = (value: number) => setZoom(Math.min(1.8, Math.max(.7, value)));
+  const changeZoom = (value: number) => setZoom(clampGraphZoom(value));
   return <div className="world-os-graph-viewport">
     <div className="world-os-graph-controls" role="group" aria-label="Causal graph zoom">
       <button type="button" onClick={() => changeZoom(zoom - .2)} aria-label="Zoom out" disabled={zoom <= .7}>−</button>

@@ -835,6 +835,26 @@ def test_mcp_guidance_and_commons_schema_follow_granted_capabilities(world10: Wo
     }
 
 
+def test_browser_oauth_without_passport_consent_explains_profile_requirement(world10: World):
+    client = TestClient(create_app(world10))
+    response = client.get("/oauth/authorize", follow_redirects=False, params={
+        "response_type": "code", "client_id": "untrusted-client",
+        "redirect_uri": "https://untrusted.example/callback",
+        "code_challenge": "p" * 43, "code_challenge_method": "S256",
+        "state": "private-state-canary",
+    })
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Passport-enabled profile" in response.text
+    assert "Return to the local world" in response.text
+    assert "private-state-canary" not in response.text
+    assert "untrusted.example" not in response.text
+    assert "location" not in response.headers
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert world10.store.scalar("SELECT COUNT(*) FROM external_oauth_codes") == 0
+
+
 def test_oauth_discovery_dynamic_registration_browser_redirect_and_resource_binding(
     world10: World,
 ):
