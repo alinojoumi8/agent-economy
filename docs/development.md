@@ -255,6 +255,17 @@ Passport plus a failed callback is recoverable by reconnecting that same Passpor
 The local profile uses Semantics 11: an offline turn records `external_agent_fallback`
 with `safe_do_nothing_v1`; explicit Missed Turn attendance is a later contract.
 
+The browser regression starts its own provider-free world and a second-port
+callback listener, then exercises approval, PKCE exchange, denial and an
+unregistered callback. It uses temporary databases and shuts down its owned server:
+
+```powershell
+$env:AE_TEST_PYTHON = (Resolve-Path .venv/Scripts/python.exe).Path
+npm --prefix dashboard run test:e2e -- oauth-callback.spec.ts
+```
+
+On CI/POSIX, the fixture defaults to `python` from the installed environment.
+
 City navigation bookmarks use the separate operator store. Focused checks are
 `tests/test_city_observations_api.py`, `tests/test_operator_workspace.py`, the
 dashboard `cityObservations`/`cityObjectList` node suites, and the city-context and

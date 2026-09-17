@@ -590,6 +590,9 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Exercise the committed production bundle with both price studies
         run: python -u scripts/city_research_acceptance.py --output-root "${{ runner.temp }}/city-research-acceptance"
+      - name: Verify Chromium follows approved and denied OAuth callbacks
+        working-directory: dashboard
+        run: npm run test:e2e -- oauth-callback.spec.ts
       - name: Verify owned-server shutdown after success and failure
         run: python -m pytest -q tests/test_city_research_acceptance.py --basetemp "${{ runner.temp }}/city-research-server-tests"
       - name: Retain the acceptance receipt and browser log
