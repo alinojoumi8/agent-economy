@@ -1,35 +1,74 @@
 # Agent Economy
 
-Agent Economy is a deterministic economic-society simulator for studying how
-bounded agents, institutions, information, and policy interact over time. Its
-primary product is a reproducible research world: every monetary effect passes
-through a double-entry ledger, important decisions leave evidence, and stored
-runs can be replayed without making new model calls.
+### A living economy. An experiment you can replay.
 
-The project can also grow into a World OS for owner-run external agents,
-multi-user hosted observatories, civic construction, and governed code
-proposals. Those are versioned expansion surfaces around the research engine;
-they do not replace its deterministic authority boundary.
+**Simulate a society of agents. Change the conditions. Follow the consequences.**
 
-## What you can study
+[Start locally](#start-locally) · [Explore the city](#explore-the-city) · [Run an experiment](#run-one-experiment) · [Read the handbook](docs/README.md) · [Contribute](CONTRIBUTING.md)
 
-- bank runs, credit conditions, labor markets, firms, prices, and inequality;
-- rumors, news, conversations, beliefs, and observable causal chains;
-- monetary, fiscal, health, legal, political, and construction mechanisms;
-- paired treatment/control experiments with same-seed counterfactuals;
-- scripted, local, or paid-provider cognition under one recorded gateway;
-- replay, provenance, calibration, and operational cost at different scales.
+![Concept illustration of a miniature city, with illuminated connections between homes, markets and institutions fading into a blueprint.](docs/images/readme/agent-economy-hero.png)
 
-LLMs propose structured actions. Deterministic code validates identity,
-authority, state, ownership, balances, and action bounds before the engine may
-change the world. Model prose never directly moves money or rewrites evidence.
+<sub>Concept artwork created with ChatGPT image generation. The application is shown below.</sub>
 
-## Start safely
+What happens when a rumor reaches a bank's depositors? When credit tightens?
+When a citizen tries to turn an idea into a business?
 
-Requirements: Python 3.11 or 3.12. Node.js is needed only for dashboard
-development.
+Agent Economy is a **reproducible economic-society simulator** for exploring
+those questions. Citizens work, spend, borrow, talk, and make decisions inside
+a world of firms, banks, markets, news, and public institutions. You can observe
+the world, introduce a shock, compare outcomes, and inspect the evidence behind
+what changed.
 
-PowerShell:
+Start with scripted agents and no API keys. Add local or hosted language models
+when your experiment calls for them. In both cases, deterministic rules govern
+the economy, every monetary effect passes through a double-entry ledger, and
+recorded runs can be replayed without new model calls.
+
+**Python 3.11 / 3.12** · **FastAPI + React** · **SQLite run artifacts** · **MIT licensed**
+
+## What makes this world interesting?
+
+| Follow a question | Explore the mechanisms | Inspect the evidence |
+|---|---|---|
+| Can a rumor become a bank run? | News, exposure, beliefs, deposit decisions, bank liquidity | Message exposure, decisions, transfers, reserve pressure |
+| How do businesses survive and grow? | Hiring, wages, credit, production, trade, and failure | Jobs, transactions, market activity, firm lifecycle events |
+| How does policy reach everyday life? | Interest rates, taxes, benefits, health, politics, and law | Policy actions, household and institutional outcomes |
+| How does a city get built? | Permits, funding, construction work, and completion | Applications, escrow, project stages, recorded places |
+| What changes when agents use different decision policies? | Scripted behavior, model cognition, and bounded external agents | Recorded responses, accepted or rejected actions, cost, replay |
+
+Available mechanisms depend on the selected profile and its recorded semantics.
+Use it as a research testbed, an agent integration sandbox, or a way to teach
+economic feedback loops. Its results describe the simulated world; applying
+them to a real economy requires separate calibration and validation.
+
+## Explore the city
+
+![Development preview: a 3D city with recorded businesses and citizens, a selected firm's inspector, and a construction-completion event.](docs/images/readme/city-development-preview.png)
+
+<sub>Development-branch capture from a provider-free construction run. This 3D renderer is not yet included in main. Buildings and roads include illustrative geometry. [Capture and replay verification](https://github.com/alinojoumi8/agent-economy/blob/e8182c185ca49d95a8f5f6d48b6fd70390ea13d1/city/verification.md).</sub>
+
+The **Civic Atlas** observatory lets you move from a whole-world view to a
+particular person, institution, market, or event:
+
+- **Pulse:** see what changed and where to begin investigating.
+- **City:** explore the recorded day and analytical atlas; select an entity and inspect its records.
+- **People and institutions:** follow citizens, firms, and banks.
+- **Markets, politics, and communications:** examine trades, policy, law, news, and conversations.
+- **Evidence Lab and experiments:** investigate committed events and compare research outcomes.
+
+Pin a recorded day to investigate history, or return to the live cursor.
+The dashboard respects the caller's visibility: a public view does not reveal
+private agent messages or hidden bank information. See the
+[Civic Atlas guide](docs/civic-atlas.md). The [3D city development guide](https://github.com/alinojoumi8/agent-economy/blob/e8182c185ca49d95a8f5f6d48b6fd70390ea13d1/city/README.md)
+describes the separately reviewed renderer shown above.
+
+## Start locally
+
+You need **Git and Python 3.11 or 3.12**. The dashboard bundle is included;
+Node.js is needed only if you want to develop the frontend.
+
+<details open>
+<summary><strong>Windows · PowerShell</strong></summary>
 
 ```powershell
 git clone https://github.com/alinojoumi8/agent-economy.git
@@ -41,7 +80,10 @@ python -m pip install --require-hashes -r requirements.lock
 python run.py --config runs/base.yaml
 ```
 
-POSIX shell:
+</details>
+
+<details>
+<summary><strong>macOS / Linux · bash</strong></summary>
 
 ```bash
 git clone https://github.com/alinojoumi8/agent-economy.git
@@ -53,174 +95,173 @@ python -m pip install --require-hashes -r requirements.lock
 python run.py --config runs/base.yaml
 ```
 
-Open <http://127.0.0.1:8000>. The provider-free base world is the recommended
-development default. For the full provider-free observatory with regions,
-contracts, legal matters, and politics, run:
+</details>
 
-```powershell
+Open [localhost:8000](http://127.0.0.1:8000). The world starts paused.
+Choose **Step** to advance one simulated day, **Run** to continue, or **Pause**
+to inspect. See [getting started](docs/getting-started.md) for report generation.
+
+The base profile is provider-free: no model downloads, API keys, or inference
+charges. After installation, it runs without live provider calls.
+
+**Want the broader institutional observatory?** Stop the first server with
+`Ctrl+C`, then start this provider-free profile:
+
+```bash
 python run.py --config runs/v2-institutional-rehearsal.yaml
 ```
 
-> **Cost warning:** `python run.py` without `--config` selects the live production
-> profile. Always name a profile. Run `--preflight-live` before paid inference,
-> review the resolved routes and cap, and never commit provider credentials.
+| Try next | Profile | Model calls |
+|---|---|---|
+| Small mechanics world | [`runs/base.yaml`](runs/base.yaml) | None |
+| Regions, contracts, law, and politics | [`runs/v2-institutional-rehearsal.yaml`](runs/v2-institutional-rehearsal.yaml) | None |
+| Manually control one citizen | [`runs/participant.yaml`](runs/participant.yaml) | None |
+| Local or paid model cognition | [Provider configuration](docs/configuration.md) | Profile-dependent; preflight and budget required |
+
+> **Choose a profile explicitly.** `python run.py` without `--config` selects the live production
+> profile. Before paid inference, run `--preflight-live`, review the resolved
+> routes and spending cap, and follow the explicit authorization steps in the
+> [operator runbook](docs/operator-runbook.md). Keep credentials in your local, ignored `.env`.
 
 ## Run one experiment
 
-Run five rumor-treatment seeds and five same-seed controls:
+**Can a false rumor cause depositors to move their money?** The included
+experiment runs five seeds, each with a rumor treatment and a same-seed control:
 
-```powershell
+```bash
 python run.py --experiment runs/experiments/rumor_vs_control.yaml
 ```
 
-Artifacts are written to `reports/out/` as JSON, Markdown, and HTML. The rumor
-mechanic adds an observation; it does not directly lower trust or move funds.
-The measured path must emerge through recorded state transitions:
-
-```text
-exposure -> belief update -> decision -> deposit transfer -> reserve pressure
-```
-
-Use the [research guide](docs/research-guide.md) before interpreting causal,
-calibration, or acceptance results.
-
-## Choose a run profile
-
-| Profile | Use | Network and spend |
-|---|---|---|
-| `runs/base.yaml` | Small deterministic development world | None |
-| `runs/v2-institutional-rehearsal.yaml` | Full provider-free observatory | None |
-| `runs/participant.yaml` | Manually control one citizen through normal validation | None |
-| `runs/experiments/rumor_vs_control.yaml` | Paired causal experiment | None by default |
-| `runs/acceptance/rehearsal.yaml` | Free 365-tick acceptance rehearsal | None |
-| `runs/acceptance/pilot.yaml` | First paid research-validity gate | Live, $25 cap |
-| `runs/v2-live-minimax.yaml` | 1,000-agent MiniMax M3 profile | Live core, deterministic periphery, $150 cap |
-| `runs/acceptance/production.yaml` | Full production acceptance | Live; separately authorized |
-
-Profiles never silently change provider, model, endpoint, or credential type.
-See [configuration and providers](docs/configuration.md) for inheritance,
-environment variables, budgets, and version gates.
-
-## How the system fits together
+Each world runs for 30 simulated days. In the treatment, a rumor about Bank 1
+is introduced on day 10; the control has no rumor shock. Compare deposits,
+reserve ratios, sentiment, unemployment, and recorded events in the JSON,
+Markdown, and HTML artifacts written to `reports/out/`.
 
 ```mermaid
 flowchart LR
-    UI[React observatory] --> API[FastAPI]
-    API --> WORLD[Deterministic world loop]
-    WORLD --> ENGINE[Economy and ledger]
-    WORLD --> AGENTS[Agent policies and cognition]
-    AGENTS --> GATEWAY[Recorded provider gateway]
-    WORLD --> DB[(SQLite run artifact)]
-    GATEWAY --> DB
-    WORLD --> REPLAY[Exact replay and reports]
+    A[Exposure to a rumor] --> B[Belief update]
+    B --> C[Agent decision]
+    C --> D[Validated deposit transfer]
+    D --> E[Possible reserve pressure]
 ```
 
-The fixed daily lifecycle closes prior obligations, gathers morning proposals,
-executes validated actions in stable order, clears markets, publishes news,
-runs conversations and memory, then records metrics and reconciliation. A
-failed invariant halts and checkpoints instead of continuing with corrupted
-state.
+This is a **hypothesis to investigate**, not a guaranteed outcome. The rumor
+adds an observation; it does not directly lower trust or move money. The
+provider-free example exercises mechanics and evidence collection, not live
+LLM behavior. Follow the [research guide](docs/research-guide.md) before making
+causal claims. The [Price Lab development guide](https://github.com/alinojoumi8/agent-economy/blob/e8182c185ca49d95a8f5f6d48b6fd70390ea13d1/docs/research/price-lab.md)
+previews comparisons from fresh or saved worlds that are not yet merged into main.
 
-Major source areas:
+## How a decision becomes a consequence
 
-| Path | Responsibility |
+**Agents propose. The engine validates. The ledger settles. The record explains.**
+
+```mermaid
+flowchart LR
+    O[Bounded observations] --> A[Agent policy or model]
+    A --> P[Structured proposal]
+    P --> V{Deterministic validation}
+    V -->|Accepted| E[Engine and double-entry ledger]
+    V -->|Rejected| R[Rejection receipt]
+    E --> S[(Stored run and evidence)]
+    R --> S
+    S --> D[Authorized dashboard views]
+    S --> X[Replay and research reports]
+```
+
+- **Authority is explicit.** Actions are checked against identity, role,
+  ownership, state, funds, and bounds. Model prose cannot directly move money.
+- **Money is accounted for.** Monetary changes use balanced integer-cent ledger
+  entries. Failed invariants halt and checkpoint the run.
+- **Time has an order.** Daily phases process obligations, proposals, markets,
+  news, conversations, memory, and reconciliation in a stable sequence.
+- **History stays inspectable.** Replay uses recorded responses in a new
+  database and checks canonical table equality. Historical runs retain their
+  original semantics; the source run is not rewritten.
+
+<details>
+<summary><strong>Find your way around the code</strong></summary>
+
+| Area | Responsibility |
 |---|---|
-| `engine/` | Ledger and deterministic economic mutation |
-| `world/` | Genesis, phases, shocks, metrics, and replay |
-| `agents/` | Personas, scheduling, policies, memory, and external turns |
-| `llm/` | Provider routing, metering, readiness, and recorded responses |
-| `server/`, `dashboard/` | Local API and observatory |
-| `hosted/`, `deploy/` | Optional tenant control plane and reference deployment |
-| `builder_workspace/` | Immutable proposal creation only; no apply/merge/deploy authority |
-| `research/`, `experiments/`, `reports/` | Reproducibility, studies, and evidence |
+| [`engine/`](engine/) | Ledger, markets, contracts, and economic mutation |
+| [`world/`](world/) | Genesis, daily phases, shocks, metrics, and replay |
+| [`agents/`](agents/), [`llm/`](llm/) | Policies, memory, external turns, provider routing, and recorded responses |
+| [`server/`](server/), [`dashboard/`](dashboard/) | FastAPI and the React observatory |
+| [`research/`](research/), [`experiments/`](experiments/), [`reports/`](reports/) | Study designs, comparisons, exports, and evidence |
+| [`hosted/`](hosted/), [`deploy/`](deploy/) | Optional tenant control plane and deployment configuration |
+| [`builder_workspace/`](builder_workspace/) | Immutable code-proposal bundles; proposal-only authority |
 
-Read the [architecture guide](docs/architecture.md) for authority, privacy,
-persistence, projection, and replay boundaries.
+Read the [architecture guide](docs/architecture.md) for the full ownership,
+persistence, privacy, and replay contracts.
+
+</details>
 
 ## World OS expansion
 
-The maintained simulator is the foundation. Version-gated expansion contracts
-currently include:
+The research engine also supports version-gated extensions: external agents
+over REST or Streamable HTTP MCP, an Agent Commons, compute subscriptions and
+provider pools, civic permits, construction, and external-turn attendance.
 
-- Semantics 8 communications and causal-observatory foundations;
-- Semantics 9 External Agent Gateway;
-- Semantics 10 Agent Commons;
-- Semantics 11 compute economy and provider pools;
-- Semantics 12 civic permits;
-- Semantics 13 agent-built construction;
-- Semantics 14 external-turn attendance evidence;
-- a proposal-only Civic Builder storage seam without a Builder runtime,
-  mandate, patch application, Git, or deployment authority;
-- a separately enabled hosted tenant control plane with chained audit rows.
+Bring your own agent through the [client quickstart](clients/README.md),
+[External Agent Gateway contract](docs/world-os/EXTERNAL-AGENT-GATEWAY.md), and
+[attendance guide](docs/semantics14-external-turn-attendance.md). Agent Economy
+connects to outside runtimes; it does not install or impersonate them.
 
-Implementation does not imply public release. The
-[implementation-status ledger](docs/implementation-status.md) is the single
-maintained source for implemented, released, rollout-gated, and proposed
-labels. The [World OS index](docs/world-os/README.md) explains the successor
-specifications and their acceptance boundaries.
+These surfaces have different maturity levels. External-agent and Commons
+public rollout still have evidence gates. Hosted operation is separately
+enabled. The Builder seam stores proposals and has no patch-application,
+merge, or deployment authority. See the [World OS specifications](docs/world-os/README.md)
+and the authoritative [implementation-status ledger](docs/implementation-status.md)
+for implemented, locally verified, rollout-gated, and proposed work.
 
-Outside agents connect through REST or Streamable HTTP MCP; Agent Economy does
-not install or impersonate their runtimes. Start with the
-[External Agent Gateway contract](docs/world-os/EXTERNAL-AGENT-GATEWAY.md),
-[client quickstart](clients/README.md), and
-[Semantics 14 attendance guide](docs/semantics14-external-turn-attendance.md).
+## Go deeper
 
-## Documentation
-
-The [handbook index](docs/README.md) routes each audience to the authoritative
-detail. Core guides:
-
-| Need | Document |
+| I want to… | Start here |
 |---|---|
-| Install, first run, resume, replay | [Getting started](docs/getting-started.md) |
-| Use the Civic Atlas dashboard | [Civic Atlas guide](docs/civic-atlas.md) |
-| Design a defensible experiment | [Research guide](docs/research-guide.md) |
-| Understand system and authority boundaries | [Architecture](docs/architecture.md) |
-| Select profiles, providers, and semantics | [Configuration](docs/configuration.md) |
-| Integrate with REST, WebSocket, OAuth, or MCP | [API reference](docs/api-reference.md) |
-| Deploy, back up, restore, and respond | [Operator runbook](docs/operator-runbook.md) |
-| Diagnose common failures | [Troubleshooting](docs/troubleshooting.md) |
-| Build, test, and review changes | [Development](docs/development.md) |
-| Classify and retire branches safely | [Branch lifecycle](docs/branch-lifecycle.md) |
-| Keep documentation synchronized | [Documentation maintenance](docs/documentation-maintenance.md) |
-| See current delivery truth | [Implementation status](docs/implementation-status.md) |
-| Assemble local-only reproducibility evidence | [Reproducibility profile](docs/reproducibility-release-profile.md) |
+| Install, resume, replay, or generate a report | [Getting started](docs/getting-started.md) |
+| Navigate the observatory | [Civic Atlas](docs/civic-atlas.md) |
+| Design and interpret an experiment | [Research guide](docs/research-guide.md) |
+| Select models, profiles, and budgets | [Configuration](docs/configuration.md) |
+| Integrate an agent or API client | [API reference](docs/api-reference.md) |
+| Understand authority and data flow | [Architecture](docs/architecture.md) |
+| Deploy, back up, or restore | [Operator runbook](docs/operator-runbook.md) |
+| Diagnose a problem | [Troubleshooting](docs/troubleshooting.md) |
+| Assemble local reproducibility evidence | [Reproducibility profile](docs/reproducibility-release-profile.md) |
+| Find the complete documentation | [Handbook index](docs/README.md) |
 
-Normative product and engineering contracts live in [PRD.md](PRD.md),
-[TECH-SPEC.md](TECH-SPEC.md), and [TASKS.md](TASKS.md). Architecture decisions
-live under [docs/adr](docs/adr/README.md). Generated reports are run-specific
-evidence, not maintained documentation.
+## Build with us
 
-## Verification and contribution
+Contributions that make the world easier to study are welcome: a reproducible
+scenario, a clearer inspector, a better explanation, or a focused regression
+test. Start with [CONTRIBUTING.md](CONTRIBUTING.md) and
+[development and testing](docs/development.md).
 
-Run the focused smoke contract used by CI:
+Run the focused smoke contract used by CI from your activated environment:
 
-```powershell
+```bash
 python -m pytest -q tests/test_documentation.py tests/test_external_agent_gateway.py tests/test_research_export.py tests/test_prd_completion.py tests/test_recorded_replay_golden.py
 ```
 
-The complete local gate, dashboard workflow, compatibility rules, and branch
-process are in [development and testing](docs/development.md). Contributions
-must preserve ledger ownership, deterministic replay, privacy boundaries, and
-unrelated worktree changes. See [CONTRIBUTING.md](CONTRIBUTING.md) and
-[SECURITY.md](SECURITY.md).
+Changes must preserve ledger ownership, deterministic replay, privacy, and
+unrelated work. See [branch lifecycle](docs/branch-lifecycle.md),
+[documentation maintenance](docs/documentation-maintenance.md),
+[architecture decisions](docs/adr/README.md), and [SECURITY.md](SECURITY.md).
+The maintained product contracts are [PRD.md](PRD.md), [TECH-SPEC.md](TECH-SPEC.md),
+and [TASKS.md](TASKS.md).
 
-## Current status and limits
+<details>
+<summary>Historical baseline provenance</summary>
 
-The codebase contains mature deterministic simulation, replay, observatory,
-research, external-agent, and optional hosted surfaces. Paid-provider outcomes,
-public deployment readiness, and future Civic Builder governance remain
-evidence- or rollout-dependent; do not infer them from code presence.
+Semantics-7 closure merged as commit `255555c2b24530c0bd39aed2f501277a468adc0a`,
+with post-merge CI run `29368193807` and no public tag or publication from that
+authorization. Later evidence and limits live in the implementation-status ledger.
 
-Historical Semantics-7 closure merged as commit
-`255555c2b24530c0bd39aed2f501277a468adc0a`, post-merge CI run `29368193807`,
-and no public tag or publication from that authorization. Later release and
-campaign evidence is preserved in the implementation-status ledger rather than
-duplicated here.
+</details>
 
 ## License
 
-Agent Economy is released under the [MIT License](LICENSE). Third-party notices
-and source-specific attribution are recorded in [NOTICE](NOTICE), the
-[dashboard notices](dashboard/public/THIRD_PARTY_NOTICES.txt), and relevant
-source manifests.
+[MIT](LICENSE). Third-party attribution is recorded in [NOTICE](NOTICE),
+the [dashboard notices](dashboard/public/THIRD_PARTY_NOTICES.txt), and relevant
+source manifests. The generated cover is conceptual artwork; the city preview
+is an existing application capture, not a generated interface.
