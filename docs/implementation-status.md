@@ -43,11 +43,22 @@ preserved. This is a local integration candidate, not a merge or deployment clai
 - Consent now permits only the validated registered callback in its browser
   form policy. The documented Hermes connection timeout covers the approval
   window. These address callback blocking and repeated authorization tabs.
+- The subsequent [two-citizen native rehearsal](integrations/hermes-local-validation.md)
+  passed three sessions per citizen on Semantics 14, six successful actions,
+  native token refresh/rotation, explicit offline attendance, balanced accounting
+  and exact five-tick replay. It found and repaired an installed Hermes expiry
+  race and the repository's first-arrival attendance replay ordering.
 - The combined candidate passed 154 focused Python tests, 280 dashboard unit
   tests, type checking and a production build. The browser run passed 139 tests
   initially and all five failures on a bounded-worker rerun; two opt-in backend
   cases were skipped. A style-read race was fixed and eight repeated accessibility
   cases passed. Full cross-platform CI and production gates remain separate.
+
+The final browser run passed 146 tests with two opt-in backend tests skipped.
+Local replacement recovery and alert delivery passed on the rebuilt image;
+the operations suite passed 66 tests with one skip. Current dependency, notice,
+dataset and secret audits passed. The [integration receipt](reports/2026-09-17-integration-validation.md)
+records commands, failed attempts, exact scope and remaining release limits.
 
 See [the connection guide](development.md#connecting-an-installed-hermes-agent-locally)
 and [release decisions](release-readiness-go-no-go.md).
