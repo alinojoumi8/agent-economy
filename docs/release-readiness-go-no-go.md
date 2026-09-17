@@ -1,6 +1,6 @@
 # Release-readiness go/no-go sheet
 
-Assessment date: 2026-08-26
+Assessment date: 2026-09-17
 
 This sheet is the operating decision surface for the remaining release work.
 The [implementation-status ledger](implementation-status.md) remains the
@@ -13,8 +13,10 @@ authority for whether one exact candidate passed its gates.
   profile against a clean candidate. It contacts no providers and authorizes no
   hosted or public operation.
 - **HOLD — paid, independent, and hosted execution:** no approval is recorded
-  here for provider spend, an independent connector, a hosted target, or a live
-  experiment.
+  here for the production campaigns, independent certification, a hosted target,
+  or a live experiment. The user-authorized bounded DeepSeek/MiniMax and local
+  native Hermes checks are recorded in the implementation ledger; they do not
+  authorize the larger campaigns or satisfy hosted gates.
 - **NO-GO — tag or public deployment:** the fixed 16-gate `production-v1`
   package is not complete. Historical receipts and local passes cannot fill its missing rows.
 
@@ -24,6 +26,12 @@ its prerequisites and approval. `HOLD` means do not execute yet. `NO-GO` means
 the downstream release decision is prohibited.
 
 ## Decision matrix
+
+The September 17 local integration includes staging storage fixes, replacement
+recovery/alert drills, hosted execution limits, and the native Hermes OAuth
+callback fix. Local evidence must retain its candidate identity. Neither the
+single-citizen Hermes result nor local recovery drills substitute for the
+public-HTTPS connector and deployment receipts required below.
 
 | Workstream | Fixed production gates | Evidence state | Execution decision | Proof required before the gate can pass |
 |---|---|---|---|---|
