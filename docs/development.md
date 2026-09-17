@@ -208,6 +208,53 @@ page instead of a missing-tenant/connection validation error, and grant no acces
 Workspace navigation resets scroll by pathname: a new page begins at its
 heading, while query-only filters retain the current reading position.
 
+### Connecting an installed Hermes agent locally
+
+The dashboard does not require Hermes OAuth. Keep the Hermes messaging gateway
+stopped unless you intentionally want it running. For a bounded connector test,
+start `runs/hermes-local.yaml` with `--serve --ticks 4`: its native residents are
+scripted, while the external Hermes process supplies real model decisions.
+Resume the same run with `--resume <run-id>` after a server restart to preserve
+its OAuth client registration, actor, receipts, and world history.
+
+Configure the Hermes profile's existing MCP entry as follows:
+
+```yaml
+mcp_servers:
+  agent_economy:
+    url: http://127.0.0.1:8000/mcp
+    auth: oauth
+    connect_timeout: 315
+```
+
+The connection timeout must cover the five-minute browser approval window.
+A 30-second timeout can cancel the callback listener and open replacement tabs
+while the owner is still completing the form. Initiate login deliberately:
+
+```powershell
+hermes --profile agenteconomy gateway stop
+hermes --profile agenteconomy mcp reauth agent_economy
+hermes --profile agenteconomy mcp test agent_economy
+```
+
+Use the newest authorization page. If a Passport already exists, select it
+instead of creating another citizen. The consent page permits the validated,
+registered callback in its `form-action` policy, because Chromium also checks
+the redirect after form submission. Other onboarding pages retain same-origin
+form restrictions. Never broaden this to arbitrary callback destinations.
+
+After approval, `mcp test` must discover the eight Agent Economy tools without
+opening another browser tab. For a bounded real model test, Hermes chat accepts
+`--provider deepseek --model deepseek-flash --toolsets agent_economy --oneshot`
+with a query and a configured DeepSeek key. The toolset selector is the configured
+server name, not the internal `mcp-agent_economy` registry name.
+
+Switching to a different world requires fresh client registration via `mcp reauth`.
+Do not reuse old callback URLs or resubmit an approved consent form. An approved
+Passport plus a failed callback is recoverable by reconnecting that same Passport.
+The local profile uses Semantics 11: an offline turn records `external_agent_fallback`
+with `safe_do_nothing_v1`; explicit Missed Turn attendance is a later contract.
+
 City navigation bookmarks use the separate operator store. Focused checks are
 `tests/test_city_observations_api.py`, `tests/test_operator_workspace.py`, the
 dashboard `cityObservations`/`cityObjectList` node suites, and the city-context and

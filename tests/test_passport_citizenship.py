@@ -287,6 +287,15 @@ def test_standard_oauth_consent_pkce_tools_and_revocation(citizen_client):
         "resource": "http://testserver/mcp",
     })
     assert consent.status_code == 200
+    assert f"form-action 'self' {redirect_uri};" in consent.headers["content-security-policy"]
+    assert "form-action 'self';" in client.get("/my-agents").headers["content-security-policy"]
+    rejected_callback = client.get("/oauth/authorize", params={
+        **dict(consent.request.url.params),
+        "redirect_uri": "https://unregistered.example/callback",
+    })
+    assert rejected_callback.status_code >= 400
+    assert "form-action 'self';" in rejected_callback.headers["content-security-policy"]
+    assert "unregistered.example" not in rejected_callback.headers["content-security-policy"]
     assert "tenant_id" not in consent.request.url.params
     request_id = _hidden(consent.text, "request_id")
     csrf = _hidden(consent.text, "csrf_token")
