@@ -7,7 +7,7 @@ function socketUrl(): string {
   return `${protocol}//${window.location.host}/ws`;
 }
 
-export function useProjectionSocket(historical: boolean) {
+export function useProjectionSocket(historical: boolean, enabled = true) {
   const queryClient = useQueryClient();
   const [state, dispatch] = useReducer(
     (current: typeof initialCursorState, action: { message: any; historical: boolean }) =>
@@ -21,6 +21,7 @@ export function useProjectionSocket(historical: boolean) {
   const lineageRecovery = useRef(false);
 
   useEffect(() => {
+    if (!enabled) return;
     let socket: WebSocket | null = null;
     let stopped = false;
     let retry = 0;
@@ -149,6 +150,6 @@ export function useProjectionSocket(historical: boolean) {
       window.clearTimeout(timer);
       socket?.close();
     };
-  }, [historical, queryClient]);
+  }, [historical, enabled, queryClient]);
   return state;
 }

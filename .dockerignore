@@ -12,6 +12,7 @@ reports/out
 *.db
 *.db-wal
 *.db-shm
+*.ae.zip
 .env
 .env.*
 !.env.example
@@ -20,3 +21,12 @@ STATE.md
 loop-*.md
 # Local scratch (gitignored); pytest --basetemp output lives here.
 tmp
+.tmp
+graft
+dashboard/test-results
+dashboard/playwright-report
+deploy/hostinger/secrets
+data/backups
+.hosted-runs
+.hosted-artifacts
+.hosted-snapshots

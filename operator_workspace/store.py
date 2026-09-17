@@ -133,6 +133,38 @@ class OperatorWorkspace:
     def close(self) -> None:
         self.conn.close()
 
+    def get_saved_view(self, *, owner_id: str, route: str) -> dict:
+        record_id = hashlib.sha256(_json([owner_id, route]).encode()).hexdigest()
+        row = self.conn.execute(
+            "SELECT version,state_json FROM saved_views WHERE id=? AND owner_id=? AND route=?",
+            (record_id, owner_id, route)).fetchone()
+        return {"version": int(row["version"]), "state": json.loads(row["state_json"])} if row else {
+            "version": 0, "state": {"entries": []}}
+
+    def save_city_view(
+        self, *, owner_id: str, route: str, expected_version: int,
+        entries: list[str], run_id: str, fork_id: str | None,
+    ) -> dict:
+        """Store a validated navigation set with atomic optimistic concurrency."""
+        record_id = hashlib.sha256(_json([owner_id, route]).encode()).hexdigest()
+        with self.conn:
+            if expected_version == 0:
+                cursor = self.conn.execute(
+                    "INSERT OR IGNORE INTO saved_views "
+                    "(id,owner_id,name,route,state_json,version,updated_at) VALUES (?,?,?,?,?,1,?)",
+                    (record_id, owner_id, "City observations", route, _json({"entries": entries}), _now()))
+            else:
+                cursor = self.conn.execute(
+                    "UPDATE saved_views SET state_json=?,version=version+1,updated_at=? "
+                    "WHERE id=? AND owner_id=? AND route=? AND version=?",
+                    (_json({"entries": entries}), _now(), record_id, owner_id, route, expected_version))
+            if cursor.rowcount != 1:
+                raise WorkspaceConflict("saved observation version conflict")
+            self.append_audit(
+                owner_id=owner_id, action="investigation_write", run_id=run_id, fork_id=fork_id,
+                stable_ref={"kind": "city_observations", "id": record_id}, outcome="saved_view_updated")
+        return self.get_saved_view(owner_id=owner_id, route=route)
+
     def create_investigation(
         self, *, owner_id: str, title: str, run_id: str, fork_id: str | None = None,
         pinned_tick: int | None = None, query: dict | None = None, layout: dict | None = None,

@@ -17,7 +17,19 @@ import {
   agentPageForSelection,
   featuredAgentId,
   resolveSelectedAgentId,
+  projectInvolvesAgent,
 } from "../src/workspaces/peopleWorkspaceModel.js";
+
+test("a shared property's beneficiaries and guardian can follow it without changing its original owner", () => {
+  const property = { kind: "construction", status: "active", owner_agent_id: null,
+    beneficial_owner_ids: [2, 3], steward_agent_id: 4, original_owner_agent_id: 1 };
+  assert.equal(projectInvolvesAgent(property, 2), true);
+  assert.equal(projectInvolvesAgent(property, 3), true);
+  assert.equal(projectInvolvesAgent(property, 4), true);
+  assert.equal(projectInvolvesAgent(property, 1), false);
+  assert.equal(projectInvolvesAgent(property, null), false);
+  assert.equal(featuredAgentId([{ id: 2 }, { id: 4 }], [property]), 4);
+});
 import { MARKET_WINDOW, normalizeMarketsWorkspace } from "../src/workspaces/marketsWorkspaceModel.js";
 
 test("agent view is only active with a positive agent id", () => {

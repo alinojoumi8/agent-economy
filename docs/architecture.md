@@ -2,6 +2,12 @@
 
 ## System shape
 
+The optional [storage layer](storage-and-recovery.md) losslessly compresses model
+bodies inside SQLite and rotates verified recovery copies. The
+[Hostinger deployment](hostinger-vps.md) streams live databases through Litestream
+to SFTP; PostgreSQL's identity/catalog backups remain separate. No schema or
+economic-semantics version changes are required for the physical encoding.
+
 ```mermaid
 flowchart LR
     UI[React observatory] <-->|REST and WebSocket| API[FastAPI server]
@@ -159,6 +165,13 @@ agents, institutions, ledger state, markets, events, memories, beliefs,
 conversations, predictions, metrics, shocks, checkpoints, and LLM calls.
 Schema 20 additively stores external-turn attendance for explicitly selected
 Semantics 14 runs.
+Schema 21 adds person origins, households, membership and guardian intervals,
+parent/child relations, daily needs and reconciled censuses for fresh Semantics
+15 worlds. Births use the existing agent identity space and create no wealth.
+New demographic draws are keyed by seed, mechanism, day and person. Children
+use deterministic needs and age-gated actions. See the
+[household contract](semantics15-households.md), including its pending time,
+estate and family-formation work. Older mechanics keep their recorded contract.
 
 Exact replay rebuilds genesis in a new database and re-executes recorded LLM
 responses without a network fallback. Canonical table hashes prove equality.

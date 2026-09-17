@@ -353,6 +353,52 @@ def test_semantics14_records_every_missed_due_turn_with_operational_reason(
 
 
 @pytest.mark.parametrize("submitted", [True, False])
+def test_semantics14_new_arrival_attendance_replays_after_night(tmp_path, submitted):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _world(source_dir, engine_semantics_version=14)
+    replay = None
+    try:
+        replay_path = tmp_path / "replay.db"
+        created = source.runtime.external.create_connection(
+            tenant_id="tenant-a", owner_id="owner-a", display_name="Night arrival",
+            biography="A replay regression citizen.", preferred_occupation="builder", tier="actor")
+        # Arrival happens inside NIGHT, not before the initial replay import.
+        asyncio.run(source.step())
+        service = source.runtime.external
+        auth = service.authenticate(created["credential"]["token"], rate_limit=False)
+        turn = service.turn(auth)
+        if submitted:
+            service.submit_action(auth, {
+                "target_tick": turn["target_tick"], "action": {"type": "do_nothing"},
+                "observed_projection_hash": turn["projection_hash"],
+                "idempotency_key": "arrival-attendance",
+            })
+        else:
+            source.store.execute("UPDATE external_agent_connections SET lease_expires_at=?",
+                                 ("2000-01-01T00:00:00+00:00",))
+        asyncio.run(source.step())
+        source.store.commit()
+        replay_config = deepcopy(source.config)
+        replay_config["replay_source_path"] = str(Path(source.store.path).resolve())
+        replay_store = Store(str(replay_path))
+        replay_store.init_run_meta("external-replay", 42, replay_config)
+        replay = World(replay_store, replay_config, replay=True)
+        replay.initialize()
+        asyncio.run(replay.step())
+        asyncio.run(replay.step())
+        replay.store.commit()
+        proof = verify_replay(source.store.path, replay.store.path)
+        assert proof["exact"], proof["differences"]
+        assert source.economy.ledger.reconcile()[0]
+        assert replay.economy.ledger.reconcile()[0]
+    finally:
+        if replay is not None:
+            replay.close()
+        source.close()
+
+
+@pytest.mark.parametrize("submitted", [True, False])
 def test_semantics14_submitted_and_missed_attendance_replay_exactly(
     tmp_path,
     submitted,
@@ -833,6 +879,26 @@ def test_mcp_guidance_and_commons_schema_follow_granted_capabilities(world10: Wo
         variant["properties"]["type"]["const"]
         for variant in moderator_action["oneOf"]
     }
+
+
+def test_browser_oauth_without_passport_consent_explains_profile_requirement(world10: World):
+    client = TestClient(create_app(world10))
+    response = client.get("/oauth/authorize", follow_redirects=False, params={
+        "response_type": "code", "client_id": "untrusted-client",
+        "redirect_uri": "https://untrusted.example/callback",
+        "code_challenge": "p" * 43, "code_challenge_method": "S256",
+        "state": "private-state-canary",
+    })
+    assert response.status_code == 409
+    assert response.headers["content-type"].startswith("text/html")
+    assert "Passport-enabled profile" in response.text
+    assert "Return to the local world" in response.text
+    assert "private-state-canary" not in response.text
+    assert "untrusted.example" not in response.text
+    assert "location" not in response.headers
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["referrer-policy"] == "no-referrer"
+    assert world10.store.scalar("SELECT COUNT(*) FROM external_oauth_codes") == 0
 
 
 def test_oauth_discovery_dynamic_registration_browser_redirect_and_resource_binding(

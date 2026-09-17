@@ -1,0 +1,9 @@
+FROM postgres:17-bookworm
+RUN apt-get update && apt-get install -y --no-install-recommends python3 openssh-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd --gid 10001 ae-catalog-backup \
+    && useradd --uid 10001 --gid ae-catalog-backup --create-home --shell /usr/sbin/nologin ae-catalog-backup
+COPY deploy/hostinger/catalog_backup.py /opt/catalog_backup.py
+USER 10001:10001
+ENTRYPOINT ["python3", "/opt/catalog_backup.py"]
+CMD ["run"]

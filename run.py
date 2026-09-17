@@ -35,6 +35,7 @@ from engine.semantics import (
     validate_engine_semantics_version,
 )
 from engine.store import Store
+from llm.completion_guard import CompletionGuard
 from llm.gateway import Gateway
 from llm.readiness import validate_llm_config
 from world.loop import World, new_run_id
@@ -625,7 +626,14 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
              replay_source_dir: Path | None = None,
              new_run_id_override: str | None = None,
              activate_entrepreneurship: bool = False,
-             activate_numeric_grounding: bool = False) -> tuple[Store, World, str]:
+             activate_numeric_grounding: bool = False,
+             completion_guard: CompletionGuard | None = None) -> tuple[Store, World, str]:
+    if replay and completion_guard is not None:
+        raise ValueError("recorded replay cannot attach a live completion guard")
+    from engine.storage_policy import StoragePolicy
+    policy = StoragePolicy.from_mapping(config.get("storage_policy"))
+    if policy is not None and not replay:
+        policy.check_run(data_dir / f"{resume or 'admission'}.db")
     if replay and replay_source_dir is not None:
         source_root = Path(replay_source_dir).resolve()
         output_root = Path(data_dir).resolve()
@@ -661,6 +669,10 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
             store.close()
             raise
         stored_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        # Operational overrides affect this writer only, not recorded scientific
+        # configuration or historical economic semantics.
+        if "storage_policy" in config:
+            stored_cfg["storage_policy"] = config["storage_policy"]
         tightened = _tighten_resume_operational_limits(stored_cfg, config)
         if tightened:
             operational_log(
@@ -673,9 +685,13 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
                 logger, logging.INFO,
                 "run.resume.local_citizenship_enabled",
                 run_id=run_id, changes=local_control_plane)
-        world = World(store, stored_cfg)
-        _hydrate_resumed_world(world, meta, stored_cfg)
-        world.restore_prng_state()
+        try:
+            world = World(store, stored_cfg, completion_guard=completion_guard)
+            _hydrate_resumed_world(world, meta, stored_cfg)
+            world.restore_prng_state()
+        except BaseException:
+            store.close()
+            raise
         return store, world, run_id
     if replay:
         source_db = (source_root / f"{replay}.db").resolve()
@@ -695,6 +711,8 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
         finally:
             source_store.close()
         replay_cfg.update({k: v for k, v in config.items() if k in ("speed_delay_s",)})
+        if "storage_policy" in config:
+            replay_cfg["storage_policy"] = config["storage_policy"]
         replay_cfg.update({
             "seed": source_seed,
             "replay_source_path": str(source_db.resolve()),
@@ -734,7 +752,7 @@ def open_run(config: dict, resume: str | None, replay: str | None, *,
     store = Store(str(database))
     try:
         store.init_run_meta(run_id, int(config.get("seed", 42)), config)
-        world = World(store, config)
+        world = World(store, config, completion_guard=completion_guard)
         world.initialize()
         return store, world, run_id
     except BaseException:
@@ -789,6 +807,10 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
         sys.exit(str(exc))
     config["engine_semantics_version"] = old_semantics
     if upgrade_semantics is not None:
+        if new_semantics >= 16 and old_semantics < 16:
+            store.close()
+            dest.unlink(missing_ok=True)
+            sys.exit("Semantics 16 requires fresh genesis; historical origins and pending arrival keys cannot be inferred during a fork upgrade")
         if new_semantics <= old_semantics:
             store.close()
             dest.unlink(missing_ok=True)
@@ -1275,6 +1297,8 @@ def main() -> None:
     ap = argparse.ArgumentParser(description="Agent Economy")
     ap.add_argument("--config", default=DEFAULT_CONFIG,
                     help="world config (default: evolving live-agent desktop profile)")
+    ap.add_argument("--storage-policy", type=Path,
+                    help="operational storage policy YAML; also applies on resume")
     ap.add_argument("--ticks", type=int, default=None,
                     help="run N ticks; with --serve, set a hard N-tick session boundary")
     ap.add_argument("--resume", default=None, help="resume run id")
@@ -1447,6 +1471,8 @@ def main() -> None:
             "--replay-source-dir requires replay mode without competing "
             "command modes"
         )
+    if args.storage_policy is not None and mode not in {"run", "resume", "fork", "replay"}:
+        ap.error("--storage-policy requires run, resume, fork, or replay mode")
     # This command is a read-only persisted-evidence boundary. Dispatch it
     # before logging setup so the default invocation produces no log or SQLite
     # sidecar artifacts; explicit --output remains its only filesystem output.
@@ -1564,6 +1590,15 @@ def main() -> None:
         return
 
     config = load_config(args.config)
+    if args.storage_policy is not None:
+        import yaml
+        from engine.storage_policy import StoragePolicy
+        with args.storage_policy.open(encoding="utf-8") as handle:
+            raw_policy = yaml.safe_load(handle)
+        policy = StoragePolicy.from_mapping(raw_policy)
+        if policy is None:
+            ap.error("storage policy file must contain a mapping")
+        config["storage_policy"] = policy.as_dict()
     preflight_then_run = bool(
         args.preflight_live and (args.serve or args.ticks is not None))
     if args.oracle_campaign_run:

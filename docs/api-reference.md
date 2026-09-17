@@ -1,8 +1,38 @@
 # Local and hosted API reference
 
 The dashboard uses the same REST and WebSocket interfaces available to local
-tools. There is no authentication; keep the server on localhost. FastAPI exposes
+tools. Local mode has no account authentication; keep the server on localhost.
+Local operator actions additionally require the operator session's CSRF token. FastAPI exposes
 interactive OpenAPI documentation at `/docs` while the app is running.
+
+## Local research operator
+
+`/api/v2/operator/research` provides the local study library, reviewed drafts,
+durable jobs and private exports. Every request requires the current `run_id`,
+`tick=live`, the current `fork_id` when applicable and `X-CSRF-Token` from the
+operator session. Hosted-safe instances reject these routes. Responses use
+`Cache-Control: private, no-store`.
+
+`GET /capabilities` lists the fixed scripted pilot and valid owner-configured
+policy designs. `POST /drafts/validate` accepts either G2/F2 parameters or a
+strict `preset: "POLICY"` request with reviewed design identity, explicit source
+worlds, model draws and original limits. No validation step contacts a provider.
+`GET /drafts/{id}` returns the reviewed protocol without gateway configuration,
+credential references or private paths.
+
+`POST /drafts/{id}/launch` binds the draft hash and idempotency key. Policy
+drafts additionally require literal `approve_live_inference: true`. The
+supervisor repeats all source/design checks and charges preflight to the
+original allowance. `POST /jobs/{id}/resume` accepts only the original progress
+hash, compatibility-check hash and idempotency key, never replacement caps.
+Both writes return 202 and preserve existing jobs on an identical retry.
+
+`GET /studies/{id}?result_sha256=...` independently verifies evidence before
+comparison. V3 policy frames retain distinct model draws and use separate
+pending and final contracts. Private exports require the displayed result and
+verification hashes. See the [complete endpoint table](research/price-lab.md#local-operator-api)
+and [operator policy specification](plans/2026-09-07-policy-operator-workflow.md#owner-configuration-and-request-contract)
+for fields, directory configuration, admission bounds and recovery semantics.
 
 ## Hosted R22 boundary
 
@@ -35,6 +65,14 @@ Hosted world proxy routes are allowlisted. Mutations, reports/static file
 mounts, replay discovery, arbitrary paths, provider configuration, prompt
 payloads, and credentials are not proxied. Service endpoints are
 `/health/live`, `/health/ready`, and `/metrics`.
+
+With a storage policy enabled, capacity-limited run creation, advancing controls,
+agent connections and world mutations return HTTP 507. Hosted administrative
+routes and external protocols use `{"detail":{"code":"storage_capacity_reached"}}`.
+Invalid credentials are rejected before storage admission. Read access,
+pause/stop requests and credential revocation remain available. Tick
+execution also checks capacity and pauses before advancing the world. See
+[storage and recovery](storage-and-recovery.md) for budget and reserve behavior.
 
 Hosted administrative writes append tenant-local chained audit rows after
 control-plane migration 003. The HTTP API does not present the hash chain as
@@ -115,6 +153,18 @@ These read-only endpoints return the canonical envelope and accept `tick` plus
 | `GET` | `/api/v2/construction-projects` | Semantics-13 projects; filter by `project_kind=private_home|workplace|public_facility` and exact lifecycle `status` |
 | `GET` | `/api/v2/construction-projects/{project_id}` | One exact public project or privacy-safe aggregate, plus contribution-type totals where authorized |
 | `GET` | `/api/v2/world-map?layers=construction_projects` | Construction layer separate from usable `places`; supports stable project selection in Live City |
+| `GET` | `/api/v2/world-map?layers=households,institutions&tick=N` | Historical core household membership/child needs and public bank status, bound to the map envelope; no private accounts or exact household residences. See the [lens contract](plans/2026-09-07-city-society-lenses.md). |
+| `GET` | `/api/v2/city/conversations?tick=3&fork_id=...&limit=60` | `city.conversations` envelope for the exact recorded day; ordinary small-talk transcripts, never private communication or provider stores |
+
+City conversations return `data.items`, `tick`, `source=recorded_small_talk`,
+`has_more` and `content_truncated`. The default is the newest 60 conversations
+(maximum 200), each with up to 64 messages, 4,000 characters per message and
+512 topic characters. Per-item/message truncation flags preserve this boundary.
+Future conversations, messages and participants are withheld; malformed
+participant records are excluded. A wrong fork or unavailable tick returns 409.
+The endpoint performs no scientific writes. The city checks its envelope against
+the already displayed map before releasing any words. See the
+[city observer contract](research/city-observer.md).
 
 Peripheral private-home construction is aggregated by region, status, and
 stage. Owner, contributor, permit, exact-site, place, and reversible evidence
@@ -126,6 +176,19 @@ safe `kind`/`id`/`tick` references. Unknown kinds use a labelled generic
 fallback and never copy raw event payloads. Runtime `queued`/`thinking`
 presence may be included only for a current view; a historical `tick` request
 drops current runtime telemetry.
+
+## City observation bookmarks
+
+Local city navigation bookmarks use a separate operator workspace:
+
+| Method | Path | Input/notes |
+|---|---|---|
+| `GET` | `/api/v2/operator/city-observations?context=<JSON>` | Exact map run/fork/visibility/version context; returns context, optimistic version and up to 20 navigation strings |
+| `PUT` | `/api/v2/operator/city-observations` | Context, `expected_version`, entries and operator-session CSRF header; atomic save, 409 on stale context/version; no world writes |
+
+Both routes return 404 in hosted-safe mode. See the
+[city workspace contract](plans/2026-09-07-city-workspace-navigation.md) for the
+field allowlist, context schema, local identity and error handling.
 
 ## Oracle and calibration
 
@@ -201,6 +264,14 @@ generated contract is available at `/api/v2/openapi.json` and checked in at
 | `GET`, `POST` | `/api/v2/tenants/{tenant_id}/agent-connections` | Human owner/admin connection control plane |
 | `POST` | `/api/v2/tenants/{tenant_id}/agent-connections/{id}/credentials` | One-time PAT rotation or revocation |
 
+Bearer authentication accepts personal and OAuth access tokens. Refresh tokens
+are rejected with HTTP 401 on REST/MCP; exchange them only through `/oauth/token`.
+Hosted requests have a 64 KiB body limit for every HTTP method, including GET.
+Anonymous registration is limited to 20 requests per observed peer and 300 total
+per hour per process (HTTP 429 and `Retry-After`), with a durable 10,000-client
+ceiling (HTTP 503). Existing clients continue to work. See the
+[security policy](../SECURITY.md) for proxy and capacity behavior.
+
 Hosted connection creation requires a run whose gateway is enabled on engine
 semantics 9 or later. The default compatible choice is
 `world-os-external` (semantics 10). A preserved semantics-7 run returns HTTP
@@ -247,3 +318,23 @@ Invoke-RestMethod -Method Post -ContentType application/json `
   -Body '{"question":"Will any bank fail within 30 ticks?"}' `
   http://127.0.0.1:8000/api/oracle/ask
 ```
+
+## City 3D and construction
+
+`GET /api/v2/world-map?tick=live&population=all` supplies authorized city layers.
+The optional `banks` layer returns public `id`, `name`, `region_id` and as-of
+`status`, without accounts or balances. Citizens are filtered by arrival and
+death at the requested tick. Place and presence privacy restrictions still apply.
+
+`GET /api/v2/urban-development?tick=live` returns the standard scoped envelope
+with public catalog quotes, parcels and lifecycle projects. Numeric completed
+ticks and `fork_id` scope work like other projections. It never exposes escrow
+accounts, private balances or request keys, and performs no writes.
+
+With the semantics13 profile enabled, the participant action catalog includes
+`construct_building`, `cancel_construction` and `demolish_building`. Submit them
+through `/api/participant/action`; a queued command is not a completed building.
+Quotes and placement validation are server-owned. See the
+[construction contract](urban-development.md) for exact fields, authority and
+refund rules. Reading the participant catalog does not update agent memories;
+native decision execution continues to record memory access normally.

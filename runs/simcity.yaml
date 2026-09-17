@@ -1,0 +1,8 @@
+# Provider-free playable civic and construction profile.
+extends: civic-rehearsal.yaml
+engine_semantics_version: 13
+urban_development:
+  enabled: true
+population:
+  # Three permit clerks are added by civic genesis: 297 + 3 = 300.
+  target_total: 297

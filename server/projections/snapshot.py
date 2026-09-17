@@ -12,7 +12,9 @@ def build_snapshot(store, principal: Principal, *, as_of_tick: int, domains: tup
     data: dict = {}
     meta = store.get_meta()
     if "summary" in requested:
+        from .population import population_at, population_counts
         data["summary"] = {
+            **population_counts(population_at(store, int(as_of_tick))),
             "status": str(meta["status"]),
             "phase": str(meta["phase"] or ""),
             "active_tick": int(meta["active_tick"]) if meta["active_tick"] is not None else None,

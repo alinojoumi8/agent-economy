@@ -49,9 +49,18 @@ class AgentRegistrationBody(BaseModel):
     runtime: str = Field(default="custom", max_length=40)
 
 
-def _secure(response):
+def _secure(response, *, oauth_redirect_uri: str | None = None):
     for key, value in _SECURITY_HEADERS.items():
         response.headers[key] = value
+    if oauth_redirect_uri is not None:
+        # Chromium checks form-action across POST redirects. Only consent for
+        # an already validated client may return to its registered callback.
+        parsed = urlsplit(oauth_redirect_uri)
+        callback = quote(urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", "")),
+                         safe=":/[]%")
+        response.headers["Content-Security-Policy"] = _SECURITY_HEADERS[
+            "Content-Security-Policy"].replace("form-action 'self';",
+                                              f"form-action 'self' {callback};")
     return response
 
 
@@ -498,7 +507,7 @@ stored only as hashes.
             },
         )
         _set_owner_cookie(response, signed)
-        return _secure(response)
+        return _secure(response, oauth_redirect_uri=str(oauth["redirect_uri"]))
 
     @app.post("/oauth/authorize/consent", response_class=HTMLResponse)
     async def oauth_consent_submit(request: Request):

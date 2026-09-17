@@ -1,0 +1,68 @@
+groups:
+  - name: storage-recovery
+    rules:
+      - alert: HostedAppUnavailable
+        expr: up{job="agent-economy"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Hosted API is unavailable
+      - alert: CatalogBackupUnavailable
+        expr: up{job="catalog-backup"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Catalog backup process is unavailable
+      - alert: CatalogBackupStale
+        expr: time() - agent_economy_catalog_backup_last_success_seconds > 5400
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: No verified account database backup in the last 90 minutes
+      - alert: AlertDeliveryUnavailable
+        expr: up{job="alertmanager"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: Alert delivery service is unavailable
+      - alert: AlertDeliveryFailures
+        expr: increase(alertmanager_notifications_failed_total[5m]) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Alert receiver is rejecting notifications
+      - alert: HostedServerErrors
+        expr: sum(rate(agent_economy_hosted_http_requests_total{status=~"5.."}[5m])) / clamp_min(sum(rate(agent_economy_hosted_http_requests_total[5m])), 0.001) > 0.05
+        for: 5m
+        labels: {severity: critical}
+        annotations:
+          summary: More than five percent of hosted requests are failing
+      - alert: LitestreamUnavailable
+        expr: up{job="litestream"} == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations:
+          summary: SQLite backup service is unavailable
+      - alert: LitestreamSyncFailures
+        expr: increase(litestream_sync_error_count[5m]) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: SQLite changes are failing to reach the backup pipeline
+      - alert: LitestreamRemoteFailures
+        expr: increase(litestream_replica_operation_errors_total[5m]) > 0
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: The remote backup destination is returning errors
+      - alert: LitestreamDiskFull
+        expr: litestream_disk_full == 1
+        for: 1m
+        labels: {severity: critical}
+        annotations:
+          summary: Free disk space is preventing backup progress
+      - alert: LitestreamCompactionFailure
+        expr: increase(litestream_compaction_verify_error_count[5m]) > 0
+        labels: {severity: critical}
+        annotations:
+          summary: Backup integrity verification failed

@@ -11,6 +11,7 @@ import re
 from typing import Any, Callable, Iterator, Mapping, Sequence
 from uuid import UUID, uuid4
 
+from agents.external_contract import MAX_OAUTH_CLIENTS
 from .audit_chain import GENESIS_AUDIT_HASH, build_chained_audit_entry
 from .migrations import _transaction
 
@@ -1548,6 +1549,13 @@ class HostedCatalog:
         client_id = f"ae_client_{uuid4()}"
         with self._connection() as connection:
             with _transaction(connection):
+                # Serialize anonymous registration admission across app workers.
+                # A fixed advisory namespace avoids per-client durable lock rows.
+                connection.execute("SELECT pg_advisory_xact_lock(1095062081, 7591)")
+                count = _one(connection.execute(
+                    "SELECT COUNT(*) AS total FROM external_oauth_clients"))
+                if count is None or int(_row_value(count, "total", 0)) >= MAX_OAUTH_CLIENTS:
+                    raise CatalogError("OAuth client registration capacity reached")
                 row = _one(connection.execute(
                     "INSERT INTO external_oauth_clients(client_id,client_name,redirect_uris,"
                     "grant_types,response_types,token_endpoint_auth_method) "

@@ -1,0 +1,66 @@
+diff --git a/tools/mcp_oauth_manager.py b/tools/mcp_oauth_manager.py
+index e443d3b193..4091df92b0 100644
+--- a/tools/mcp_oauth_manager.py
++++ b/tools/mcp_oauth_manager.py
+@@ -11,6 +11,7 @@ import asyncio
+ import logging
+ import re
+ import threading
++import time
+ from dataclasses import dataclass, field
+ from pathlib import Path
+ from typing import Any, Optional
+@@ -82,6 +83,10 @@ class HermesMCPOAuthProvider(HermesProviderMixin, *_SDK_BASES):
+         tokens = self.context.current_tokens
+         if tokens is not None and tokens.expires_in is not None:
+             self.context.update_token_expiry(tokens)
++            if tokens.expires_in <= 0:
++                # On a coarse wall clock, now + 0 can still compare as valid
++                # during the first request. Expired caches must refresh first.
++                self.context.token_expiry_time = time.time() - 1
+         storage = self._hermes_storage()
+         if storage is not None and self.context.oauth_metadata is None:
+             meta = storage.load_oauth_metadata()
+diff --git a/tests/tools/test_mcp_expired_cache.py b/tests/tools/test_mcp_expired_cache.py
+new file mode 100644
+index 0000000000..96cefcc6d2
+--- /dev/null
++++ b/tests/tools/test_mcp_expired_cache.py
+@@ -0,0 +1,37 @@
++"""An expired cache must refresh before the first protected request."""
++import asyncio
++import json
++
++
++def test_expired_cache_refreshes_on_a_coarse_clock(tmp_path, monkeypatch):
++    from hermes_constants import set_hermes_home_override, reset_hermes_home_override
++    from tools.mcp_oauth_manager import MCPOAuthManager
++    from tools.mcp_tool import sdk_httpx
++
++    monkeypatch.setattr("time.time", lambda: 1000.0)
++    directory = tmp_path / "mcp-tokens"
++    directory.mkdir()
++    values = {
++        ".json": {"access_token": "expired-test-token", "refresh_token": "test-refresh",
++                  "token_type": "Bearer", "expires_in": 60, "expires_at": 900},
++        ".client.json": {"client_id": "test-client", "redirect_uris": ["http://127.0.0.1/callback"],
++                         "token_endpoint_auth_method": "none"},
++        ".meta.json": {"issuer": "https://example.test", "authorization_endpoint": "https://example.test/authorize",
++                       "token_endpoint": "https://example.test/token", "response_types_supported": ["code"]},
++    }
++    for suffix, value in values.items():
++        (directory / f"test{suffix}").write_text(json.dumps(value))
++    async def check():
++        provider = MCPOAuthManager().get_or_build_provider("test", "https://example.test/mcp", {})
++        flow = provider.async_auth_flow(sdk_httpx().Request("POST", "https://example.test/mcp"))
++        try:
++            request = await anext(flow)
++            assert request.url.path == "/token"
++            assert b"grant_type=refresh_token" in request.content
++        finally:
++            await flow.aclose()
++    token = set_hermes_home_override(tmp_path)
++    try:
++        asyncio.run(check())
++    finally:
++        reset_hermes_home_override(token)

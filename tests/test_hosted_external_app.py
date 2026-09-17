@@ -33,6 +33,34 @@ from tests.test_hosted_app import (
 NEW_EXTERNAL_AGENT_ID = UUID("90000000-0000-4000-8000-000000000009")
 
 
+@pytest.mark.parametrize("status,expected", [("suspended", 200), ("revoked", 200), ("active", 507)])
+def test_connection_can_be_disabled_when_storage_admission_is_closed(
+    external_client, external_services, monkeypatch, status, expected,
+):
+    from engine.storage_policy import StorageBudgetExceeded
+
+    catalog, _auth, supervisor, service, _clock = external_services
+    changes = []
+
+    def reject(*_args, **_kwargs):
+        raise StorageBudgetExceeded("tenant", 2, 1)
+
+    def set_status(_tenant, connection_id, **kwargs):
+        record = catalog.external_agents[connection_id]
+        return SimpleNamespace(**{**vars(record), "status": kwargs["status"]})
+
+    monkeypatch.setattr(supervisor, "check_write_admission", reject, raising=False)
+    monkeypatch.setattr(service, "update_connection", lambda *args, **kwargs: changes.append(kwargs["status"]), raising=False)
+    monkeypatch.setattr(catalog, "set_external_agent_status", set_status, raising=False)
+    login(external_client)
+    response = external_client.patch(
+        f"/api/v2/tenants/{TENANT_A}/agent-connections/{EXTERNAL_AGENT_ID}",
+        json={"status": status}, headers=csrf_headers(external_client),
+    )
+    assert response.status_code == expected, response.text
+    assert changes == ([status] if expected == 200 else [])
+
+
 class ExternalCatalog(FakeCatalog):
     def __init__(self) -> None:
         super().__init__()

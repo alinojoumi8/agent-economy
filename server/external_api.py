@@ -306,6 +306,8 @@ async def _wait_turn(service, auth: dict[str, Any], *, after_tick: int | None,
 def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -> None:
     service = world.runtime.external
     commons = world.commons
+    from server.request_limits import OAuthRegistrationLimitMiddleware
+    app.add_middleware(OAuthRegistrationLimitMiddleware)
 
     @app.exception_handler(ExternalAgentError)
     async def external_agent_error(_request: Request, exc: ExternalAgentError) -> JSONResponse:
@@ -324,9 +326,33 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         from server.citizenship_api import install_citizenship_routes
         install_citizenship_routes(app, world, config=join_config)
 
-    def auth(request: Request, required_scope: str | None = None) -> dict[str, Any]:
+    def oauth_scopes() -> list[str]:
+        if public_join_enabled:
+            from agents.passports import FULL_CITIZEN_SCOPES
+            return sorted(FULL_CITIZEN_SCOPES)
+        return sorted({SCOPE_WORLD_READ, SCOPE_WORLD_ACT, SCOPE_COMMONS_READ,
+                       SCOPE_COMMONS_WRITE, SCOPE_MODERATION})
+
+    async def admit_write() -> None:
+        policy = getattr(world, "storage_policy", None)
+        if not hosted_safe or policy is None:
+            return
+        from engine.storage_policy import StorageBudgetExceeded
         try:
-            return service.authenticate(_bearer(request), required_scope=required_scope)
+            await asyncio.to_thread(policy.check_run, world.store.path)
+            guard = getattr(world, "storage_guard", None)
+            if guard is not None:
+                await asyncio.to_thread(guard)
+        except StorageBudgetExceeded:
+            raise HTTPException(status_code=507, detail={"code": "storage_capacity_reached"}) from None
+
+    async def auth(request: Request, required_scope: str | None = None) -> dict[str, Any]:
+        try:
+            token = _bearer(request)
+            if hosted_safe and request.method == "POST":
+                service.authenticate(token, required_scope=required_scope, validate_only=True)
+                await admit_write()
+            return service.authenticate(token, required_scope=required_scope)
         except ExternalAgentError as exc:
             if exc.status_code == 401:
                 raise HTTPException(
@@ -425,7 +451,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
     async def protected_resource_metadata(request: Request):
         base = str(request.base_url).rstrip("/")
         return {"resource": f"{base}/mcp", "authorization_servers": [base],
-                "scopes_supported": sorted({scope for scopes in service.config.get(
+                "scopes_supported": oauth_scopes() if public_join_enabled else sorted({scope for scopes in service.config.get(
                     "external_gateway", {}).get("scope_sets", {}).values() for scope in scopes}
                     or {SCOPE_WORLD_READ, SCOPE_WORLD_ACT, SCOPE_COMMONS_READ,
                         SCOPE_COMMONS_WRITE, SCOPE_MODERATION}),
@@ -443,8 +469,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                 "code_challenge_methods_supported": ["S256"],
                 "authorization_response_iss_parameter_supported": True,
                 "token_endpoint_auth_methods_supported": ["none"],
-                "scopes_supported": [SCOPE_WORLD_READ, SCOPE_WORLD_ACT,
-                                     SCOPE_COMMONS_READ, SCOPE_COMMONS_WRITE, SCOPE_MODERATION]}
+                "scopes_supported": oauth_scopes()}
 
     @app.post("/oauth/register", status_code=201)
     async def oauth_register(request: Request):
@@ -458,9 +483,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                     400, "client metadata must be an object",
                     "invalid_client_metadata")
             requested_scope = set(str(payload.get("scope") or "").split())
-            supported = {
-                SCOPE_WORLD_READ, SCOPE_WORLD_ACT,
-                SCOPE_COMMONS_READ, SCOPE_COMMONS_WRITE, SCOPE_MODERATION}
+            supported = set(oauth_scopes())
             if not requested_scope.issubset(supported):
                 raise ExternalAgentError(
                     400, "unsupported registration scope",
@@ -500,10 +523,21 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
             redirect_uri: str = Query(...), code_challenge: str = Query(...),
             code_challenge_method: str = Query(...), scope: str = Query(default=""),
             state: str | None = Query(default=None), resource: str | None = Query(default=None),
-            tenant_id: str = Query(...), connection_id: str = Query(...),
+            tenant_id: str | None = Query(default=None),
+            connection_id: str | None = Query(default=None),
             x_ae_owner_id: str | None = Header(default=None),
             x_ae_role: str | None = Header(default=None),
         ):
+            if not tenant_id or not connection_id:
+                from server.citizenship_api import _render_error
+                return _render_error(
+                    request, title="Browser authorization is unavailable for this world",
+                    message=("This run does not enable local Passport consent. "
+                             "Start a Passport-enabled profile such as "
+                             "runs/hermes-deepseek-minimax.yaml, then reconnect your "
+                             "MCP client to request a fresh authorization link. "
+                             "No agent access has been granted."),
+                    status_code=409)
             if response_type != "code" or code_challenge_method != "S256":
                 raise HTTPException(status_code=400, detail={"code": "invalid_request"})
             base = str(request.base_url).rstrip("/")
@@ -563,16 +597,24 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                 headers={"Cache-Control": "no-store"})
         try:
             if grant_type == "authorization_code":
-                result = service.exchange_authorization_code(
+                operation = service.exchange_authorization_code
+                arguments = dict(
                     code=str(fields.get("code", "")), client_id=str(fields.get("client_id", "")),
                     redirect_uri=str(fields.get("redirect_uri", "")),
                     code_verifier=str(fields.get("code_verifier", "")))
             elif grant_type == "refresh_token":
                 requested = str(fields["scope"]).split() if "scope" in fields else None
-                result = service.refresh_access_token(
+                operation = service.refresh_access_token
+                arguments = dict(
                     refresh_token=str(fields.get("refresh_token", "")), scopes=requested)
             else:
                 raise ExternalAgentError(400, "unsupported grant type", "unsupported_grant_type")
+            if hosted_safe:
+                operation(**arguments, validate_only=True)
+                await admit_write()
+            # Revalidate after awaiting admission; codes and refresh tokens may
+            # have been consumed or revoked by another request in the meantime.
+            result = operation(**arguments)
             return JSONResponse(result, headers={"Cache-Control": "no-store", "Pragma": "no-cache"})
         except ExternalAgentError as exc:
             return JSONResponse(status_code=exc.status_code,
@@ -595,20 +637,20 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
 
     @app.get("/api/v2/agent/me")
     async def agent_me(request: Request):
-        return service.identity(auth(request))
+        return service.identity(await auth(request))
 
     @app.get("/api/v2/agent/turn")
     async def agent_turn(
         request: Request, after_tick: int | None = Query(default=None, ge=0),
         wait_seconds: float = Query(default=0.0, ge=0.0, le=60.0),
     ):
-        identity = auth(request)
+        identity = await auth(request)
         return await _wait_turn(service, identity, after_tick=after_tick,
                                 wait_seconds=wait_seconds)
 
     @app.post("/api/v2/agent/actions", status_code=202)
     async def submit_agent_action(request: Request, body: ActionSubmissionBody):
-        identity = auth(request, SCOPE_WORLD_ACT)
+        identity = await auth(request, SCOPE_WORLD_ACT)
         try:
             return service.submit_action(identity, body.model_dump())
         except ExternalAgentError as exc:
@@ -616,7 +658,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
 
     @app.get("/api/v2/agent/actions/{submission_id}")
     async def get_agent_receipt(request: Request, submission_id: str):
-        identity = auth(request)
+        identity = await auth(request)
         try:
             return service.receipt(identity, submission_id)
         except ExternalAgentError as exc:
@@ -627,7 +669,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         request: Request, cursor: int = Query(default=0, ge=0),
         limit: int = Query(default=100, ge=1, le=500),
     ):
-        return service.events(auth(request), cursor=cursor, limit=limit)
+        return service.events(await auth(request), cursor=cursor, limit=limit)
 
     @app.get("/api/v2/agent/commons")
     async def read_agent_commons(
@@ -635,18 +677,18 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         community_id: int | None = Query(default=None, ge=1),
         limit: int = Query(default=30, ge=1, le=100),
     ):
-        identity = auth(request, SCOPE_COMMONS_READ)
+        identity = await auth(request, SCOPE_COMMONS_READ)
         if identity.get("actor_id") is None:
             raise HTTPException(status_code=409, detail={"code": "actor_pending"})
         try:
-            return commons.feed(int(identity["actor_id"]), kind=kind,
+            return commons.feed_for_agent(int(identity["actor_id"]), kind=kind,
                                 community_id=community_id, limit=limit)
         except CommonsError as exc:
             _raise_commons(exc)
 
     @app.post("/api/v2/agent/commons")
     async def act_agent_commons(request: Request, body: CommonsActionBody):
-        identity = auth(request, SCOPE_COMMONS_WRITE)
+        identity = await auth(request, SCOPE_COMMONS_WRITE)
         if identity.get("actor_id") is None:
             raise HTTPException(status_code=409, detail={"code": "actor_pending"})
         try:
@@ -662,7 +704,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
 
     @app.post("/mcp")
     async def mcp_endpoint(request: Request):
-        identity = auth(request)
+        identity = await auth(request)
         try:
             message = await request.json()
         except Exception:
@@ -728,7 +770,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                 elif name == "ae_commons_read":
                     if identity.get("actor_id") is None:
                         raise ExternalAgentError(409, "dedicated actor is pending", "actor_pending")
-                    value = commons.feed(
+                    value = commons.feed_for_agent(
                         int(identity["actor_id"]), kind=str(arguments.get("kind", "chronological")),
                         community_id=arguments.get("community_id"),
                         limit=int(arguments.get("limit", 30)))
@@ -802,5 +844,5 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
 
     @app.get("/mcp")
     async def mcp_stream_not_enabled(request: Request):
-        auth(request)
+        await auth(request)
         return Response(status_code=405, headers={"Allow": "POST", "Cache-Control": "no-store"})

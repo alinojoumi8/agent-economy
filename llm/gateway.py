@@ -21,7 +21,9 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
+from engine.storage_policy import StoragePolicy
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, AdapterTimeoutError, build_adapters
+from .completion_guard import BudgetExceeded, CompletionGuard
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log, safe_fields
 
@@ -294,6 +296,8 @@ DEFAULT_PRICING = {
     "MiniMax-M2.7": {"in": 0.30, "out": 1.20, "cache": 0.06},
     "kimi-k2.6": {"in": 0.95, "out": 4.00, "cache": 0.16},
     "deepseek-v4-flash": {"in": 0.14, "out": 0.28, "cache": 0.0028},
+    # V4.1 peak rates: conservative modeled cost; historical IDs stay frozen.
+    "deepseek-flash": {"in": 0.30, "out": 1.20, "cache": 0.006},
     "qwen3.5:9b": {"in": 0.0, "out": 0.0, "cache": 0.0},
     "agent-economy-qwen3.5:9b-16k": {"in": 0.0, "out": 0.0, "cache": 0.0},
     "claude-haiku-4-5-20251001": {"in": 1.00, "out": 5.00, "cache": 0.10},
@@ -317,10 +321,6 @@ def _transient_provider_error(exc: BaseException) -> bool:
     if isinstance(exc, (KeyError, TypeError, ValueError, AttributeError)):
         return False
     return True
-
-
-class BudgetExceeded(Exception):
-    """Raised when a call would breach the hard cap — the world pauses cleanly."""
 
 
 class ProviderUnavailable(Exception):
@@ -647,11 +647,25 @@ class Governor:
 
 
 class Gateway:
-    def __init__(self, store, config: dict):
+    def __init__(self, store, config: dict, *, completion_guard: CompletionGuard | None = None):
         self.store = store
         self.config = config
+        storage_policy = StoragePolicy.from_mapping(config.get("storage_policy"))
+        if storage_policy is not None:
+            storage_policy.apply(store)
         llm_cfg = config.get("llm", {})
+        sampling = llm_cfg.get("research_sampling")
+        if sampling is not None and (not isinstance(sampling, dict)
+                or set(sampling) != {"primary", "repair", "preflight"}
+                or any(type(value) not in {int, float} or not 0 <= value <= 2 for value in sampling.values())
+                or sampling["preflight"] != 0):
+            raise ValueError("research sampling requires explicit bounded primary, repair and zero-temperature preflight values")
         self.replay = bool(config.get("replay", False))
+        if completion_guard is not None:
+            if self.replay:
+                raise ValueError("recorded replay cannot attach a live completion budget")
+            completion_guard.validate_config(config)
+        self._completion_guard = completion_guard
         self.readiness_report = validate_llm_config(
             config, require_secrets=not self.replay, raise_on_error=True)
         self.routes: dict[str, dict] = llm_cfg.get("routes", {})
@@ -718,11 +732,13 @@ class Gateway:
                 # Windows CPython 3.11 can retain the recorded source handle
                 # after close.  Query a private SQLite backup instead so the
                 # source remains immediately rotatable and archivable.
-                self._replay_snapshot = ReadOnlyReplaySnapshot(source)
+                self._replay_snapshot = ReadOnlyReplaySnapshot(
+                    source, require_closed=config.get("replay_source_closed") is True)
                 self.replay_conn = self._replay_snapshot.conn
             else:
                 self.replay_conn = open_read_only_connection(
-                    source, check_same_thread=False)
+                    source, check_same_thread=False,
+                    require_closed=config.get("replay_source_closed") is True)
 
     def close(self) -> None:
         """Release replay resources; safe to call repeatedly during teardown."""
@@ -1112,7 +1128,22 @@ class Gateway:
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick, attempts=state["attempts"])
 
-    async def preflight(self, *, live: bool = False) -> dict:
+    def _sampling_temperature(self, stage: str, default: float) -> float:
+        sampling = self.config.get("llm", {}).get("research_sampling")
+        return float(sampling[stage]) if sampling is not None else default
+
+    async def _dispatch_completion(self, provider: str, adapter: Adapter, model: str,
+                                   messages: list[dict], **kwargs: Any) -> AdapterResult:
+        """Guard every physical completion, including preflight and repairs."""
+        if self._completion_guard is None:
+            return await adapter.complete(model, messages, **kwargs)
+        # Detect accidental in-process routing/config edits before transport.
+        self._completion_guard.validate_config(self.config)
+        if provider in {"scripted", "mock"}:
+            return await adapter.complete(model, messages, **kwargs)
+        return await self._completion_guard.complete(provider, adapter, model, messages, **kwargs)
+
+    async def preflight(self, *, live: bool = False, strict_contract: bool = False) -> dict:
         """Return config readiness and optionally authenticate/list routed models."""
         report = validate_llm_config(
             self.config, require_secrets=not self.replay, raise_on_error=False)
@@ -1133,8 +1164,8 @@ class Gateway:
                     safe_fields(await adapter.healthcheck(model)))
                 if health.get("model_available") is False:
                     result = {
-                        "provider": provider,
                         **health,
+                        "provider": provider, "model": model,
                         "ok": False,
                         "contract_ok": False,
                         "reason": "model_not_in_catalog",
@@ -1157,14 +1188,14 @@ class Gateway:
                     int(provider_config.get("preflight_max_tokens", 256)),
                 )
                 smoke_result = await asyncio.wait_for(
-                    adapter.complete(
-                        model,
+                    self._dispatch_completion(
+                        provider, adapter, model,
                         [{"role": "system", "content": (
                             "Return only valid JSON with keys ok and provider.")},
                          {"role": "user", "content": (
                             "Return {\"ok\":true,\"provider\":\"live\"} now.")}],
                         purpose="preflight", context={"preflight": True},
-                        max_tokens=preflight_max_tokens, temperature=0.0,
+                        max_tokens=preflight_max_tokens, temperature=self._sampling_temperature("preflight", 0.0),
                         cache_key=f"{self.run_id}:preflight:{provider}"),
                     timeout=target.timeout_s,
                 )
@@ -1172,8 +1203,11 @@ class Gateway:
                     smoke_result.text, preserve_root_reasoning=True)
                 smoke_json, smoke_ok = self._parse(smoke_text)
                 contract_ok = bool(smoke_ok and isinstance(smoke_json, dict))
+                if strict_contract:
+                    contract_ok = bool(contract_ok and smoke_json.get("ok") is True
+                                       and smoke_json.get("provider") == "live")
                 result = {
-                    "provider": provider, **health,
+                    **health, "provider": provider, "model": model,
                     "ok": bool(health.get("ok", False) and contract_ok),
                     "contract_ok": contract_ok,
                     "smoke_max_tokens": preflight_max_tokens,
@@ -1184,6 +1218,8 @@ class Gateway:
                 operational_log(logger, logging.INFO, "llm.preflight.provider_completed",
                                 run_id=self.run_id, provider=provider, model=model,
                                 ok=result.get("ok", False))
+            except BudgetExceeded:
+                raise
             except Exception as exc:
                 provider_error = sanitize_provider_error(exc)
                 checks.append({"provider": provider, "model": model, "ok": False,
@@ -1296,7 +1332,7 @@ class Gateway:
         try:
             if plan.tiered:
                 result, attempts, selected_target, attempt_ids = await self._call_route_plan(
-                    plan, req, req.messages(), req.temperature,
+                    plan, req, req.messages(), self._sampling_temperature("primary", req.temperature),
                     provider_cache_key, logical_deadline)
                 provider, model = selected_target.provider, selected_target.model
                 adapter = self.adapters[provider]
@@ -1305,9 +1341,9 @@ class Gateway:
                     model, {"in": 0, "out": 0, "cache": 0})
             else:
                 result, attempts = await self._call_adapter(
-                    provider, adapter, model, req, req.messages(), req.temperature,
+                    provider, adapter, model, req, req.messages(), self._sampling_temperature("primary", req.temperature),
                     provider_cache_key)
-        except GatewayInterrupted:
+        except (GatewayInterrupted, BudgetExceeded):
             raise
         except _RoutePlanExhausted as exhausted:
             attempt_ids = exhausted.attempt_ids
@@ -1405,19 +1441,19 @@ class Gateway:
                 if plan.tiered:
                     (repaired_result, repair_attempts, _repair_target,
                      repair_attempt_ids) = await self._call_route_plan(
-                        plan, repair, repair.messages(), 0.2,
+                        plan, repair, repair.messages(), self._sampling_temperature("repair", 0.2),
                         provider_cache_key, logical_deadline,
                         targets=(selected_target,))
                     attempt_ids.extend(repair_attempt_ids)
                 else:
                     repaired_result, repair_attempts = await self._call_adapter(
-                        provider, adapter, model, repair, repair.messages(), 0.2,
+                        provider, adapter, model, repair, repair.messages(), self._sampling_temperature("repair", 0.2),
                         provider_cache_key)
                 repaired_result.text = _sanitize_json_text(
                     repaired_result.text, preserve_root_reasoning=True)
                 attempts += repair_attempts
-            except GatewayInterrupted:
-                persist_initial_completion("GatewayInterrupted")
+            except (GatewayInterrupted, BudgetExceeded) as exc:
+                persist_initial_completion(type(exc).__name__)
                 raise
             except asyncio.CancelledError:
                 persist_initial_completion("CancelledError")
@@ -1492,7 +1528,7 @@ class Gateway:
             try:
                 (fallback_result, fallback_attempts, selected_target,
                  fallback_attempt_ids) = await self._call_route_plan(
-                    plan, req, req.messages(), req.temperature,
+                    plan, req, req.messages(), self._sampling_temperature("primary", req.temperature),
                     provider_cache_key, logical_deadline,
                     targets=(fallback_target,))
                 attempt_ids.extend(fallback_attempt_ids)
@@ -1512,6 +1548,8 @@ class Gateway:
                     self._cache_key(req, failed_provider, failed_model),
                     failed_result, failed_cost, failed_cached, latency_ms)
                 self._link_attempts(call_id, attempt_ids)
+                if isinstance(exc, BudgetExceeded):
+                    raise
                 failure = ProviderUnavailable(
                     fallback_target.provider, fallback_target.model, req.purpose,
                     f"contract fallback {type(exc).__name__}: {exc}",
@@ -1571,7 +1609,7 @@ class Gateway:
                 try:
                     (repaired_fallback, repair_attempts, _repair_target,
                      repair_attempt_ids) = await self._call_route_plan(
-                        plan, fallback_repair, fallback_repair.messages(), 0.2,
+                        plan, fallback_repair, fallback_repair.messages(), self._sampling_temperature("repair", 0.2),
                         provider_cache_key, logical_deadline,
                         targets=(selected_target,))
                     attempt_ids.extend(repair_attempt_ids)
@@ -1632,6 +1670,8 @@ class Gateway:
                         round(failed_cost + fallback_cost, 8),
                         failed_cached or fallback_cached, latency_ms)
                     self._link_attempts(call_id, attempt_ids)
+                    if isinstance(exc, BudgetExceeded):
+                        raise
                     failure = ProviderUnavailable(
                         provider, model, req.purpose,
                         f"fallback repair {type(exc).__name__}: {exc}",
@@ -1717,7 +1757,7 @@ class Gateway:
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick, valid=ok)
         if not ok:
-            if plan.tiered:
+            if plan.tiered or self.config.get("llm", {}).get("research_response_contract") == "required-json-v1":
                 if cost_override is None:
                     cached, cost = self._price(
                         model, result.in_tokens, result.out_tokens,
@@ -1942,8 +1982,8 @@ class Gateway:
             try:
                 self._live_dispatch_count += 1
                 result = await asyncio.wait_for(
-                    adapter.complete(
-                        target.model, messages, purpose=req.purpose,
+                    self._dispatch_completion(
+                        target.provider, adapter, target.model, messages, purpose=req.purpose,
                         context=req.context, max_tokens=req.max_tokens,
                         temperature=temperature, cache_key=provider_cache_key),
                     timeout=timeout_s)
@@ -1983,6 +2023,8 @@ class Gateway:
         except GatewayInterrupted as exc:
             failure = exc
             outcome = "cancelled"
+        except BudgetExceeded:
+            raise
         except Exception as exc:
             failure = exc
             outcome = "provider_error"
@@ -2228,8 +2270,8 @@ class Gateway:
                         self._active_adapter_tasks.add(active_task)
                     try:
                         self._live_dispatch_count += 1
-                        result = await adapter.complete(
-                            model, messages, purpose=req.purpose, context=req.context,
+                        result = await self._dispatch_completion(
+                            provider, adapter, model, messages, purpose=req.purpose, context=req.context,
                             max_tokens=req.max_tokens, temperature=temperature,
                             cache_key=provider_cache_key)
                     finally:
@@ -2252,7 +2294,7 @@ class Gateway:
                     # heal on retry; re-sending would only bill the same error.
                     break
                 transient_attempt += 1
-            except (GatewayInterrupted, ProviderConfigurationError):
+            except (GatewayInterrupted, ProviderConfigurationError, BudgetExceeded):
                 raise
             except Exception as exc:
                 last_error = exc
@@ -2341,8 +2383,17 @@ class Gateway:
         return one_call * 2
 
     def _cache_key(self, req: LLMRequest, provider: str, model: str) -> str:
-        blob = json.dumps({"t": req.tick, "a": req.agent_id, "p": req.purpose,
-                           "m": model, "msgs": req.messages()}, sort_keys=True)
+        identity = {"t": req.tick, "a": req.agent_id, "p": req.purpose,
+                    "m": model, "msgs": req.messages()}
+        if self.config.get("llm", {}).get("research_sampling") is not None:
+            identity["research_sampling"] = self.config["llm"]["research_sampling"]
+            identity["research_provider"] = provider
+        if int(self.config.get("engine_semantics_version", 2)) >= 16:
+            # Scripted contexts can have the same rendered text but distinct
+            # random calls (e.g. two outlets after their desk agents die).
+            # Bind that seed so durable reuse cannot collapse their evidence.
+            identity["daily_random_seed"] = (req.context or {}).get("rng_seed")
+        blob = json.dumps(identity, sort_keys=True)
         return hashlib.sha1(blob.encode()).hexdigest()
 
     @staticmethod

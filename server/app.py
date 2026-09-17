@@ -27,6 +27,8 @@ from server.controller import RunController
 from world.loop import World
 from world.shocks import SHOCK_KINDS, TRIGGER_TYPES
 from observability import get_logger, log_event as operational_log
+from server.projections.metric_series import metric_series_for_display
+from server.projections.population import population_at, resident_regions_at
 
 
 logger = get_logger("server")
@@ -231,6 +233,24 @@ def create_app(world: World, *, served_ticks: int | None = None,
     hub = controller.hub
     store = world.store
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
+    if hosted_safe:
+        @app.middleware("http")
+        async def storage_admission(request: Request, call_next):
+            # The hosted control plane authorizes run controls before forwarding.
+            # External protocols perform admission after checking credentials.
+            policy = getattr(world, "storage_policy", None)
+            if (policy is not None and request.method in {"POST", "PUT", "PATCH"}
+                    and request.url.path.startswith("/api/run/")
+                    and request.url.path not in {"/api/run/pause", "/api/run/stop"}):
+                from engine.storage_policy import StorageBudgetExceeded
+                try:
+                    await asyncio.to_thread(policy.check_run, store.path)
+                    guard = getattr(world, "storage_guard", None)
+                    if guard is not None:
+                        await asyncio.to_thread(guard)
+                except StorageBudgetExceeded:
+                    return JSONResponse(status_code=507, content={"error": "storage_capacity_reached"})
+            return await call_next(request)
     app.state.run_controller = controller
     from server.v2_api import install_v2_routes
     install_v2_routes(app, world, controller)
@@ -573,12 +593,7 @@ def create_app(world: World, *, served_ticks: int | None = None,
         default="gdp_proxy,gdp_proxy_30d,labor_income,cpi,inflation_30d,cpi_yoy,unemployment,index,policy_rate,money_supply,gini,sentiment",
         max_length=1000,
     )):
-        out = {}
-        for name in names.split(",")[:50]:
-            name = name.strip()
-            if name:
-                out[name] = [{"tick": t, "value": v} for t, v in store.metric_series(name)]
-        return out
+        return metric_series_for_display(store.conn, [name.strip() for name in names.split(',')[:50] if name.strip()])
 
     @app.get("/api/agents")
     async def agents(
@@ -617,13 +632,27 @@ def create_app(world: World, *, served_ticks: int | None = None,
         # Keep the original no-parameter array contract for integrations while
         # exposing a bounded cursor page to the 1,000-agent observatory.
         execution, _connection_ids = agent_execution_maps()
+        cohort = population_at(store, int(store.tick))
+
+        def project_people(rows):
+            items = [{**dict(row), 'execution': execution[int(row['id'])]} for row in rows]
+            if cohort is not None:
+                living = [row for row in items if row['id'] in cohort]
+                regions = resident_regions_at(store, living, int(store.tick), cohort)
+                keys = {row['id']: row['region_key'] for row in store.query('SELECT id,region_key FROM regions')}
+                for row in items:
+                    residence = cohort.get(row['id'])
+                    row.update(modeled_residence=residence, as_of_tick=int(store.tick))
+                    row['region_id'] = regions.get(row['id'])
+                    row['region_key'] = keys.get(row['region_id'])
+                    if residence is not None and residence['state'] == 'outside':
+                        row['employer_id'] = None
+            return items
+
         paged = bool(limit is not None or after_id is not None or needle or population_tier)
         if not paged:
             rows = store.query("SELECT " + columns + base + " ORDER BY a.id")
-            return [
-                {**dict(row), "execution": execution[int(row["id"])]}
-                for row in rows
-            ]
+            return project_people(rows)
 
         page_limit = int(limit or 100)
         page_filters = list(filters)
@@ -637,10 +666,7 @@ def create_app(world: World, *, served_ticks: int | None = None,
             + " ORDER BY a.id LIMIT ?",
             (*page_params, page_limit + 1),
         )
-        items = [
-            {**dict(row), "execution": execution[int(row["id"])]}
-            for row in rows[:page_limit]
-        ]
+        items = project_people(rows[:page_limit])
         matched_total = int(store.scalar(
             "SELECT COUNT(*)" + base + filter_sql,
             filter_params,
@@ -966,7 +992,11 @@ def create_app(world: World, *, served_ticks: int | None = None,
 
     @app.get("/api/llm/runtime")
     async def llm_runtime():
-        return world.gateway.runtime_status()
+        from server.projections.envelope import lineage as runtime_lineage
+        context = runtime_lineage(store)
+        return JSONResponse({**world.gateway.runtime_status(), "context": {
+            "run_id": context["run_id"], "fork_id": context["fork_id"], "tick": "live"}},
+            headers={"Cache-Control": "private, no-store"})
 
     # ── Oracle (PRD R6) ──────────────────────────────────────────────────────
     @app.post("/api/oracle/ask")

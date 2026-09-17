@@ -1,8 +1,8 @@
 # Agent Economy — Implementation Status & PRD Gap Assessment
 
-> **Current assessment date:** 2026-08-26
+> **Current assessment date:** 2026-09-17
 >
-> **Maintained maximum contract for new runs:** schema 20 / semantics 14
+> **Maintained maximum contract for new runs:** schema 27 / semantics 20
 >
 > **Status authority:** this file is the single maintained release-status
 > ledger. Root and World OS specifications define behavior and intended
@@ -11,10 +11,67 @@
 > “released,” “shipped,” or “provider-ready.”
 >
 > **Compatibility boundary:** stored historical runs retain their recorded
-> schema and semantics. Supporting schema 20 / semantics 14 for new runs does
+> schema and semantics. Supporting schema 27 / semantics 20 for new runs does
 > not rewrite or upgrade historical evidence.
 
+## Local SimCity and DeepSeek integration
+
+The previous schema 21 / semantics 16 assessment is retained below as historical
+context. The integrated runtime preserves Semantics 20 and reserves migration 26
+for the unregistered population draft. Migration 27 adds separate firm-funded urban
+construction tables, with hash-contract-v9 for urban-enabled runs.
+The optional 3D city is available in Live City; the 2D atlas and research construction
+remain available. See [urban development](urban-development.md) and the branch-era
+[city verification](../city/verification.md). DeepSeek V4.1 support is included;
+the local provider and connector receipts below are separate from hosted deployment evidence.
+
+## September 17 integration and local evidence
+
+The local `codex/verified-integration-20260917` candidate combines current main
+(`d3dc044`), the staging/storage/UI line, operations hardening (`f3d84eb`), and
+the native Hermes browser callback repair. Original branches and worktrees are
+preserved. This is a local integration candidate, not a merge or deployment claim.
+
+- Two earlier UI runs (`8b0bde6e72`, `e1cfe2488f`) recorded 529 DeepSeek and
+  three MiniMax calls, $0.182557 combined run spend excluding preflight, and exact
+  offline replay. These are bounded historical receipts, not fresh calibration.
+- Installed Hermes used DeepSeek against local world `e2e31f1f15`: native OAuth,
+  eight discovered MCP tools, a submitted purchase executed for 257 cents, and
+  a fresh Hermes process recovered the same identity and receipt after restart.
+  The three-tick world replay was exact. Semantics 11 offline fallback was
+  verified; this receipt does not prove Semantics 14 attendance or hosted certification.
+- Consent now permits only the validated registered callback in its browser
+  form policy. The documented Hermes connection timeout covers the approval
+  window. These address callback blocking and repeated authorization tabs.
+- The subsequent [two-citizen native rehearsal](integrations/hermes-local-validation.md)
+  passed three sessions per citizen on Semantics 14, six successful actions,
+  native token refresh/rotation, explicit offline attendance, balanced accounting
+  and exact five-tick replay. It found and repaired an installed Hermes expiry
+  race and the repository's first-arrival attendance replay ordering.
+- The combined candidate passed 154 focused Python tests, 280 dashboard unit
+  tests, type checking and a production build. The browser run passed 139 tests
+  initially and all five failures on a bounded-worker rerun; two opt-in backend
+  cases were skipped. A style-read race was fixed and eight repeated accessibility
+  cases passed. Full cross-platform CI and production gates remain separate.
+
+The final browser run passed 146 tests with two opt-in backend tests skipped.
+Local replacement recovery and alert delivery passed on the rebuilt image;
+the operations suite passed 66 tests with one skip. Current dependency, notice,
+dataset and secret audits passed. The [integration receipt](reports/2026-09-17-integration-validation.md)
+records commands, failed attempts, exact scope and remaining release limits.
+
+See [the connection guide](development.md#connecting-an-installed-hermes-agent-locally)
+and [release decisions](release-readiness-go-no-go.md).
+
 ## Status terminology
+
+September 7, 2026 storage addition: optional lossless model-payload encoding,
+verified checkpoint/snapshot rotation, pins, quotas and run archives are
+integrated from `codex/hostinger-storage-recovery`. The Hostinger VPS/SFTP
+deployment includes pinned Litestream recovery and hourly PostgreSQL backups.
+Repository verification is distinct from deployment: no real VPS, backup-server
+or complete PostgreSQL disaster-recovery receipt is claimed by this change.
+See [the deployment guide](hostinger-vps.md). Public hosted rollout gates remain.
 
 | Term | Meaning in this repository |
 |---|---|
@@ -30,13 +87,20 @@
 |---|---|---|---|
 | Semantics 1–7 / schemas through 11 | Implemented and maintained for recorded-run compatibility | Historical PRD-v1 and semantics-7 baselines | New features do not alter their phase, replay, or information contracts. |
 | Semantics 8 / schema 12 | Communications and Causal Observatory implemented and locally verified | **Released deterministic causal baseline** | Its dated provider-smoke receipt remains historical and unavailable; later MiniMax evidence is separate and does not retroactively change that receipt. |
-| Semantics 9 / schema 13 | External Agent Gateway, scoped identity, REST/MCP, receipts, and replay implemented | **Rollout-gated** | Independent MCP conformance plus real Hermes, OpenClaw, Python, and TypeScript connector receipts are pending. |
+| Semantics 9 / schema 13 | External Agent Gateway, scoped identity, REST/MCP, receipts, and replay implemented | **Rollout-gated** | Local native Hermes passed the bounded receipt above. Independent public-HTTPS MCP, Hermes, OpenClaw, Python and TypeScript certification receipts remain pending. |
 | Semantics 10 / schema 14 | Agent Commons, deterministic feeds, explicit-read exposure, moderation, and replay implemented | **Rollout-gated** | A fork-based synthetic post/feed/explicit-read acceptance receipt is automated; the frozen multi-arm experiment, hosted UI evidence, and hosted operational gate remain pending. |
 | Semantics 11 / schema 15 | Compute plans, sponsorship, provider pools, operational attempt evidence, and learnable skills implemented and locally verified | Implemented opt-in contract; no separate public-hosting claim | Public use inherits the Semantics 9–10 hosted rollout gates. |
 | Semantics 12 / schema 17 | Civic places, presence, queues, appointments, permits, attention, privacy, gateway, and replay contracts implemented and locally verified | Implemented opt-in contract; retained compatibility | Public use inherits the Semantics 9–10 hosted rollout gates. |
 | Schema 18 | Additive newsroom redaction provenance; no new engine semantics | Implemented compatibility migration | Does not change historical mechanics. |
 | Semantics 13 / schema 19 | Agent-owned homes, firm workplaces, public facilities, permits, escrow funding, paid work, refunds, exact stages, single-place completion, projections, privacy, and replay implemented and locally verified | Implemented opt-in contract; retained compatibility | Public/live use inherits the Semantics 9–10 hosted and provider-readiness gates. |
-| Semantics 14 / schema 20 | Explicit submitted/missed external-turn attendance, separate operational reasons and applied decision policy, deterministic fallback, and exact attendance replay implemented and locally verified | Implemented opt-in contract; current maintained maximum | Existing profiles and stored Semantics 1–13 sources remain on their recorded behavior. |
+| Semantics 14 / schema 20 | Explicit submitted/missed external-turn attendance, separate operational reasons and applied decision policy, deterministic fallback, and exact attendance replay implemented and locally verified | Implemented opt-in contract; retained compatibility | Existing profiles and stored Semantics 1–13 sources remain on their recorded behavior. |
+| Semantics 15 / schema 21 | Persistent person origins, births, households, membership/custody, age eligibility, guardian-funded child food demand, keyed demographic draws and daily census implemented; focused birth/resume/replay verified | First W5 opt-in checkpoint; retained compatibility | Full family formation, care time, estate inventory/custody, institutional UI and long-horizon validation remain pending. See the [household guide](semantics15-households.md). |
+| Semantics 16 / schema 21 | Daily mechanism/person/event random keys, request-cache seed binding and explicit study stream declarations implemented; focused isolation, G2/F2 pause/resume and replacement-arrival replay verified | Opt-in contract; retained compatibility | Genesis initialization remains sequential; changing eligible sets or policy branches can change outcomes. Confirmatory design and empirical validation remain pending. Operational [phase recovery](plans/2026-09-06-paused-study-resume.md) is separately opt-in for semantics 7+. See the [randomness guide](semantics16-randomness.md). |
+| Semantics 17 / schema 22 | Mutual household decisions, consent, separation and joint moves implemented | Opt-in contract | Does not complete W5 cohort and estate validation. |
+| Semantics 18 / schema 23 | Daily time, delivered care, proportional production and earned wages implemented | Opt-in contract | Full education and long-horizon validation remain. |
+| Semantics 19 / schema 24 | Same-currency cash estates and bank-principal settlement implemented | Opt-in contract | Broader succession is the separate Semantics 20 development contract. |
+| Semantics 20 / schema 25 | Estate assets, succession and household financial reporting development integrated | Current maintained maximum; unpublished development contract | Full estate acceptance, cohort replay/export and multi-decade validation remain open; see the [estate plan](plans/2026-09-07-estate-assets-and-succession.md). |
+| Schemas 26–27 | 26 reserved for an unregistered population draft; 27 adds separate urban construction with hash-contract-v9 | Additive development migrations | No new engine semantics; historical runs retain their recorded contracts. |
 
 Adjacent implemented boundaries that do not create another engine semantics
 version:
@@ -64,14 +128,20 @@ later candidate.
 ## Current executive verdict
 
 The PRD-v1 P0/P1 surfaces and R18–R22 extensions are implemented. The current
-runtime also contains the Semantics 8–14 code summarized above. There is no
+runtime also contains the Semantics 8–20 code summarized above. There is no
 additional functional PRD-v1 feature gap.
 
-What remains is release and product evidence rather than another core economic
-subsystem: independent external-connector receipts, the Semantics 10 rollout
+For that original PRD-v1 scope, remaining release evidence includes
+independent external-connector receipts, the Semantics 10 rollout
 evidence, the fresh V9 Oracle campaign, the corrected live rumor gate, the
 explicitly authorized long live campaign, and a fresh provenance, license,
 dependency, and secret audit before tagging or public deployment.
+
+The separately authorized [research city roadmap](plans/2026-09-06-research-city-roadmap.md)
+also requires new economic mechanisms and research evidence. W5 household
+foundations have started; W5 completion, W6 education, W7 supply/housing, W8
+banking and W9 validation remain active work, alongside the recorded research
+and city follow-ups. Existing PRD-v1 closure does not complete that goal.
 
 The maintained [release-readiness go/no-go sheet](release-readiness-go-no-go.md)
 maps those boundaries to the 16 fixed `production-v1` gates, their prerequisites,
