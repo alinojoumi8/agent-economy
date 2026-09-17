@@ -4,6 +4,8 @@ export default defineConfig({
   testDir: "./tests/e2e",
   timeout: 30_000,
   fullyParallel: true,
+  // City WebGL fixtures share CPU/GPU capacity; avoid host-core-count overload.
+  workers: 2,
   reporter: [["line"]],
   use: {
     baseURL: process.env.AE_REAL_BASE_URL || "http://127.0.0.1:4174",

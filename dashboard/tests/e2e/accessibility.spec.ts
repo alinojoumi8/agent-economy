@@ -104,6 +104,7 @@ test("print media hides application chrome but preserves semantic content header
 });
 
 test("native controls use the color scheme of their visual surface", async ({ page }) => {
+  await expect(page.locator(".civic-observatory")).toBeVisible();
   const schemes = await page.evaluate(() => {
     const shell = document.createElement("div");
     shell.className = "world-os-shell";
