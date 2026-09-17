@@ -37,7 +37,9 @@ from prometheus_client.exposition import CONTENT_TYPE_LATEST
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agents.external_contract import ExternalAgentError, hash_external_credential
+from engine.storage_policy import StorageBudgetExceeded
 from hosted.auth import AuthFailure
+from server.request_limits import OAuthRegistrationLimitMiddleware
 from hosted.security import (
     CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
@@ -79,14 +81,14 @@ _EXTERNAL_ACTION_RECEIPT_PATH = re.compile(
 
 
 class _RequestBodyLimitMiddleware:
-    """Bound mutating request bodies before FastAPI/Pydantic allocates them."""
+    """Bound all HTTP bodies, including GET bodies forwarded by the agent proxy."""
 
     def __init__(self, app: Any, *, max_bytes: int) -> None:
         self.app = app
         self.max_bytes = max_bytes
 
     async def __call__(self, scope: dict[str, Any], receive: Any, send: Any) -> None:
-        if scope.get("type") != "http" or scope.get("method") in {"GET", "HEAD", "OPTIONS"}:
+        if scope.get("type") != "http":
             await self.app(scope, receive, send)
             return
         chunks: list[bytes] = []
@@ -665,6 +667,7 @@ def create_hosted_app(
     )
     app.state.readiness_tasks = {}
     app.add_middleware(_RequestBodyLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
+    app.add_middleware(OAuthRegistrationLimitMiddleware)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error(_request: Request, _exc: RequestValidationError) -> JSONResponse:
@@ -827,6 +830,14 @@ def create_hosted_app(
     def external_mutation_lock(connection_id: UUID) -> asyncio.Lock:
         locks: tuple[asyncio.Lock, ...] = app.state.external_mutation_locks
         return locks[connection_id.int % len(locks)]
+
+    async def admit_run_write(handle: Any) -> None:
+        check = getattr(supervisor, "check_write_admission", None)
+        if check is not None:
+            try:
+                await _invoke(check, handle)
+            except StorageBudgetExceeded:
+                raise _generic_error(507, "storage_capacity_reached") from None
 
     @app.get("/health/live")
     async def health_live() -> dict[str, str]:
@@ -1239,6 +1250,7 @@ def create_hosted_app(
         if principal.role not in {ROLE_AGENT_OWNER, ROLE_ADMIN}:
             raise _generic_error(403, "forbidden")
         handle = await run_handle(tenant_id, body.run_id)
+        await admit_run_write(handle)
         world = getattr(handle, "world", None)
         service = getattr(getattr(world, "runtime", None), "external", None)
         if service is None:
@@ -1303,6 +1315,8 @@ def create_hosted_app(
                     raise _generic_error(404, "not_found")
                 handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
                 service = handle.world.runtime.external
+                if body.status not in {"revoked", "paused"}:
+                    await admit_run_write(handle)
                 await _invoke(
                     service.update_connection,
                     str(_uuid_attribute(record, "run_connection_id", "id")),
@@ -1348,6 +1362,7 @@ def create_hosted_app(
                         catalog.revoke_external_credentials, tenant_id, connection_id,
                         owner_user_id=principal.user_id, admin=principal.role == ROLE_ADMIN)
                     return {"ok": True, "revoked": int(local.get("revoked", 0))}
+                await admit_run_write(handle)
                 credential = await _invoke(
                     service.rotate_personal_credential, local_id,
                     owner_id=str(principal.user_id), tenant_id=str(tenant_id),
@@ -1389,6 +1404,8 @@ def create_hosted_app(
             )
             status_method = getattr(handle, "status", None)
             payload = await _invoke(status_method) if status_method is not None else handle
+        except StorageBudgetExceeded:
+            raise _generic_error(507, "storage_capacity_reached") from None
         except Exception:
             raise _generic_error(503, "service_unavailable") from None
         return sanitize_public_payload(payload)
@@ -1438,6 +1455,8 @@ def create_hosted_app(
     ) -> Any:
         await authorize_mutation(request, tenant_id, admin=True)
         handle = await run_handle(tenant_id, run_id)
+        if body.action not in {"pause", "stop"}:
+            await admit_run_write(handle)
         if body.action == "snapshot":
             snapshot = getattr(supervisor, "snapshot_boundary", None)
             if snapshot is None:
@@ -1763,6 +1782,7 @@ def create_hosted_app(
             if record is None:
                 raise _generic_error(404, "not_found")
             handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
+            await admit_run_write(handle)
             result = await _invoke(
                 handle.world.runtime.external.create_authorization_code,
                 str(_uuid_attribute(record, "run_connection_id", "id")),
@@ -1800,6 +1820,7 @@ def create_hosted_app(
             if record is None:
                 raise _generic_error(404, "not_found")
             handle = await run_handle(body.tenant_id, _uuid_attribute(record, "run_id"))
+            await admit_run_write(handle)
             result = await _invoke(
                 handle.world.runtime.external.create_authorization_code,
                 str(_uuid_attribute(record, "run_connection_id", "id")),

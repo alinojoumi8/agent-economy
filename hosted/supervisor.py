@@ -13,6 +13,7 @@ import copy
 import os
 import re
 import shutil
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol, Sequence, runtime_checkable
@@ -20,9 +21,12 @@ from uuid import UUID, uuid4
 
 from engine.schema import SCHEMA_VERSION
 from engine.semantics import semantics_version
+from engine.storage_policy import StoragePolicy, StorageBudgetExceeded, database_bytes, directory_bytes
+from observability import get_logger, log_event as operational_log
 from hosted.artifacts import (
     ArtifactMetadata,
     ArtifactStore,
+    FilesystemArtifactStore,
     publish_sqlite_snapshot,
     restore_sqlite_snapshot,
     validate_snapshot_artifact_key,
@@ -30,6 +34,9 @@ from hosted.artifacts import (
 from run import open_run
 from run_config import load_config
 from server.app import create_app
+from hosted.snapshot_retention import prune_local_snapshots
+
+logger = get_logger("hosted.storage")
 
 
 _PROFILE_SLUG_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$")
@@ -240,6 +247,10 @@ class HostedRunSupervisor:
         lease_ttl_seconds: int = 60,
         snapshot_interval_ticks: int = 5,
         shutdown_grace_seconds: int = 30,
+        checkpoint_root: str | Path | None = None,
+        storage_policy: StoragePolicy | None = None,
+        snapshot_keep_last: int = 0,
+        streaming_backup: Any = None,
         run_id_factory: Callable[[], UUID | str] = uuid4,
     ) -> None:
         if not isinstance(max_loaded_runs, int) or isinstance(max_loaded_runs, bool):
@@ -248,8 +259,11 @@ class HostedRunSupervisor:
             raise ValueError("max_loaded_runs must be between 1 and 1000")
         if not (5 <= int(lease_ttl_seconds) <= 3600):
             raise ValueError("lease_ttl_seconds must be between 5 and 3600")
-        if not (1 <= int(snapshot_interval_ticks) <= 1_000_000):
-            raise ValueError("snapshot_interval_ticks must be between 1 and 1000000")
+        if not ((0 if streaming_backup is not None else 1) <= int(snapshot_interval_ticks) <= 1_000_000):
+            raise ValueError("snapshot_interval_ticks requires streaming backup to disable full copies")
+        if snapshot_keep_last and (type(snapshot_keep_last) is not int or snapshot_keep_last < 2
+                                   or not isinstance(artifact_store, FilesystemArtifactStore)):
+            raise ValueError("snapshot retention requires filesystem artifacts and at least two copies")
         if not (1 <= int(shutdown_grace_seconds) <= 3600):
             raise ValueError("shutdown_grace_seconds must be between 1 and 3600")
         if not instance_id.strip() or len(instance_id) > 200:
@@ -274,6 +288,14 @@ class HostedRunSupervisor:
         self.artifact_store = artifact_store
         self.work_root = Path(work_root).resolve()
         self.work_root.mkdir(parents=True, exist_ok=True)
+        self.checkpoint_root = Path(checkpoint_root).resolve() if checkpoint_root is not None else None
+        if self.checkpoint_root is not None:
+            if self.checkpoint_root.is_relative_to(self.work_root) or self.work_root.is_relative_to(self.checkpoint_root):
+                raise ValueError("checkpoint root must be separate from live runs")
+            self.checkpoint_root.mkdir(parents=True, exist_ok=True)
+        self.storage_policy = storage_policy
+        self.snapshot_keep_last = snapshot_keep_last
+        self.streaming_backup = streaming_backup
         self.profiles = normalized_profiles
         self.instance_id = instance_id.strip()
         self.max_loaded_runs = max_loaded_runs
@@ -342,11 +364,38 @@ class HostedRunSupervisor:
     def _bounded_config(self, config: dict[str, Any], work_dir: Path) -> dict[str, Any]:
         bounded = copy.deepcopy(config)
         bounded["checkpoint_dir"] = str(work_dir / "checkpoints")
+        if self.checkpoint_root is not None:
+            bounded["checkpoint_dir"] = str(self.checkpoint_root / work_dir.relative_to(self.work_root))
+        if self.storage_policy is not None:
+            bounded["storage_policy"] = self.storage_policy.as_dict()
+        if self.streaming_backup is not None:
+            # Explicit halt/stop checkpoints remain; Litestream provides the
+            # periodic recovery stream without full per-tick duplication.
+            bounded["checkpoint_every"] = 0
         bounded["report_dir"] = str(work_dir / "reports")
         # Hosted apps are addressed through the dispatcher; a profile cannot
         # opt a run into filesystem-serving behavior.
         bounded["hosted"] = True
         return bounded
+
+    def _check_storage(self, tenant: str, *, additional_bytes: int = 0) -> None:
+        if self.storage_policy is None:
+            return
+        self.storage_policy.check_free(self.work_root, additional_bytes=additional_bytes)
+        roots = [self.work_root / "tenants" / tenant]
+        if self.checkpoint_root is not None:
+            roots.append(self.checkpoint_root / "tenants" / tenant)
+        if isinstance(self.artifact_store, FilesystemArtifactStore):
+            roots.append(self.artifact_store.root / "tenants" / tenant)
+        total = sum(directory_bytes(root) for root in roots)
+        limit = self.storage_policy.max_tenant_bytes
+        if limit and total + additional_bytes > limit:
+            raise StorageBudgetExceeded("tenant", total + additional_bytes, limit)
+
+    def check_write_admission(self, handle: RunHandle) -> None:
+        if self.storage_policy is not None:
+            self.storage_policy.check_run(handle.database_path)
+            self._check_storage(handle.tenant_id)
 
     def _remove_failed_work_dir(self, work_dir: Path) -> None:
         resolved = work_dir.resolve()
@@ -386,6 +435,7 @@ class HostedRunSupervisor:
         record = None
         lease_token = None
         try:
+            await asyncio.to_thread(self._check_storage, tenant)
             bounded = self._bounded_config(config, work_dir)
             _, world, world_run_id = await asyncio.to_thread(
                 open_run, bounded, None, None, data_dir=data_dir
@@ -513,12 +563,16 @@ class HostedRunSupervisor:
             snapshot_sequence=self._snapshot_sequence(record),
         )
         controller_tick = world.on_tick
+        world.storage_guard = lambda: self._check_storage(tenant)
 
         def hosted_tick_boundary(tick: int, summary: dict[str, Any]) -> None:
             if controller_tick is not None:
                 controller_tick(tick, summary)
             reason = "pause" if summary.get("paused") or summary.get("interrupted") else "tick"
-            if reason != "tick" or int(tick) % self.snapshot_interval_ticks == 0:
+            if summary.get("paused") == "storage":
+                self._schedule_snapshot_threadsafe(handle, "storage")
+                return  # preserve reserve instead of allocating a full copy
+            if reason != "tick" or (self.snapshot_interval_ticks and int(tick) % self.snapshot_interval_ticks == 0):
                 self._schedule_snapshot_threadsafe(handle, reason)
 
         world.on_tick = hosted_tick_boundary
@@ -630,9 +684,18 @@ class HostedRunSupervisor:
                 await asyncio.to_thread(
                     self._restore_record_snapshot, record, tenant, public_id, world_run_id, data_dir
                 )
+            renewed = await asyncio.to_thread(
+                self.catalog.renew_writer_lease, tenant, public_id,
+                owner=self.instance_id, token=lease_token, ttl_seconds=self.lease_ttl_seconds)
+            if not renewed:
+                raise WriterLeaseLost("writer lease lost during recovery")
+            operational = self._bounded_config({}, work_dir)
             _, world, opened_run_id = await asyncio.to_thread(
-                open_run, {}, world_run_id, None, data_dir=data_dir
-            )
+                open_run, operational, world_run_id, None, data_dir=data_dir)
+            world.config["checkpoint_dir"] = operational["checkpoint_dir"]
+            world.config["report_dir"] = operational["report_dir"]
+            if self.streaming_backup is not None:
+                world.checkpoint_every = 0
             if opened_run_id != world_run_id:
                 raise HostedRunError("resumed simulator run key changed unexpectedly")
             await asyncio.to_thread(
@@ -706,6 +769,12 @@ class HostedRunSupervisor:
         data_dir: Path,
     ) -> None:
         key = _record_value(record, "snapshot_object_key")
+        if self.streaming_backup is not None:
+            self._check_storage(tenant)
+            self.streaming_backup.restore(
+                data_dir / f"{world_run_id}.db", run_key=world_run_id,
+                schema_version=int(_record_value(record, "schema_version", SCHEMA_VERSION)))
+            return
         digest = _record_value(record, "snapshot_sha256")
         if not key or not digest:
             raise HostedRunError("run has no local database or durable snapshot")
@@ -762,10 +831,22 @@ class HostedRunSupervisor:
         def schedule() -> None:
             if handle.closed or handle.snapshot_failed:
                 return
-            task = loop.create_task(self.snapshot_boundary(handle, reason))
+            operation = (self._record_storage_pause(handle) if reason == "storage"
+                         else self.snapshot_boundary(handle, reason))
+            task = loop.create_task(operation)
             self._track_snapshot_task(handle, task)
 
         loop.call_soon_threadsafe(schedule)
+
+    async def _record_storage_pause(self, handle: RunHandle) -> None:
+        async with handle.snapshot_lock:
+            record = await asyncio.to_thread(
+                self.catalog.update_run_status, handle.tenant_id, handle.public_run_id,
+                "paused", lease_token=handle.lease_token)
+            if record is None:
+                self._mark_lease_lost(handle)
+                raise WriterLeaseLost("writer lease lost while recording storage pause")
+            handle.catalog_record = record
 
     @staticmethod
     def _track_snapshot_task(handle: RunHandle, task: asyncio.Task[Any]) -> None:
@@ -797,6 +878,10 @@ class HostedRunSupervisor:
             raise HostedRunError("automatic snapshots are disabled after snapshot failure")
         async with handle.snapshot_lock:
             try:
+                if self.storage_policy is not None:
+                    await asyncio.to_thread(
+                        self._check_storage, handle.tenant_id,
+                        additional_bytes=2 * database_bytes(handle.database_path))
                 handle.snapshot_sequence += 1
                 tick = int(handle.world.store.tick)
                 snapshot_id = f"t{tick:012d}-s{handle.snapshot_sequence:08d}-{reason}"
@@ -835,6 +920,17 @@ class HostedRunSupervisor:
                 raise WriterLeaseLost(
                     f"writer lease lost while publishing run {handle.public_run_id}"
                 )
+            if self.snapshot_keep_last:
+                try:
+                    # Retain the writer lease through cleanup. Recording a
+                    # stopped status below releases it to a possible successor.
+                    await asyncio.to_thread(prune_local_snapshots, self.artifact_store,
+                                            metadata.key, keep_last=self.snapshot_keep_last)
+                except Exception as exc:
+                    # The pointer already committed. A cleanup failure must not
+                    # invalidate a good backup or hide it from the operator.
+                    operational_log(logger, logging.WARNING, "hosted.storage.retention_failed",
+                                    run_id=handle.public_run_id, error_type=type(exc).__name__)
             status = (
                 "stopped"
                 if reason == "stop" or handle.world.status == "finished"

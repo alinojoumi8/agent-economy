@@ -1,5 +1,10 @@
 # Operator runbook
 
+For Hostinger VPS with off-server SFTP backups, use the
+[Hostinger guide](hostinger-vps.md). The original S3/MinIO reference deployment
+below remains available. [Storage and recovery](storage-and-recovery.md) covers
+retention, memory preservation, local policy overrides and verified archives.
+
 ## Safe startup
 
 Run offline before using paid providers:

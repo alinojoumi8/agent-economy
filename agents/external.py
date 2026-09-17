@@ -19,7 +19,7 @@ from world.event_visibility import (
     PUBLIC_REPORTABLE_EVENT_KINDS,
     public_event_payload,
 )
-from .external_contract import ExternalAgentError, hash_external_credential
+from .external_contract import MAX_OAUTH_CLIENTS, ExternalAgentError, hash_external_credential
 from .participant import ParticipantError, ParticipantService
 
 
@@ -343,6 +343,10 @@ class ExternalAgentService:
         name = str(client_name).strip()[:200]
         if not name:
             raise ExternalAgentError(400, "client_name is required", "invalid_client_metadata")
+        count = self.store.query_one("SELECT COUNT(*) AS total FROM external_oauth_clients")
+        if int(count["total"]) >= MAX_OAUTH_CLIENTS:
+            raise ExternalAgentError(503, "client registration capacity reached",
+                                     "temporarily_unavailable")
         client_id = f"ae_client_{uuid4()}"
         created = _iso()
         self.store.insert(
@@ -366,7 +370,7 @@ class ExternalAgentService:
             raise ExternalAgentError(400, "redirect URI is not registered", "invalid_redirect_uri")
 
     def authenticate(self, raw_token: str, *, required_scope: str | None = None,
-                     rate_limit: bool = True) -> dict[str, Any]:
+                     rate_limit: bool = True, validate_only: bool = False) -> dict[str, Any]:
         if not raw_token:
             raise ExternalAgentError(401, "bearer token required", "authentication_required")
         row = self.store.query_one(
@@ -376,7 +380,8 @@ class ExternalAgentService:
             "JOIN external_agent_connections c ON c.id=k.connection_id WHERE k.token_hash=?",
             (_hash(str(raw_token)),))
         now = _now()
-        if row is None or row["revoked_at"] is not None or _parse_time(row["expires_at"]) <= now:
+        if (row is None or row["kind"] not in {"personal", "access"}
+                or row["revoked_at"] is not None or _parse_time(row["expires_at"]) <= now):
             raise ExternalAgentError(401, "credential is invalid or expired", "invalid_token")
         if str(row["audience"]) != self.audience:
             raise ExternalAgentError(401, "credential audience mismatch", "invalid_token")
@@ -385,10 +390,20 @@ class ExternalAgentService:
         scopes = set(load_json(row["scopes_json"], [])) & set(
             load_json(row["connection_scopes_json"], []))
         if required_scope and required_scope not in scopes:
-            self._audit(str(row["connection_id"]), "scope.denied", "denied",
-                        {"required_scope": required_scope})
-            self.store.commit()
+            if not validate_only:
+                self._audit(str(row["connection_id"]), "scope.denied", "denied",
+                            {"required_scope": required_scope})
+                self.store.commit()
             raise ExternalAgentError(403, "required scope is not granted", "insufficient_scope")
+        document = self._connection_document(row)
+        document.update({"credential_id": str(row["id"]), "credential_kind": str(row["kind"]),
+                         "scopes": sorted(scopes), "audience": self.audience})
+        if validate_only:
+            # HTTP admission can check storage off the event loop after proving
+            # identity, then repeat authentication before any mutation.
+            if rate_limit:
+                self._check_rate_limit(str(row["connection_id"]), now, validate_only=True)
+            return document
         if rate_limit:
             self._check_rate_limit(str(row["connection_id"]), now)
         lease = now + timedelta(seconds=self.lease_seconds)
@@ -399,9 +414,6 @@ class ExternalAgentService:
             "UPDATE external_agent_connections SET last_seen_at=?,lease_expires_at=?,updated_at=? "
             "WHERE id=?", (_iso(now), _iso(lease), _iso(now), str(row["connection_id"])))
         self.store.commit()
-        document = self._connection_document(row)
-        document.update({"credential_id": str(row["id"]), "credential_kind": str(row["kind"]),
-                         "scopes": sorted(scopes), "audience": self.audience})
         return document
 
     def create_authorization_code(
@@ -433,7 +445,8 @@ class ExternalAgentService:
                 "scope": " ".join(requested)}
 
     def exchange_authorization_code(self, *, code: str, client_id: str,
-                                    redirect_uri: str, code_verifier: str) -> dict[str, Any]:
+                                    redirect_uri: str, code_verifier: str,
+                                    validate_only: bool = False) -> dict[str, Any]:
         row = self.store.query_one(
             "SELECT * FROM external_oauth_codes WHERE code_hash=?", (_hash(str(code)),))
         now = _now()
@@ -442,12 +455,18 @@ class ExternalAgentService:
             raise ExternalAgentError(400, "authorization code is invalid", "invalid_grant")
         if str(row["client_id"]) != str(client_id) or str(row["redirect_uri"]) != str(redirect_uri):
             raise ExternalAgentError(400, "authorization binding mismatch", "invalid_grant")
-        digest = hashlib.sha256(str(code_verifier).encode("ascii")).digest()
+        verifier = str(code_verifier)
+        if not verifier.isascii() or not 43 <= len(verifier) <= 128:
+            raise ExternalAgentError(400, "PKCE verification failed", "invalid_grant")
+        digest = hashlib.sha256(verifier.encode("ascii")).digest()
         challenge = base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
         if not secrets.compare_digest(challenge, str(row["code_challenge"])):
-            self._audit(str(row["connection_id"]), "oauth.pkce_denied", "denied", {})
-            self.store.commit()
+            if not validate_only:
+                self._audit(str(row["connection_id"]), "oauth.pkce_denied", "denied", {})
+                self.store.commit()
             raise ExternalAgentError(400, "PKCE verification failed", "invalid_grant")
+        if validate_only:
+            return {}
         self.store.execute("UPDATE external_oauth_codes SET consumed_at=? WHERE id=?",
                            (_iso(now), str(row["id"])))
         result = self._oauth_token_pair(str(row["connection_id"]),
@@ -457,7 +476,8 @@ class ExternalAgentService:
         return result
 
     def refresh_access_token(self, *, refresh_token: str,
-                             scopes: Iterable[str] | None = None) -> dict[str, Any]:
+                             scopes: Iterable[str] | None = None,
+                             validate_only: bool = False) -> dict[str, Any]:
         row = self.store.query_one(
             "SELECT k.*,c.status,c.scopes_json AS connection_scopes_json "
             "FROM external_agent_credentials k JOIN external_agent_connections c "
@@ -472,6 +492,8 @@ class ExternalAgentService:
         requested = set(_clean_scopes(scopes)) if scopes is not None else original
         if not requested.issubset(original):
             raise ExternalAgentError(403, "refresh scope escalation denied", "scope_escalation")
+        if validate_only:
+            return {}
         self.store.execute("UPDATE external_agent_credentials SET revoked_at=? WHERE id=?",
                            (_iso(now), str(row["id"])))
         result = self._oauth_token_pair(str(row["connection_id"]), sorted(requested),
@@ -1609,17 +1631,27 @@ class ExternalAgentService:
                 "expires_in": self.access_token_minutes * 60,
                 "refresh_token": refresh["token"], "scope": access["scope"]}
 
-    def _check_rate_limit(self, connection_id: str, now: datetime) -> None:
+    def _check_rate_limit(self, connection_id: str, now: datetime, *, validate_only: bool = False) -> None:
         window = now.replace(second=0, microsecond=0).isoformat()
         row = self.store.query_one(
             "SELECT request_count FROM external_rate_windows WHERE connection_id=? "
             "AND window_started_at=?", (connection_id, window))
         count = int(row["request_count"]) if row else 0
         if count >= self.requests_per_minute:
-            self._audit(connection_id, "rate_limit.denied", "denied",
-                        {"window": window, "limit": self.requests_per_minute})
-            self.store.commit()
+            if not validate_only and count == self.requests_per_minute:
+                # Record at most one denial per window. A rejected-request
+                # flood must not append unbounded audit rows to a paused run.
+                changed = self.store.execute(
+                    "UPDATE external_rate_windows SET request_count=request_count+1 "
+                    "WHERE connection_id=? AND window_started_at=? AND request_count=?",
+                    (connection_id, window, self.requests_per_minute))
+                if changed.rowcount == 1:
+                    self._audit(connection_id, "rate_limit.denied", "denied",
+                                {"window": window, "limit": self.requests_per_minute})
+                self.store.commit()
             raise ExternalAgentError(429, "rate limit exceeded", "rate_limit_exceeded")
+        if validate_only:
+            return
         self.store.execute(
             "INSERT INTO external_rate_windows(connection_id,window_started_at,request_count) "
             "VALUES(?,?,1) ON CONFLICT(connection_id,window_started_at) DO UPDATE SET "

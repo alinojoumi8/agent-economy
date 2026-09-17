@@ -1,0 +1,9 @@
+# Operational policy, loaded separately from the scientific world profile.
+# Bytes use binary GiB. Set a byte limit to 0 only to explicitly disable it.
+checkpoint_keep_last: 4
+checkpoint_max_bytes: 21474836480  # 20 GiB per run; pins and two valid copies survive
+min_free_bytes: 5368709120        # 5 GiB reserve, checked before ticks and copies
+max_run_bytes: 10737418240        # 10 GiB including SQLite sidecars
+max_tenant_bytes: 53687091200     # 50 GiB; hosted live data and recovery files
+compress_payloads: true
+durable_writes: true

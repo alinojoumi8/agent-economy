@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
+from engine.storage_policy import StoragePolicy
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log, safe_fields
@@ -629,6 +630,9 @@ class Gateway:
     def __init__(self, store, config: dict):
         self.store = store
         self.config = config
+        storage_policy = StoragePolicy.from_mapping(config.get("storage_policy"))
+        if storage_policy is not None:
+            storage_policy.apply(store)
         llm_cfg = config.get("llm", {})
         self.replay = bool(config.get("replay", False))
         self.readiness_report = validate_llm_config(

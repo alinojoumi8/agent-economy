@@ -20,6 +20,11 @@ each audience can find the authoritative level of detail.
 
 ## Operate and recover
 
+- [Storage and recovery](storage-and-recovery.md) — memory preservation, bounded
+  checkpoints, lossless compression, pins and verified archives.
+- [Hostinger VPS](hostinger-vps.md) — Docker, SFTP Litestream replication,
+  PostgreSQL backups, monitoring and disaster recovery without Amazon.
+
 - [Operator runbook](operator-runbook.md) — safe startup, hosted deployment,
   backup/restore, bounded pilot, production acceptance, phase-aware resume,
   reports, replay, and retention.

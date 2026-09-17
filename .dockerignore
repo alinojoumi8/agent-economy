@@ -12,9 +12,16 @@ reports/out
 *.db
 *.db-wal
 *.db-shm
+*.ae.zip
 .env
 .env.*
 !.env.example
 LOOP.md
 STATE.md
 loop-*.md
+tmp
+deploy/hostinger/secrets
+data/backups
+.hosted-runs
+.hosted-artifacts
+.hosted-snapshots

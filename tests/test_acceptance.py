@@ -2,6 +2,7 @@ import asyncio
 import json
 from pathlib import Path
 import sys
+import time
 
 import yaml
 import pytest
@@ -472,10 +473,13 @@ def test_served_acceptance_run_stays_observable_and_asks_at_exact_tick(tmp_path)
     world.acceptance_target_tick = 2
 
     with TestClient(create_app(world)) as client:
-        for _ in range(100):
+        deadline = time.monotonic() + 10
+        while True:
             status = client.get("/api/run/status").json()
-            if not status["running"] and status["tick"] >= 2:
+            if not status["running"] or time.monotonic() >= deadline:
                 break
+            time.sleep(0.01)
+        assert status["running"] is False, status
         assert status["tick"] == 2
         assert status["acceptance_orchestration"]["state"] == "completed"
         assert status["acceptance_orchestration"]["authorized"]
@@ -1131,11 +1135,15 @@ def test_resumed_served_acceptance_uses_its_absolute_target(tmp_path):
     world.acceptance_target_tick = 2
 
     with TestClient(create_app(world, served_ticks=2)) as client:
-        for _ in range(100):
+        # The final tick commits before background report generation finishes.
+        deadline = time.monotonic() + 10
+        while True:
             status = client.get("/api/run/status").json()
-            if not status["running"]:
+            if not status["running"] or time.monotonic() >= deadline:
                 break
+            time.sleep(0.01)
 
+        assert status["running"] is False, status
         assert status["tick"] == 2
         assert status["target_tick"] == 2
         assert status["remaining_ticks"] == 0

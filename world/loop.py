@@ -64,6 +64,10 @@ from .phases import (
 )
 from oracle.analyst import Oracle
 from observability import get_logger, log_event as operational_log
+from engine.storage_policy import StoragePolicy, StorageBudgetExceeded, database_bytes
+from engine.checkpoint_retention import (
+    pin_path, prune_checkpoints, verify_for_retention, write_recovery_checkpoint,
+)
 
 LEGACY_PHASES = tuple(spec.name for spec in LEGACY_PHASE_SPECS)
 PHASES = tuple(spec.name for spec in STANDARD_PHASE_SPECS)
@@ -75,6 +79,8 @@ class World:
     def __init__(self, store: Store, config: dict, *, replay: bool = False):
         self.store = store
         self.config = config
+        self.storage_policy = StoragePolicy.from_mapping(config.get("storage_policy"))
+        self.storage_guard = None  # optional hosted tenant-budget check
         self.engine_semantics_version = semantics_version(config, default=2)
         self.phases = phase_names_for_semantics(self.engine_semantics_version)
         seed = int(config.get("seed", 42))
@@ -335,6 +341,28 @@ class World:
 
     # ── one tick ─────────────────────────────────────────────────────────────
     async def step(self) -> dict:
+        if self.storage_policy is not None and not self.gateway.replay:
+            try:
+                self.storage_policy.check_run(self.store.path)
+                if self.storage_guard is not None:
+                    await asyncio.to_thread(self.storage_guard)
+            except StorageBudgetExceeded as exc:
+                # Pause before acquiring an external turn or starting another
+                # phase. Storage telemetry is operational, never a world event.
+                self.status = "paused"
+                self._pause_requested = True
+                self.last_pause_reason = {"reason": "storage", **exc.as_dict()}
+                self.store.set_meta(status="paused")
+                self.store.commit()
+                operational_log(
+                    logger, logging.WARNING, "world.storage.paused",
+                    run_id=self.gateway.run_id, tick=self.store.tick,
+                    **exc.as_dict())
+                summary = {"tick": self.store.tick, "paused": "storage",
+                           "pause_reason": self.last_pause_reason,
+                           "governor": self.gateway.governor.status()}
+                self._notify_tick(self.store.tick, summary)
+                return summary
         meta = self.store.get_meta()
         tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
         phase = str(meta["next_phase"] or "NIGHT_CLOSE")
@@ -977,6 +1005,9 @@ class World:
         ckpt_dir = Path(
             self.config.get("checkpoint_dir", "data/checkpoints")).resolve()
         ckpt_dir.mkdir(parents=True, exist_ok=True)
+        if self.storage_policy is not None:
+            self.storage_policy.check_free(
+                ckpt_dir, additional_bytes=2 * database_bytes(self.store.path))
         run_id = self.store.get_meta()["run_id"]
         return ckpt_dir / f"{run_id}_t{tick}.db", run_id
 
@@ -1017,7 +1048,16 @@ class World:
         """
         try:
             dest, run_id = self._checkpoint_prepare(tick)
-            await asyncio.to_thread(self._checkpoint_write, self.store.path, dest)
+            writer = write_recovery_checkpoint if self.storage_policy else self._checkpoint_write
+            await asyncio.to_thread(writer, self.store.path, dest)
+            if self.storage_policy is not None:
+                paths = [dest]
+                for row in self.store.query("SELECT tick,path FROM checkpoints"):
+                    candidate = dest.parent / f"{run_id}_t{int(row['tick'])}.db"
+                    if row["path"] == str(candidate):
+                        paths.append(candidate)
+                verified = await asyncio.to_thread(verify_for_retention, list(dict.fromkeys(paths)))
+                return self._checkpoint_record(tick, dest, run_id, reason, verified=verified)
             return self._checkpoint_record(tick, dest, run_id, reason)
         except Exception as exc:
             return self._checkpoint_failed(tick, reason, exc)
@@ -1026,13 +1066,14 @@ class World:
         """Blocking checkpoint, for the CLI and halt paths that have no loop."""
         try:
             dest, run_id = self._checkpoint_prepare(tick)
-            self._checkpoint_write(self.store.path, dest)
+            writer = write_recovery_checkpoint if self.storage_policy else self._checkpoint_write
+            writer(self.store.path, dest)
             return self._checkpoint_record(tick, dest, run_id, reason)
         except Exception as exc:
             return self._checkpoint_failed(tick, reason, exc)
 
     def _checkpoint_record(self, tick: int, dest: Path, run_id: str,
-                           reason: str) -> Optional[str]:
+                           reason: str, *, verified: dict | None = None) -> Optional[str]:
         try:
             created_at = __import__("datetime").datetime.now(
                 __import__("datetime").timezone.utc).isoformat()
@@ -1052,10 +1093,21 @@ class World:
                     (created_at, int(existing["id"])),
                 )
             self.store.commit()
-            keep_last = self.config.get("checkpoint_keep_last")
+            keep_last = (self.storage_policy.checkpoint_keep_last
+                         if self.storage_policy is not None
+                         else self.config.get("checkpoint_keep_last"))
             if type(keep_last) is int and keep_last > 0:
                 try:
-                    self._prune_checkpoints(run_id, keep_last)
+                    if self.storage_policy is not None:
+                        receipt = prune_checkpoints(self.store, dest.parent, self.storage_policy,
+                                                    verified=verified)
+                        if receipt["budget_exceeded"]:
+                            operational_log(
+                                logger, logging.WARNING, "world.storage.checkpoint_budget",
+                                run_id=run_id, tick=tick,
+                                retained_bytes=receipt["retained_bytes"])
+                    else:
+                        self._prune_checkpoints(run_id, keep_last)
                 except Exception as exc:
                     # Retention is maintenance after the snapshot, manifest,
                     # and catalog row have already committed. Preserve that
@@ -1097,6 +1149,8 @@ class World:
                 if database.parent != checkpoint_dir:
                     continue
                 manifest = Path(f"{database}.manifest.json")
+                if pin_path(database).exists():
+                    continue
                 if database.is_symlink() or manifest.is_symlink():
                     continue
                 resolved_database = database.resolve()

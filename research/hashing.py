@@ -10,6 +10,8 @@ import unicodedata
 from pathlib import Path
 from typing import Any, Iterable
 
+from engine.payloads import unpack_payload
+
 
 CONTRACT_PATH = Path(__file__).with_name("hash-contract-v1.json")
 CURRENT_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v2.json")
@@ -201,6 +203,7 @@ def _typed_json(value: Any) -> Any:
 
 
 def canonical_value(value: Any, *, parse_json: bool = False) -> bytes:
+    value = unpack_payload(value)
     if parse_json and value is not None:
         if not isinstance(value, str):
             raise HashContractError("declared JSON column contains non-text data")
