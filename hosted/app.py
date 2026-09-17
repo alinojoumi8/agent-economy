@@ -38,6 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from agents.external_contract import ExternalAgentError, hash_external_credential
 from hosted.auth import AuthFailure
+from hosted.catalog import CatalogConflict
 from hosted.security import (
     CSRF_COOKIE_NAME,
     SESSION_COOKIE_NAME,
@@ -50,6 +51,14 @@ from hosted.security import (
     parse_opaque_token,
 )
 
+
+# One policy string so a route that must relax a directive (the OAuth consent
+# redirect) can derive from it instead of drifting from the middleware.
+POLICY_CONTENT_SECURITY = (
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; "
+    "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+)
 
 ROLE_OBSERVER = "observer"
 ROLE_AGENT_OWNER = "agent_owner"
@@ -395,6 +404,23 @@ async def _invoke(function: Callable[..., Any], /, *args: Any, **kwargs: Any) ->
     return result
 
 
+async def _invoke_world(function: Callable[..., Any], /, *args: Any, **kwargs: Any) -> Any:
+    """Invoke a run-local (SQLite-backed) service method on the serving loop.
+
+    The world's SQLite connection is shared with the tick task that runs on
+    this loop. Calling it from a worker thread could commit a half-applied
+    phase out from under the tick's savepoint; these calls are short, so they
+    stay on the loop like every other run-local request.
+    """
+
+    if inspect.iscoroutinefunction(function):
+        return await function(*args, **kwargs)
+    result = function(*args, **kwargs)
+    if inspect.isawaitable(result):
+        return await result
+    return result
+
+
 def _attribute(value: Any, *names: str, default: Any = None) -> Any:
     if isinstance(value, Mapping):
         for name in names:
@@ -693,11 +719,8 @@ def create_hosted_app(
         metrics.requests.labels(request.method, route_label, status).inc()
         metrics.latency.labels(request.method, route_label).observe(time.perf_counter() - started)
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-            "connect-src 'self' ws: wss:; img-src 'self' data:; font-src 'self'; "
-            "object-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-        )
+        if "Content-Security-Policy" not in response.headers:
+            response.headers["Content-Security-Policy"] = POLICY_CONTENT_SECURITY
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
@@ -1190,7 +1213,7 @@ def create_hosted_app(
             public = _public_external_agent(record)
             try:
                 handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
-                local = await _invoke(
+                local = await _invoke_world(
                     handle.world.runtime.external.connection,
                     str(_uuid_attribute(record, "run_connection_id", "id")),
                     owner_id=str(principal.user_id), tenant_id=str(tenant_id),
@@ -1245,7 +1268,7 @@ def create_hosted_app(
             raise _generic_error(503, "service_unavailable")
         created: dict[str, Any] | None = None
         try:
-            created = await _invoke(
+            created = await _invoke_world(
                 service.create_connection,
                 tenant_id=str(tenant_id), owner_id=str(principal.user_id),
                 display_name=body.display_name, tier=body.tier, scopes=body.scopes,
@@ -1271,10 +1294,22 @@ def create_hosted_app(
             raise
         except ExternalAgentError as exc:
             raise _generic_error(exc.status_code, exc.code) from None
+        except CatalogConflict:
+            # Quota and authorization refusals are the caller's conflict, not a
+            # service outage; the run-local connection is rolled back below.
+            if created is not None:
+                try:
+                    await _invoke_world(
+                        service.update_connection, created["connection"]["id"],
+                        owner_id=str(principal.user_id), tenant_id=str(tenant_id),
+                        status="revoked", admin=True)
+                except Exception:
+                    pass
+            raise _generic_error(409, "external_agent_conflict") from None
         except Exception:
             if created is not None:
                 try:
-                    await _invoke(
+                    await _invoke_world(
                         service.update_connection, created["connection"]["id"],
                         owner_id=str(principal.user_id), tenant_id=str(tenant_id),
                         status="revoked", admin=True)
@@ -1303,7 +1338,7 @@ def create_hosted_app(
                     raise _generic_error(404, "not_found")
                 handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
                 service = handle.world.runtime.external
-                await _invoke(
+                await _invoke_world(
                     service.update_connection,
                     str(_uuid_attribute(record, "run_connection_id", "id")),
                     owner_id=str(principal.user_id), tenant_id=str(tenant_id),
@@ -1340,7 +1375,7 @@ def create_hosted_app(
                 service = handle.world.runtime.external
                 local_id = str(_uuid_attribute(record, "run_connection_id", "id"))
                 if body.action == "revoke":
-                    local = await _invoke(
+                    local = await _invoke_world(
                         service.revoke_credentials, local_id,
                         owner_id=str(principal.user_id), tenant_id=str(tenant_id),
                         admin=principal.role == ROLE_ADMIN)
@@ -1348,7 +1383,7 @@ def create_hosted_app(
                         catalog.revoke_external_credentials, tenant_id, connection_id,
                         owner_user_id=principal.user_id, admin=principal.role == ROLE_ADMIN)
                     return {"ok": True, "revoked": int(local.get("revoked", 0))}
-                credential = await _invoke(
+                credential = await _invoke_world(
                     service.rotate_personal_credential, local_id,
                     owner_id=str(principal.user_id), tenant_id=str(tenant_id),
                     admin=principal.role == ROLE_ADMIN)
@@ -1368,7 +1403,7 @@ def create_hosted_app(
                 # revoke the just-issued material so no half-created credential lives.
                 try:
                     if 'service' in locals() and 'local_id' in locals():
-                        await _invoke(
+                        await _invoke_world(
                             service.revoke_credentials, local_id,
                             owner_id=str(principal.user_id), tenant_id=str(tenant_id), admin=True)
                 except Exception:
@@ -1763,7 +1798,7 @@ def create_hosted_app(
             if record is None:
                 raise _generic_error(404, "not_found")
             handle = await run_handle(tenant_id, _uuid_attribute(record, "run_id"))
-            result = await _invoke(
+            result = await _invoke_world(
                 handle.world.runtime.external.create_authorization_code,
                 str(_uuid_attribute(record, "run_connection_id", "id")),
                 tenant_id=str(tenant_id), owner_id=str(principal.user_id),
@@ -1782,8 +1817,15 @@ def create_hosted_app(
             query["state"] = [str(fields["state"])]
         location = urlunsplit((parsed.scheme, parsed.netloc, parsed.path,
                                urlencode(query, doseq=True), ""))
-        return RedirectResponse(location, status_code=302,
-                                headers={"Cache-Control": "no-store"})
+        # Chromium enforces ``form-action`` on the redirect that follows a form
+        # submission, so the consent form's 302 to the registered client must
+        # name that client's origin or the browser refuses to complete it.
+        redirect_origin = f"{parsed.scheme}://{parsed.netloc}"
+        return RedirectResponse(location, status_code=302, headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": POLICY_CONTENT_SECURITY.replace(
+                "form-action 'self'", f"form-action 'self' {redirect_origin}"),
+        })
 
     @app.post("/oauth/authorize")
     async def hosted_oauth_authorize(
@@ -1800,7 +1842,7 @@ def create_hosted_app(
             if record is None:
                 raise _generic_error(404, "not_found")
             handle = await run_handle(body.tenant_id, _uuid_attribute(record, "run_id"))
-            result = await _invoke(
+            result = await _invoke_world(
                 handle.world.runtime.external.create_authorization_code,
                 str(_uuid_attribute(record, "run_connection_id", "id")),
                 tenant_id=str(body.tenant_id), owner_id=str(principal.user_id),

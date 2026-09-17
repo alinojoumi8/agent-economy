@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
-from .adapters import Adapter, AdapterHTTPError, AdapterResult, build_adapters
+from .adapters import Adapter, AdapterHTTPError, AdapterResult, AdapterTimeoutError, build_adapters
 from .readiness import ProviderConfigurationError, validate_llm_config
 from observability import get_logger, log_event as operational_log, safe_fields
 
@@ -303,6 +303,22 @@ DEFAULT_PRICING = {
 }
 
 
+def _transient_provider_error(exc: BaseException) -> bool:
+    """Whether a legacy-route failure may heal on retry.
+
+    Contract rejections, malformed bodies, permission and configuration errors
+    never do, so re-sending would only repeat the bill. Anything else (an
+    unknown provider outage included) keeps the historical single retry.
+    """
+    if isinstance(exc, (PermissionError, ProviderConfigurationError)):
+        return False
+    if isinstance(exc, (asyncio.TimeoutError, TimeoutError, AdapterTimeoutError, OSError)):
+        return True
+    if isinstance(exc, (KeyError, TypeError, ValueError, AttributeError)):
+        return False
+    return True
+
+
 class BudgetExceeded(Exception):
     """Raised when a call would breach the hard cap — the world pauses cleanly."""
 
@@ -439,8 +455,13 @@ class PriorityProviderGate:
         try:
             await future
         except BaseException:
-            future.cancel()
             async with self._lock:
+                if future.done() and not future.cancelled():
+                    # The slot was granted between the wake-up and this
+                    # cancellation; hand it back or the pool leaks capacity.
+                    self.active = max(0, self.active - 1)
+                else:
+                    future.cancel()
                 self._dispatch_locked()
             raise
         return ((time.perf_counter() - enqueued) * 1000.0,
@@ -1208,7 +1229,10 @@ class Gateway:
 
         if self.replay:
             replayed = self._replay_lookup(
-                cache_key, req, schema_hint, parsed_transform, parsed_validator)
+                cache_key, req, schema_hint, parsed_transform, parsed_validator,
+                alternate_keys=tuple(
+                    self._cache_key(req, target.provider, target.model)
+                    for target in plan.targets[1:]))
             if replayed is not None:
                 response, source_row = replayed
                 response.call_id = self._log_replay_call(req, cache_key, source_row)
@@ -1236,6 +1260,13 @@ class Gateway:
             if resumed is not None:
                 break
         if resumed is not None:
+            if plan.tiered and not resumed.ok:
+                # Mirror the replay branch: a stored live completion that failed
+                # its contract must pause the tiered run again, not resume as a
+                # silent no-op decision.
+                raise ProviderUnavailable(
+                    "resume", resumed.model, req.purpose,
+                    "stored live response failed its JSON contract", attempts=0)
             if parsed_transform is not None:
                 resumed.parsed = parsed_transform(resumed.parsed)
             operational_log(
@@ -2216,9 +2247,17 @@ class Gateway:
                     self._record_rate_limit(provider, model, req, exc)
                     continue
                 last_error = exc
+                if not (exc.status_code == 408 or 500 <= exc.status_code < 600):
+                    # Contract, authentication, and routing rejections do not
+                    # heal on retry; re-sending would only bill the same error.
+                    break
                 transient_attempt += 1
+            except (GatewayInterrupted, ProviderConfigurationError):
+                raise
             except Exception as exc:
                 last_error = exc
+                if not _transient_provider_error(exc):
+                    break
                 transient_attempt += 1
             if transient_attempt <= self.provider_retries:
                 operational_log(logger, logging.WARNING, "llm.request.retry",
@@ -2286,8 +2325,9 @@ class Gateway:
         cached_in = max(0, min(int(cached_in or 0), in_tok))
         cached = cached_in > 0
         noncached_in = in_tok - cached_in
-        cost = (noncached_in / 1e6) * pricing["in"] + (cached_in / 1e6) * pricing["cache"] \
-            + (out_tok / 1e6) * pricing["out"]
+        cost = (noncached_in / 1e6) * float(pricing.get("in", 0.0)) \
+            + (cached_in / 1e6) * float(pricing.get("cache", 0.0)) \
+            + (out_tok / 1e6) * float(pricing.get("out", 0.0))
         return cached, round(cost, 8)
 
     def _estimate_cost(self, req: LLMRequest, pricing: dict) -> float:
@@ -2296,8 +2336,8 @@ class Gateway:
         # full call because invalid JSON may trigger one repair completion.
         prompt_bytes = len(req.system.encode("utf-8")) + len(req.user.encode("utf-8"))
         in_tok = max(1, prompt_bytes + 256)
-        one_call = (in_tok / 1e6) * pricing["in"] \
-            + (max(0, req.max_tokens) / 1e6) * pricing["out"]
+        one_call = (in_tok / 1e6) * float(pricing.get("in", 0.0)) \
+            + (max(0, req.max_tokens) / 1e6) * float(pricing.get("out", 0.0))
         return one_call * 2
 
     def _cache_key(self, req: LLMRequest, provider: str, model: str) -> str:
@@ -2392,21 +2432,31 @@ class Gateway:
     def _replay_lookup(
             self, cache_key: str, req: LLMRequest, schema_hint: str = "",
             parsed_transform: Optional[Callable[[Any], Any]] = None,
-            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None):
+            parsed_validator: Optional[Callable[[Any], Optional[str]]] = None,
+            alternate_keys: tuple[str, ...] = ()):
         if self.replay_conn is None:
             return None
         position = self._replay_positions.get(cache_key, 0)
         row = None
         match_mode = "exact_key"
-        while True:
-            candidate = self.replay_conn.execute(
-                "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
-                (cache_key, position)).fetchone()
-            position += 1
-            if not candidate:
-                break
-            if int(candidate["id"]) not in self._replay_used_call_ids:
-                row = candidate
+        matched_key = cache_key
+        # A recorded call served by a configured fallback target was stored
+        # under that target's key, so every planned target is an exact-match
+        # candidate before the semantic compatibility fallback is consulted.
+        for key in (cache_key, *alternate_keys):
+            key_position = self._replay_positions.get(key, 0)
+            while True:
+                candidate = self.replay_conn.execute(
+                    "SELECT * FROM llm_calls WHERE cache_key=? ORDER BY id LIMIT 1 OFFSET ?",
+                    (key, key_position)).fetchone()
+                key_position += 1
+                if not candidate:
+                    break
+                if int(candidate["id"]) not in self._replay_used_call_ids:
+                    row = candidate
+                    break
+            if row is not None:
+                matched_key, position = key, key_position
                 break
         if row is None:
             # Historical replay must survive prompt/context improvements. Fall
@@ -2447,7 +2497,7 @@ class Gateway:
         # Replay consumption is transactional with parsing and provenance
         # localization. A pause must retry the same recorded call rather than
         # skip a corrupt response and silently consume a later duplicate.
-        self._replay_positions[cache_key] = position
+        self._replay_positions[matched_key] = position
         self._replay_used_call_ids.add(source_call_id)
         if match_mode == "exact_key":
             self._replay_exact_key_count += 1

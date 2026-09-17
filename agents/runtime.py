@@ -26,6 +26,7 @@ from world.recovery import (
 from llm.gateway import (
     BudgetExceeded, Gateway, GatewayInterrupted, LLMRequest, ProviderUnavailable,
 )
+from llm.readiness import ProviderConfigurationError
 from .memory import Memory
 from .numeric_grounding import (
     model_grounding_active,
@@ -904,7 +905,10 @@ class AgentRuntime:
     async def _decide_guarded(self, tick: int, agent):
         try:
             return await self._decide_one(tick, agent)
-        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable):
+        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable,
+                ProviderConfigurationError):
+            # A route/configuration failure is not one citizen's bad luck; it
+            # must pause the run visibly like any other provider failure.
             raise
         except Exception as exc:
             return exc
@@ -957,7 +961,10 @@ class AgentRuntime:
                         return await self._complete_prepared_decision(prepared)
                 finally:
                     self._decision_pipeline_active -= 1
-        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable):
+        except (BudgetExceeded, GatewayInterrupted, ProviderUnavailable,
+                ProviderConfigurationError):
+            # A route/configuration failure is not one citizen's bad luck; it
+            # must pause the run visibly like any other provider failure.
             raise
         except Exception as exc:
             return exc
@@ -1388,6 +1395,10 @@ class AgentRuntime:
                 )
             env = d["envelope"] or {}
             actions = env.get("actions", []) if isinstance(env, dict) else []
+            if not isinstance(actions, list):
+                # Model output is a proposal: a malformed action list is
+                # rejected, never allowed to crash the phase into a stuck pause.
+                actions = []
             supplier_warning_protocol = (
                 d.get("llm_call_id") is None
                 and any(
@@ -1836,5 +1847,9 @@ class AgentRuntime:
             )
         else:
             summary = "Week summary: " + " | ".join(r["text"] for r in daily)[:1800]
-        importance = float(env.get("importance", max(r["importance"] for r in daily)))
+        fallback_importance = max(r["importance"] for r in daily)
+        try:
+            importance = float(env.get("importance", fallback_importance))
+        except (TypeError, ValueError):
+            importance = fallback_importance
         return summary, importance

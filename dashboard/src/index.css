@@ -439,6 +439,10 @@ body::before {
   transition: color 160ms ease, border-color 160ms ease, background 160ms ease;
 }
 .world-os-nav a.world-os-nav-link:hover { border-color: var(--ae-border-soft); background: var(--ae-surface-1); color: var(--ae-text); }
+/* Rail entries rendered before the run is identified (bare /commons) have no
+   href and nowhere to go; they keep their place but neither invite nor react. */
+.world-os-nav a.world-os-nav-link[aria-disabled="true"] { opacity: .55; cursor: default; }
+.world-os-nav a.world-os-nav-link[aria-disabled="true"]:hover { border-color: transparent; background: transparent; color: var(--ae-text-2); }
 /*
  * ACTIVE NAV — "State takes chroma only when it is exceptional". Being on the
  * page you are looking at is the most ordinary state there is, so the marker is
@@ -1019,6 +1023,9 @@ body::before {
 .world-os-people-list > label.world-os-agent-search { display: flex; align-items: center; gap: .45rem; margin: .55rem; padding: .5rem .58rem; border: 1px solid rgba(104, 164, 177, .24); border-radius: 7px; background: rgba(2, 13, 18, .72); color: #7f9da5; }
 .world-os-agent-search input { min-width: 0; padding: 0; border: 0; background: transparent; font-size: .66rem; }
 .world-os-agent-search input:focus { border: 0; outline: 0; }
+/* The input gives up its own ring because the wrapping label is the drawn field,
+   so the label has to show keyboard focus on the input's behalf. */
+.world-os-people-list > label.world-os-agent-search:focus-within { border-color: var(--ae-accent); outline: 2px solid var(--ae-focus); outline-offset: 1px; }
 .world-os-people-scroll { flex: 1 1 auto; max-height: none; padding: 0 .45rem; }
 .world-os-people-scroll > a { grid-template-columns: 40px minmax(0, 1fr) auto; min-height: 61px; gap: .55rem; border-bottom: 1px solid rgba(104, 164, 177, .12); border-radius: 7px; padding: .42rem; }
 .world-os-people-scroll > a:hover, .world-os-people-scroll > a.selected { border-color: rgba(41, 213, 218, .5); background: linear-gradient(90deg, rgba(41, 213, 218, .12), rgba(41, 213, 218, .035)); }

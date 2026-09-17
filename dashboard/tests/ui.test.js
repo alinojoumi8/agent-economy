@@ -297,7 +297,8 @@ test("agent modal requests ignore stale agent and cursor responses", async () =>
   assert.match(source, /current\?\.agent\?\.id !== agentId/);
   assert.match(source, /current\?\.participantHistory\?\.next_before_id !== cursor/);
   assert.match(source, /current\?\.output_cursors\?\.\[kind\] !== cursor/);
-  assert.match(source, /onKeyDown=\{event => event\.stopPropagation\(\)\}/);
+  // The inner button stops the click reaching the row, so one click inspects once.
+  assert.match(source, /onClick=\{event => \{ event\.stopPropagation\(\); inspect\(agent\.id\); \}\}/);
   assert.match(source, /setDetail\(\{ \.\.\.agentDetail, participantHistory: null \}\)/);
   assert.match(source, /clearDetail: false/);
   assert.match(source, /async function takeControl\(agentId\) \{\s*const requestId = \+\+detailRequest\.current/);
@@ -412,12 +413,12 @@ test("run header does not label incomplete network readiness as hybrid", async (
 });
 
 
-test("agent directory starts loading before debounce and keyboard activation prevents scrolling", async () => {
+test("agent directory starts loading before debounce and each row offers one keyboard stop", async () => {
   const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
   try {
     const {
+      AgentsPanel,
       scheduleAgentDirectoryRefresh,
-      handleAgentRowKeyDown,
     } = await vite.ssrLoadModule("/src/components/AgentsPanel.jsx");
     const order = [];
     let scheduledLoad = null;
@@ -436,12 +437,23 @@ test("agent directory starts loading before debounce and keyboard activation pre
     scheduledLoad();
     assert.deepEqual(order, ["loading:true", "scheduled:180", "loaded"]);
 
-    const activation = [];
-    handleAgentRowKeyDown({
-      key: " ",
-      preventDefault: () => activation.push("prevented"),
-    }, id => activation.push(`inspected:${id}`), 17);
-    assert.deepEqual(activation, ["prevented", "inspected:17"]);
+    // A focusable row plus its named "Inspect" button used to cost two tab stops
+    // per agent, the first of them unnamed. The button is the only keyboard path.
+    const markup = renderToStaticMarkup(React.createElement(AgentsPanel, {
+      initialDirectory: {
+        items: [
+          { id: 17, name: "Ada Scale", kind: "citizen", occupation: "engineer", health: "healthy", alive: 1 },
+          { id: 18, name: "Ben Ledger", kind: "citizen", occupation: "clerk", health: "healthy", alive: 1 },
+        ],
+        total: 2, population_total: 2, limit: 100, next_after_id: null,
+      },
+      participant: { enabled: false }, status: { tick: 0, running: false },
+      act: async () => {},
+    }));
+    const rows = markup.match(/<tr[^>]*>/g).filter(row => !/<th/.test(markup.slice(markup.indexOf(row), markup.indexOf(row) + 40)));
+    assert.equal((markup.match(/<tbody>[\s\S]*<\/tbody>/)[0].match(/<tr/g) || []).length, 2);
+    for (const row of rows) assert.doesNotMatch(row, /tabindex|onkeydown/i);
+    assert.equal((markup.match(/<button[^>]*>Inspect /g) || []).length, 2);
   } finally {
     await vite.close();
   }
@@ -596,4 +608,104 @@ test("the kind registry covers every kind the engine and world packages emit", a
   } finally {
     await vite.close();
   }
+});
+
+test("freshness badge does not claim to reconnect before any connection exists", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { FreshnessBadge } = await vite.ssrLoadModule("/src/components/FreshnessBadge.tsx");
+    const transport = {
+      runId: null, forkId: null, semanticsVersion: null, projectionVersion: null,
+      policyVersion: null, viewKey: null, cursor: 0, status: "connecting", staleReason: null,
+    };
+    const connecting = renderToStaticMarkup(React.createElement(FreshnessBadge, { transport, tick: "live" }));
+    assert.match(connecting, /Connecting: waiting for the live feed/);
+    assert.doesNotMatch(connecting, /reconnecting/);
+
+    const reconnecting = renderToStaticMarkup(React.createElement(FreshnessBadge, {
+      transport: { ...transport, status: "reconnecting", staleReason: "socket_closed" }, tick: "live",
+    }));
+    assert.match(reconnecting, /Reconnecting: connection dropped; reconnecting/);
+
+    const live = renderToStaticMarkup(React.createElement(FreshnessBadge, {
+      transport: { ...transport, status: "live", cursor: 4 }, tick: "live",
+    }));
+    assert.match(live, /Live: cursor 4/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("shock modal offers every trigger mode before the shock library has loaded", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { ShockModal, shockTriggerTypes } = await vite.ssrLoadModule("/src/components/ShockModal.jsx");
+    // The hook's initial library is `{ kinds: [], trigger_types: [] }`, which is truthy.
+    assert.deepEqual(shockTriggerTypes({ kinds: [], trigger_types: [] }), ["shock", "trend", "conditional"]);
+    assert.deepEqual(shockTriggerTypes(undefined), ["shock", "trend", "conditional"]);
+    assert.deepEqual(shockTriggerTypes({ trigger_types: ["shock", "trend"] }), ["shock", "trend"]);
+
+    const markup = renderToStaticMarkup(React.createElement(ShockModal, {
+      library: { kinds: [], trigger_types: [] }, tick: 3, act: async () => {}, onClose: () => {},
+    }));
+    assert.deepEqual(
+      markup.match(/<option value="(?:shock|trend|conditional)"/g),
+      ['<option value="shock"', '<option value="trend"', '<option value="conditional"'],
+    );
+  } finally {
+    await vite.close();
+  }
+});
+
+test("institutions panel never claims to be loading a summary it does not have", async () => {
+  const vite = await createServer({ appType: "custom", logLevel: "silent", server: { middlewareMode: true } });
+  try {
+    const { InstitutionsPanel } = await vite.ssrLoadModule("/src/components/WorldPanels.jsx");
+    const missing = renderToStaticMarkup(React.createElement(InstitutionsPanel, { institutions: null }));
+    assert.match(missing, /Institution summary unavailable\./);
+    assert.doesNotMatch(missing, /Loading/);
+
+    const present = renderToStaticMarkup(React.createElement(InstitutionsPanel, { institutions: {
+      government: { enabled: true, tax_rate_bps: 1250, unemployment_benefit_cents: 40000, treasury_cents: 900000 },
+      vc: { exists: false },
+      health: { epidemic_multiplier: 1, insured_count: 3 },
+    } }));
+    assert.match(present, /Government/);
+    assert.match(present, /12\.5%/);
+    assert.doesNotMatch(present, /unavailable/);
+  } finally {
+    await vite.close();
+  }
+});
+
+test("the stored theme is applied to the document before the first render", async () => {
+  const { applyStoredTheme } = await import("../src/ui/useTheme.ts");
+  const root = {
+    attributes: {},
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    setAttribute(name, value) { this.attributes[name] = value; },
+  };
+  const previous = { document: globalThis.document, window: globalThis.window };
+  try {
+    globalThis.document = { documentElement: root };
+    globalThis.window = { localStorage: { getItem: key => (key === "ae-theme" ? "light" : null) } };
+    assert.equal(applyStoredTheme(), "light");
+    assert.equal(root.getAttribute("data-theme"), "light");
+
+    // Unavailable storage falls back to the dark default instead of throwing.
+    root.attributes = {};
+    globalThis.window = { localStorage: { getItem() { throw new Error("blocked"); } } };
+    assert.equal(applyStoredTheme(), "dark");
+    assert.equal(root.getAttribute("data-theme"), "dark");
+  } finally {
+    globalThis.document = previous.document;
+    globalThis.window = previous.window;
+  }
+
+  const mainSource = await readFile(new URL("../src/main.jsx", import.meta.url), "utf8");
+  assert.ok(mainSource.indexOf("applyStoredTheme();") < mainSource.indexOf("createRoot("));
+  // The hosted CSP forbids inline scripts, so index.html must stay script-free
+  // apart from the module entry.
+  const indexHtml = await readFile(new URL("../index.html", import.meta.url), "utf8");
+  assert.deepEqual(indexHtml.match(/<script[^>]*>/g), ['<script type="module" src="/src/main.jsx">']);
 });

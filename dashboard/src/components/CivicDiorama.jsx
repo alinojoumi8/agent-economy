@@ -21,6 +21,8 @@ const FIXED_CAMERA = {
   minZoom: 1.8,
   maxZoom: 5.4,
 };
+/* How long two consecutive live ticks glide into each other. */
+const TRANSITION_MS = 420;
 
 function useReducedMotion() {
   const [reduced, setReduced] = useState(() =>
@@ -73,24 +75,44 @@ export function CivicDiorama({
   const [frameP95Ms, setFrameP95Ms] = useState(null);
   const mountedAt = useRef(typeof performance === "undefined" ? 0 : performance.now());
   const measured = useRef(false);
-  const previousTick = useRef(null);
   const reducedMotion = useReducedMotion();
-  const projectedTick = Number(model.selectedTick);
-  const transitionDuration = !historical
-    && !reducedMotion
-    && Number.isFinite(projectedTick)
-    && previousTick.current !== null
-    && projectedTick === previousTick.current + 1
-    ? 420
-    : 0;
+  const projectedTick = Number.isFinite(Number(model.selectedTick))
+    ? Number(model.selectedTick)
+    : null;
+  /*
+   * The glide between two consecutive ticks is decided in the render that first
+   * carries the new positions — deck.gl only starts a transition on the update
+   * where the attribute changes — and then has to OUTLIVE that render: under
+   * animateLiveActivity the pulse re-renders every frame, and a layer rebuilt
+   * without `transitions` cancels the glide in flight, snapping everyone to
+   * their destination one frame in. So the duration lives in state, set from
+   * the previous render's tick as the tick changes (React's storing-previous-
+   * render pattern) and released by a timer one duration later. Historical
+   * views and reduced motion never glide.
+   */
+  const [glideTick, setGlideTick] = useState(null);
+  const [glideDuration, setGlideDuration] = useState(0);
+  if (projectedTick !== glideTick) {
+    setGlideTick(projectedTick);
+    setGlideDuration(
+      glideTick !== null && projectedTick !== null && projectedTick === glideTick + 1
+        ? TRANSITION_MS
+        : 0,
+    );
+  }
+  const transitionDuration = historical || reducedMotion ? 0 : glideDuration;
   const scene = useMemo(
     () => buildDioramaScene(model, visibleAgents, { showClusters }),
     [model, showClusters, visibleAgents],
   );
 
   useEffect(() => {
-    previousTick.current = Number.isFinite(projectedTick) ? projectedTick : null;
-  }, [projectedTick]);
+    if (!glideDuration) return undefined;
+    /* One frame of grace: deck.gl starts the glide on its own next frame, so
+       the settings are withdrawn only once it has certainly finished. */
+    const timer = window.setTimeout(() => setGlideDuration(0), glideDuration + 40);
+    return () => window.clearTimeout(timer);
+  }, [glideDuration, glideTick]);
 
   useEffect(() => {
     if (!animateLiveActivity || reducedMotion) {
@@ -191,6 +213,13 @@ export function CivicDiorama({
         shininess: 8,
         specularColor: [52, 44, 38],
       },
+      /* deck.gl ignores accessor identity: an accessor that closes over the
+         selection must name it here or the highlight only moves when `data`
+         happens to be rebuilt. */
+      updateTriggers: {
+        getLineColor: [selectedProjectId],
+        getLineWidth: [selectedProjectId],
+      },
       pickable: true,
     }),
     new PathLayer({
@@ -204,6 +233,10 @@ export function CivicDiorama({
       widthUnits: "pixels",
       capRounded: false,
       jointRounded: false,
+      updateTriggers: {
+        getColor: [selectedProjectId],
+        getWidth: [selectedProjectId],
+      },
       pickable: true,
     }),
     new PolygonLayer({
@@ -232,6 +265,10 @@ export function CivicDiorama({
         specularColor: [64, 69, 67],
       },
       transitions: transitionDuration ? { getPolygon: transitionDuration } : undefined,
+      updateTriggers: {
+        getLineColor: [selectedPlaceId],
+        getLineWidth: [selectedPlaceId],
+      },
       pickable: true,
     }),
     new ScatterplotLayer({
@@ -275,6 +312,11 @@ export function CivicDiorama({
       lineWidthUnits: "pixels",
       getLineWidth: item => String(item.id) === String(selectedAgentId) ? 3 : 1,
       transitions: transitionDuration ? { getPosition: transitionDuration } : undefined,
+      updateTriggers: {
+        getRadius: [selectedAgentId],
+        getLineColor: [selectedAgentId],
+        getLineWidth: [selectedAgentId],
+      },
       filled: true,
       stroked: true,
       pickable: true,
@@ -300,6 +342,7 @@ export function CivicDiorama({
       getColor: item => String(item.id) === String(selectedProjectId)
         ? [255, 247, 210, 255]
         : [240, 219, 178, 235],
+      updateTriggers: { getColor: [selectedProjectId] },
       getBackgroundColor: [31, 29, 26, 205],
       background: true,
       backgroundPadding: [4, 2],

@@ -60,6 +60,29 @@ def _mask_future_ticks(row: dict[str, Any], as_of_tick: int, *fields: str) -> No
             row[field] = None
 
 
+def _settlement_as_of(settlement: Any, as_of_tick: int) -> Any:
+    """Hide settlement facts that were only written after ``as_of_tick``.
+
+    ``settlement_json`` is rewritten in place when an offer is made and again
+    when it is accepted, so a historical view must not reveal a later offer or
+    its acceptance and enforcement.
+    """
+    if not isinstance(settlement, dict) or not settlement:
+        return settlement
+    offered = settlement.get("offered_tick")
+    if offered is not None and int(offered) > int(as_of_tick):
+        return {}
+    accepted = settlement.get("accepted_tick")
+    if accepted is not None and int(accepted) > int(as_of_tick):
+        visible = {
+            key: value for key, value in settlement.items()
+            if key not in {"accepted_tick", "accepted_by", "enforcement"}
+        }
+        visible["status"] = "offered"
+        return visible
+    return settlement
+
+
 def _firms_as_of(store, as_of_tick: int) -> list[dict[str, Any]]:
     rows = _dicts(store.query(
         "SELECT f.id,f.name,f.sector,f.account_id,f.founded_tick,f.listed_tick,"
@@ -159,11 +182,14 @@ def _agent_regions_at(
         )
         for agent in agents
     }
+    # Rejected migrations also carry a ``completed_tick`` (the tick the request
+    # was refused), so only ``completed`` rows may move a citizen.
     completed = store.query(
         "SELECT agent_id,destination_region_id FROM ("
         "SELECT agent_id,destination_region_id,ROW_NUMBER() OVER ("
         "PARTITION BY agent_id ORDER BY completed_tick DESC,id DESC) AS position "
-        "FROM migrations WHERE completed_tick IS NOT NULL AND completed_tick<=?) "
+        "FROM migrations WHERE status='completed' "
+        "AND completed_tick IS NOT NULL AND completed_tick<=?) "
         "WHERE position=1",
         (tick,),
     )
@@ -177,7 +203,7 @@ def _agent_regions_at(
         "SELECT agent_id,origin_region_id FROM ("
         "SELECT agent_id,origin_region_id,ROW_NUMBER() OVER ("
         "PARTITION BY agent_id ORDER BY completed_tick,id) AS position "
-        "FROM migrations WHERE completed_tick>?) WHERE position=1",
+        "FROM migrations WHERE status='completed' AND completed_tick>?) WHERE position=1",
         (tick,),
     )
     for row in future:
@@ -514,6 +540,7 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
     for row in matters:
         row["status"] = "resolved" if row["resolved_tick"] is not None and int(row["resolved_tick"]) <= tick else "filed"
         _mask_future_ticks(row, tick, "resolved_tick")
+        row["settlement"] = _settlement_as_of(row.get("settlement"), tick)
     mergers = [_json_fields(row, "metadata_json") for row in _dicts(store.query(
         "SELECT id,proposed_tick,acquirer_firm_id,target_firm_id,consideration_type,price_cents,"
         "currency_code,target_approved_tick,regulator_notified_tick,closed_tick,terminated_tick,"

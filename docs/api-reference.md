@@ -53,7 +53,7 @@ mode has no authentication; do not put it behind a public proxy.
 | `POST` | `/api/run/pause` | Requests an interruptible clean pause |
 | `POST` | `/api/run/step` | Executes one tick and returns its summary |
 | `POST` | `/api/run/stop` | Finishes, checkpoints, and generates a report |
-| `POST` | `/api/run/speed` | JSON `{"delay_s": 0.5}` |
+| `POST` | `/api/run/speed` | JSON `{"delay_s": 0.5}`; `delay_s` must be finite and between 0 and 3600 seconds, otherwise HTTP 422 |
 | `GET` | `/api/run/status` | Run, phase, governor, readiness, cooldown, and report state |
 | `GET` | `/api/acceptance/status` | Gate results, progress, spend projection, exact Oracle checkpoint schedule, and shock evidence; a run/tick-matched final receipt supplies attachment-backed completed gates |
 
@@ -160,9 +160,13 @@ score when resolvable.
 }
 ```
 
-Kinds: `policy_rate`, `oil`, `rumor`, `slant`, `scandal`, `epidemic`. Triggers:
-`shock`, `trend`, `conditional`. Empty trigger schedules the next tick. Unknown
-kinds return HTTP 400; halted runs return HTTP 409.
+Kinds: `policy_rate`, `policy_rule_change`, `oil`, `rumor`, `slant`, `scandal`,
+`epidemic`. Triggers: `shock`, `trend`, `conditional`. Empty trigger schedules
+the next tick. Unknown kinds return HTTP 400; halted runs return HTTP 409.
+Trigger and parameter fields are type-checked when the shock is scheduled
+(integer ticks and ids, finite numbers, known `op`, `bank_selector`, and
+`audience` values): a malformed field returns HTTP 400 with the reason instead
+of failing later inside every NIGHT_CLOSE and wedging the run.
 
 ## Reports and replay viewer
 
@@ -207,6 +211,11 @@ credential is created.
 
 See the [gateway contract](world-os/EXTERNAL-AGENT-GATEWAY.md) and
 [client quickstart](../clients/README.md) for the turn and receipt protocol.
+`GET /api/v2/agent/turn` and `ae_world_observe` require the `world.read` scope;
+the `commons` tier, which is defined without it, reads Commons content only. A
+turn always targets the next tick on which the connection is due: the next wake
+tick under its `wake_interval_ticks`, never a tick whose decision mailbox has
+already closed because it is in progress.
 World observations and Commons content are untrusted data; these endpoints never
 return private messages, prompts, chain-of-thought, provider payloads, or owner
 identity.

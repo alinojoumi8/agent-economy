@@ -757,7 +757,7 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
         parent_db = data_dir / f"{run_id}.db"
         if not parent_db.exists():
             sys.exit(f"run database not found: {parent_db}")
-        parent = Store(str(parent_db))
+        parent = Store(str(parent_db), read_only=True)
         row = parent.query_one(
             "SELECT path, tick FROM checkpoints WHERE tick<=? ORDER BY tick DESC, id DESC LIMIT 1",
             (int(tick_s),))
@@ -1419,6 +1419,8 @@ def main() -> None:
         ap.error("--acceptance-run and --oracle-campaign-run are mutually exclusive")
     if args.oracle_campaign_run and args.serve:
         ap.error("--oracle-campaign-run is a finalized headless evidence command")
+    if args.ticks is not None and args.ticks < 0:
+        ap.error("--ticks must be zero or a positive tick count")
     if args.oracle_campaign_run and (args.fork or args.replay):
         ap.error("--oracle-campaign-run cannot use fork or replay inputs")
     mode = (
@@ -1532,7 +1534,9 @@ def main() -> None:
             source = DATA_DIR / f"{args.export_static}.db"
         if not source.exists():
             sys.exit(f"run database not found: {source}")
-        store = Store(str(source))
+        # A stored run is a scientific artifact: export from a read-only handle
+        # so the exporter can neither migrate its schema nor flip journal mode.
+        store = Store(str(source), read_only=True)
         from server.static_export import export_static_replay
         target = Path(args.output) if args.output else Path("static_exports") / f"{store.get_meta()['run_id']}.html"
         print(export_static_replay(store, target))

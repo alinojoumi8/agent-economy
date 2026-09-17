@@ -17,6 +17,11 @@ import {
   normalizeConstructionStage,
 } from "../components/ConstructionStoryboard";
 import { LivingAgentPortrait } from "../components/LivingAgentPortrait";
+import {
+  agentPageForSelection,
+  featuredAgentId as pickFeaturedAgentId,
+  resolveSelectedAgentId,
+} from "./peopleWorkspaceModel.js";
 
 type EvidenceRef = { kind: string; id: number | string; tick: number };
 type Region = { id: number; name: string };
@@ -284,27 +289,24 @@ export function PeopleWorkspace() {
     },
     placeholderData: previousData => previousData,
     refetchInterval: tick === "live" ? 3000 : false,
+    retry: false,
   });
   const agents = workspaceQuery.data?.data.agents || [];
-  const requestedId = agentId ? Number(agentId) : null;
-  const featuredAgentId = useMemo(() => {
-    const projects = workspaceQuery.data?.data.projects || [];
-    const constructionOwner = projects.find(project =>
-      project.kind === "construction"
-      && project.status === "active"
-      && project.owner_agent_id != null,
-    )?.owner_agent_id;
-    if (constructionOwner != null) return constructionOwner;
-    const runtimeAgent = agents.find(agent => agent.runtime);
-    if (runtimeAgent) return runtimeAgent.id;
-    const progressingOwner = projects.find(project =>
-      project.status === "active" && project.owner_agent_id != null,
-    )?.owner_agent_id;
-    return progressingOwner ?? agents[0]?.id;
-  }, [agents, workspaceQuery.data?.data.projects]);
-  const selectedId = requestedId != null && Number.isFinite(requestedId)
-    ? requestedId
-    : featuredAgentId;
+  const requestedId = agentId && Number.isFinite(Number(agentId)) ? Number(agentId) : null;
+  const featuredId = useMemo(
+    () => pickFeaturedAgentId(agents, workspaceQuery.data?.data.projects) as number | null,
+    [agents, workspaceQuery.data?.data.projects],
+  );
+  // Without an agent in the URL the pane follows the featured agent, which the
+  // 3 s live poll re-sorts under the reader. Pin the first choice for as long
+  // as that agent is still listed so the journey does not switch mid-read.
+  const [pinnedId, setPinnedId] = useState<number | null>(null);
+  const selectedId = resolveSelectedAgentId({
+    requestedId, pinnedId, featuredId, agents,
+  }) as number | null;
+  useEffect(() => {
+    if (requestedId == null && selectedId != null && pinnedId !== selectedId) setPinnedId(selectedId);
+  }, [requestedId, selectedId, pinnedId]);
   const journeyQuery = useQuery({
     queryKey: [
       "world-os", runId, observerState.fork, "agent-journey", tick, selectedId,
@@ -317,8 +319,9 @@ export function PeopleWorkspace() {
         signal,
       );
     },
-    enabled: Number.isFinite(selectedId),
+    enabled: selectedId != null && Number.isFinite(selectedId),
     refetchInterval: tick === "live" ? 3000 : false,
+    retry: false,
   });
   const visibleAgents = useMemo(() => {
     const needle = filter.trim().toLowerCase();
@@ -339,10 +342,17 @@ export function PeopleWorkspace() {
   useEffect(() => {
     setAgentPage(current => Math.min(current, lastAgentPage));
   }, [lastAgentPage]);
+  // Page to the selection once per selection change, not on every poll: the
+  // live refresh rebuilds `visibleAgents`, and re-paging on it snapped the list
+  // back whenever the reader had paged away.
+  const pagedFor = useRef<number | null>(null);
   useEffect(() => {
-    if (selectedId == null) return;
-    const selectedIndex = visibleAgents.findIndex(agent => agent.id === selectedId);
-    if (selectedIndex >= 0) setAgentPage(Math.floor(selectedIndex / pageSize));
+    const page = agentPageForSelection({
+      selectedId, visibleAgents, pageSize, pagedFor: pagedFor.current,
+    }) as number | null;
+    if (page === null) return;
+    pagedFor.current = selectedId;
+    setAgentPage(page);
   }, [selectedId, visibleAgents]);
   useEffect(() => setAgentPage(0), [filter, projectKind, projectStatus]);
   const pagedAgents = visibleAgents.slice(agentPage * pageSize, (agentPage + 1) * pageSize);

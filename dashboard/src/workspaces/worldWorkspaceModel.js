@@ -85,6 +85,10 @@ export function normalizeWorldWorkspace(data = {}) {
       currencies,
       migrationCount: flows.filter(flow => flow.kind === "migration").length,
       tradeCount: flows.filter(flow => flow.kind === "trade").length,
+      // The projection returns the newest 100 flows of each kind; a full
+      // window is a lower bound, not a total.
+      flowsWindowed: flows.filter(flow => flow.kind === "migration").length >= 100
+        || flows.filter(flow => flow.kind === "trade").length >= 100,
       constructionCount: constructionProjects.length,
     },
   };

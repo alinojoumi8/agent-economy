@@ -243,10 +243,13 @@ export function WorldWorkspace() {
         <div><dt>Population</dt><dd>{model.summary.population}</dd></div>
         <div><dt>Active organizations</dt><dd>{model.summary.activeOrganizations}</dd></div>
         <div><dt>Currencies</dt><dd>{model.summary.currencies.join(", ") || "—"}</dd></div>
-        <div><dt>Migration flows</dt><dd>{model.summary.migrationCount}</dd></div>
-        <div><dt>Trade flows</dt><dd>{model.summary.tradeCount}</dd></div>
+        <div><dt>Recent migration flows</dt><dd>{model.summary.migrationCount}{model.summary.flowsWindowed ? "+" : ""}</dd></div>
+        <div><dt>Recent trade flows</dt><dd>{model.summary.tradeCount}{model.summary.flowsWindowed ? "+" : ""}</dd></div>
         <div><dt>Construction projects</dt><dd>{model.summary.constructionCount}</dd></div>
       </dl>
+      {model.summary.flowsWindowed && <p className="world-os-policy-note">
+        Flow counts describe the newest 100 migrations and shipments the projection returns, not the run total.
+      </p>}
 
       <CivicCity
         agents={city.data?.agents}

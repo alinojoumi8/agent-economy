@@ -20,7 +20,7 @@ from fastapi import FastAPI, HTTPException, WebSocket
 
 from engine.ledger import ReconciliationError
 from engine.store import load_json
-from observability import get_logger, log_event as operational_log
+from observability import get_logger, log_event as operational_log, scrub_error_text
 from server.projections.cache import ProjectionSnapshotCache
 from world.loop import World
 
@@ -57,17 +57,32 @@ class WebSocketHub:
         operational_log(logger, logging.INFO, "websocket.disconnected",
                         clients=len(self.clients))
 
+    # One stalled client must not hold every other dashboard's tick hostage.
+    send_timeout_s = 5.0
+
     async def broadcast(self, message: dict) -> None:
-        dead = []
-        for websocket in list(self.clients):
+        clients = list(self.clients)
+        if not clients:
+            return
+        # Serialize once, outside the per-client guard: an unserializable
+        # payload is a programming error, not a reason to drop every client.
+        text = json.dumps(message)
+
+        async def deliver(websocket: WebSocket) -> Exception | None:
             try:
-                await websocket.send_text(json.dumps(message))
-            except Exception as exc:
-                dead.append(websocket)
-                operational_log(logger, logging.WARNING, "websocket.broadcast.failed",
-                                clients=len(self.clients), error_type=type(exc).__name__,
-                                error=str(exc))
-        for websocket in dead:
+                await asyncio.wait_for(
+                    websocket.send_text(text), timeout=self.send_timeout_s)
+            except Exception as exc:  # transport failure or a stalled peer
+                return exc
+            return None
+
+        results = await asyncio.gather(*(deliver(client) for client in clients))
+        for websocket, failure in zip(clients, results):
+            if failure is None:
+                continue
+            operational_log(logger, logging.WARNING, "websocket.broadcast.failed",
+                            clients=len(self.clients), error_type=type(failure).__name__,
+                            error=str(failure))
             self.disconnect(websocket)
 
 
@@ -290,7 +305,8 @@ class RunController:
             self.world.status = "paused"
             self.store.set_meta(status="paused")
             self.store.log_event(
-                self.store.tick, "run_exception", {"error": str(exc)[:500]}, importance=5.0)
+                self.store.tick, "run_exception", {"error": scrub_error_text(exc)},
+                importance=5.0)
             self.store.commit()
             operational_log(logger, logging.ERROR, "run.unhandled_exception",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
@@ -395,14 +411,24 @@ class RunController:
     async def _stop_locked(self) -> dict:
         self._require_mutable("stop")
         if self.is_running():
+            # A Start that was queued ahead of this Stop clears the world's stop
+            # flag when it launches, so re-assert the request under the lock.
+            self.world.request_stop()
             operational_log(logger, logging.INFO, "run.stop.accepted",
                             run_id=self.world.gateway.run_id, tick=self.store.tick,
                             running=True)
             return {"status": "stopping", "tick": self.store.tick}
+        already_finished = str(self.store.get_meta()["status"]) == "finished"
         self.world.status = "finished"
         self.store.set_meta(status="finished")
         self.store.commit()
-        await self.world.checkpoint_async(self.store.tick, reason="stop")
+        if already_finished:
+            # The Stop that finished the run already wrote this tick's
+            # checkpoint; a repeated Stop must not copy the database again.
+            operational_log(logger, logging.INFO, "run.stop.repeated",
+                            run_id=self.world.gateway.run_id, tick=self.store.tick)
+        else:
+            await self.world.checkpoint_async(self.store.tick, reason="stop")
         meta = self.store.get_meta()
         if meta["active_tick"] is not None:
             deferred = {

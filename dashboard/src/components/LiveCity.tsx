@@ -12,7 +12,8 @@
  *   glide fills the whole of its leg so no interval of the day is a still frame.
  */
 import {
-  useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState,
+  useCallback, useEffect, useEffectEvent, useLayoutEffect, useMemo, useRef, useState,
+  type ChangeEvent as ReactChangeEvent,
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type RefObject,
@@ -39,6 +40,7 @@ import {
   liveCounts,
   normalizeLiveCity,
   placeCohorts,
+  platePosition,
   slotWeights,
 } from "../lib/liveCity.js";
 import { EmptyState, count, humanize, useSource } from "../ui";
@@ -459,11 +461,24 @@ export function LiveCity() {
 
   const serverTick = status.data?.tick ?? null;
   const mapTick = model.tick;
-  const refetchMap = map.refetch;
+  /*
+   * ONE PULL PER TICK CHANGE. useSource hands back a fresh `refetch` closure on
+   * every render, and the status poll, a hover, a phase handover and the
+   * fetch's own in-flight flag each re-render this component. With that
+   * closure as a dependency the effect re-ran on every one of them for as long
+   * as the two ticks disagreed, and each `refetch()` cancels the request
+   * already in flight — so the 400 KB map could be aborted and restarted
+   * indefinitely and never land. The effect now answers to the two ticks
+   * alone, reads the current refetch through an effect event, and never pulls
+   * while a pull is already on the wire.
+   */
+  const pullMap = useEffectEvent(() => {
+    if (!map.refetching) map.refetch();
+  });
   useEffect(() => {
     if (serverTick === null || mapTick === null) return;
-    if (serverTick !== mapTick) refetchMap();
-  }, [serverTick, mapTick, refetchMap]);
+    if (serverTick !== mapTick) pullMap();
+  }, [serverTick, mapTick]);
 
   /* --------------------------------------------------------- the motion -- */
 
@@ -508,6 +523,11 @@ export function LiveCity() {
   const focusAgent = useMemo(
     () => (focus ? model.agents.find(agent => agent.id === focus.id) ?? null : null),
     [focus, model.agents],
+  );
+  /* The same people, in the order a reader looks a name up in. */
+  const followable = useMemo(
+    () => [...model.agents].sort((left, right) => left.name.localeCompare(right.name)),
+    [model.agents],
   );
 
   /*
@@ -834,7 +854,7 @@ export function LiveCity() {
    */
   const territories = useMemo(() => {
     if (!projection) return [];
-    return model.regions.map(region => {
+    return model.regions.flatMap(region => {
       const own = model.places.filter(place => place.regionId === region.id);
       const hull = (convexHull(own) as { x: number; y: number }[])
         .map(point => projection.project(point.x, point.y));
@@ -844,27 +864,30 @@ export function LiveCity() {
           y: hull.reduce((sum, point) => sum + point.y, 0) / hull.length,
         }
         : projection.project(region.x, region.y);
-      const top = hull.reduce((least, point) => Math.min(least, point.y), Infinity);
-      const bottom = hull.reduce((most, point) => Math.max(most, point.y), -Infinity);
       /*
        * The name plate goes on the side of the territory that faces the middle
        * of the canvas — which is where the empty band between the polities is.
        * It reads as a map's own margin note, it never sits under the people, and
        * it puts something worth reading in the part of the field that had
        * nothing in it.
+       *
+       * A polity that owns no placed ground has no hull edge to clear, so its
+       * plate sits on its own projected centre; one whose centre cannot be
+       * projected gets no plate at all. Folding an empty hull to ±Infinity put
+       * the plate at a coordinate the browser drops, which left it wherever
+       * the container's static flow happened to place it.
        */
-      const below = centre.y < size.height / 2;
-      return {
+      const label = platePosition(hull, centre, { gap: PLATE_GAP_PX, height: size.height }) as
+        { x: number; y: number; below: boolean } | null;
+      if (!label) return [];
+      return [{
         region,
         places: own.length,
         path: hullPath(hull, { pad: HULL_PAD_PX }) as string,
         centre,
-        label: {
-          x: centre.x,
-          y: below ? bottom + PLATE_GAP_PX : top - PLATE_GAP_PX,
-        },
-        below,
-      };
+        label: { x: label.x, y: label.y },
+        below: label.below,
+      }];
     });
   }, [model.regions, model.places, projection, size.height]);
 
@@ -1094,6 +1117,12 @@ export function LiveCity() {
     if (id === null) { setFocus(null); return; }
     setFocus(current => (current?.id === id && current.pinned ? null : { id, pinned: true }));
   };
+  /* The keyboard path pins exactly as a click does, and its empty option
+     releases exactly as Esc does. */
+  const onFollowSelect = (event: ReactChangeEvent<HTMLSelectElement>) => {
+    const id = Number(event.target.value);
+    setFocus(event.target.value === "" || !Number.isFinite(id) ? null : { id, pinned: true });
+  };
 
   return <div className="live-city" ref={frameRef}>
     <div className="live-city__field" data-beat={skyBeat} ref={fieldRef}>
@@ -1309,13 +1338,14 @@ export function LiveCity() {
       </div>}
 
       {/* The lock-on. It rides the chip's own pixel every frame, so the person
-          you chose keeps a name and a halo while three hundred others move. */}
+          you chose keeps a name and a halo while three hundred others move. The
+          plate is the one piece of the followed person that is words, so it is
+          the one piece of the dot layer assistive technology is given. */}
       <div
         className={`live-city__lockon${focusAgent ? " is-on" : ""}${focus?.pinned ? " is-pinned" : ""}`}
         ref={lockRef}
-        aria-hidden="true"
       >
-        <i />
+        <i aria-hidden="true" />
         {focusAgent && <div className="live-city__lockon-plate">
           <strong>{focusAgent.name}</strong>
           <span>{humanize(focusAgent.occupation || focusAgent.role || "resident")}</span>
@@ -1518,6 +1548,18 @@ export function LiveCity() {
         </li>}
       </ul>
       <p className="live-city__hint">Click anyone to follow them.</p>
+      {/* The chips are three hundred unlabelled dots and stay hidden from
+          assistive technology, so this is the one place a name can be chosen
+          without a pointer. Choosing pins, as a click does; Esc releases. */}
+      <label className="live-city__follow">
+        <span>Follow by keyboard</span>
+        <select value={focus?.pinned ? String(focus.id) : ""} onChange={onFollowSelect}>
+          <option value="">Nobody pinned</option>
+          {followable.map(agent => <option key={agent.id} value={String(agent.id)}>
+            {agent.name}
+          </option>)}
+        </select>
+      </label>
     </div>
 
     <footer className="live-city__disclosure">

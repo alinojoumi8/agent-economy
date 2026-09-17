@@ -9,6 +9,7 @@ event with observable downstream effects.
 from __future__ import annotations
 
 import json
+import math
 from typing import Optional
 
 from engine.core import Economy
@@ -16,6 +17,123 @@ from engine.store import load_json
 
 SHOCK_KINDS = ("policy_rate", "policy_rule_change", "oil", "rumor", "slant", "scandal", "epidemic")
 TRIGGER_TYPES = ("shock", "trend", "conditional")
+_CONDITIONAL_OPS = ("<", ">", "<=", ">=")
+_RUMOR_SELECTORS = ("explicit", "largest_by_deposits")
+_RUMOR_AUDIENCES = ("all_citizens", "current_depositors")
+
+
+def _shock_int(value, name: str, *, minimum: Optional[int] = None) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"shock {name} must be an integer")
+    if isinstance(value, float):
+        if not math.isfinite(value) or not value.is_integer():
+            raise ValueError(f"shock {name} must be an integer")
+        value = int(value)
+    elif isinstance(value, str):
+        try:
+            value = int(value.strip())
+        except ValueError:
+            raise ValueError(f"shock {name} must be an integer") from None
+    elif not isinstance(value, int):
+        raise ValueError(f"shock {name} must be an integer")
+    if minimum is not None and value < minimum:
+        raise ValueError(f"shock {name} must be at least {minimum}")
+    return value
+
+
+def _shock_float(value, name: str, *, minimum: Optional[float] = None,
+                 exclusive: bool = False) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"shock {name} must be a number")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"shock {name} must be a number") from None
+    if not math.isfinite(number):
+        raise ValueError(f"shock {name} must be finite")
+    if minimum is not None and (number <= minimum if exclusive else number < minimum):
+        raise ValueError(f"shock {name} must be greater than {minimum}")
+    return number
+
+
+def _shock_text(value, name: str, limit: int = 500) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"shock {name} must be text")
+    return value[:limit]
+
+
+def _shock_choice(value, name: str, choices: tuple[str, ...]) -> str:
+    if value not in choices:
+        raise ValueError(f"shock {name} must be one of {', '.join(choices)}")
+    return str(value)
+
+
+def validate_shock_trigger(trigger_type: str, trigger) -> dict:
+    """Return a type-checked copy of ``trigger`` or raise ``ValueError``.
+
+    Evaluation coerces these fields inside the NIGHT_CLOSE savepoint, where a
+    malformed value would roll the phase back on every attempt and wedge the
+    run; the request must be rejected when it is scheduled instead.
+    """
+    if trigger is None:
+        trigger = {}
+    if not isinstance(trigger, dict):
+        raise ValueError("shock trigger must be an object")
+    out = dict(trigger)
+    if trigger_type == "shock":
+        out["tick"] = _shock_int(out.get("tick", 0), "trigger.tick", minimum=0)
+    elif trigger_type == "trend":
+        key = "start" if "start" in out else "tick"
+        out[key] = _shock_int(out.get(key, 0), f"trigger.{key}", minimum=0)
+    elif trigger_type == "conditional":
+        metric = out.get("metric")
+        if not isinstance(metric, str) or not metric.strip():
+            raise ValueError("conditional shock trigger requires a metric name")
+        out["metric"] = metric.strip()[:120]
+        out["op"] = _shock_choice(out.get("op", ">"), "trigger.op", _CONDITIONAL_OPS)
+        out["threshold"] = _shock_float(out.get("threshold", 0.0), "trigger.threshold")
+    return out
+
+
+def validate_shock_params(kind: str, params) -> dict:
+    """Return a type-checked copy of ``params`` for ``kind`` or raise ``ValueError``."""
+    if params is None:
+        params = {}
+    if not isinstance(params, dict):
+        raise ValueError("shock params must be an object")
+    out = dict(params)
+    if kind == "policy_rate":
+        out["rate_bps"] = _shock_int(out.get("rate_bps", 500), "rate_bps", minimum=0)
+    elif kind == "policy_rule_change":
+        if not isinstance(out.get("changes", {}), dict):
+            raise ValueError("policy_rule_change shock requires a changes object")
+    elif kind == "oil":
+        out["multiplier"] = _shock_float(
+            out.get("multiplier", 1.5), "multiplier", minimum=0.0, exclusive=True)
+    elif kind == "rumor":
+        if "bank_id" in out:
+            out["bank_id"] = _shock_int(out["bank_id"], "bank_id", minimum=1)
+        out["n_agents"] = _shock_int(out.get("n_agents", 12), "n_agents", minimum=0)
+        if "text" in out:
+            out["text"] = _shock_text(out["text"], "text")
+        if "bank_selector" in out:
+            out["bank_selector"] = _shock_choice(
+                out["bank_selector"], "bank_selector", _RUMOR_SELECTORS)
+        if "audience" in out:
+            out["audience"] = _shock_choice(out["audience"], "audience", _RUMOR_AUDIENCES)
+    elif kind == "slant":
+        out["outlet_id"] = _shock_int(out.get("outlet_id", 1), "outlet_id", minimum=1)
+        if "directive" in out:
+            out["directive"] = _shock_text(out["directive"], "directive")
+        if "ticks" in out:
+            out["ticks"] = _shock_int(out["ticks"], "ticks", minimum=0)
+    elif kind == "scandal":
+        out["firm_id"] = _shock_int(out.get("firm_id", 1), "firm_id", minimum=1)
+        if "description" in out:
+            out["description"] = _shock_text(out["description"], "description")
+    elif kind == "epidemic":
+        out["multiplier"] = _shock_float(out.get("multiplier", 4.0), "multiplier", minimum=0.0)
+    return out
 
 
 class Shocks:
@@ -42,10 +160,24 @@ class Shocks:
             raise ValueError(f"unknown trigger type {trigger_type}")
         if duration_ticks < 0:
             raise ValueError("shock duration_ticks must be non-negative")
+        # Validate now, but persist the caller's values verbatim: stored runs
+        # and their replays must keep byte-identical ``shock_fired`` payloads.
+        validate_shock_trigger(trigger_type, trigger)
+        self._validate_params(kind, params or {})
         return self.store.insert(
             "shocks", kind=kind, trigger_type=trigger_type, trigger_json=json.dumps(trigger),
             duration_ticks=duration_ticks, params_json=json.dumps(params or {}),
             label=label or kind, fired=0)
+
+    def _validate_params(self, kind: str, params: dict) -> None:
+        normalized = validate_shock_params(kind, params)
+        if kind == "policy_rule_change":
+            politics = getattr(self.e, "politics", None)
+            validator = getattr(politics, "_validate_policy_changes", None)
+            if callable(validator):
+                error = validator(dict(normalized.get("changes", {})))
+                if error:
+                    raise ValueError(str(error))
 
     # ── evaluation (each tick, NIGHT_CLOSE before metrics) ───────────────────
     def evaluate(self, tick: int) -> list[dict]:

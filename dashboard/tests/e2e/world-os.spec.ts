@@ -649,12 +649,18 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
 
   await page.goto("/runs/run-demo/overview");
   await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
-  await expect.poll(async () => page.evaluate(() => (
-    (window as any).__gapSocket.sent
-  ))).toContainEqual({ type: "hello", event_cursor: 0 });
-  await page.evaluate(() => {
-    (window as any).__gapSocket.sent.length = 0;
-  });
+  /* The server hello is authoritative on a first connection. The client sends
+     no hello of its own (a hello at cursor 0 asked for the whole commit log and
+     began every fresh load stale). Under React StrictMode the dev build mounts
+     the socket effect twice, so the second socket may greet as a reconnect, but
+     only ever at the cursor the server hello announced, never at one that asks
+     for backfill. */
+  await page.waitForTimeout(200);
+  const greetings = await page.evaluate(() => (window as any).__gapSocket.sent);
+  expect(greetings.length).toBeLessThanOrEqual(1);
+  expect(greetings.every((message: any) => (
+    message.type === "hello" && message.event_cursor === 0
+  ))).toBe(true);
 
   await page.evaluate(() => {
     (window as any).__gapSocket.emit({

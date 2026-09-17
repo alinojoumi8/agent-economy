@@ -724,6 +724,37 @@
   opacity: .55;
 }
 
+/* ---- following by keyboard: the pin a click makes, with no pointer needed ---- */
+
+.live-city__follow {
+  display: grid;
+  gap: var(--ae-space-1);
+}
+
+.live-city__follow > span {
+  font-size: var(--ae-fs-6);
+  letter-spacing: var(--ae-ls-cap);
+  text-transform: uppercase;
+  opacity: .55;
+}
+
+.live-city__follow select {
+  min-height: 28px;
+  width: 100%;
+  padding: 0 var(--ae-space-2);
+  border-radius: var(--ae-radius-sm);
+  border: 1px solid var(--ae-city-line);
+  background: var(--ae-city-line-soft);
+  color: var(--ae-city-ink);
+  font: inherit;
+  font-size: var(--ae-fs-5);
+}
+
+.live-city__follow select:focus-visible {
+  outline: 2px solid var(--ae-city-focus);
+  outline-offset: 2px;
+}
+
 /* ---- the detail camera: the crowded ground, magnified in the empty ground ---- */
 
 /*

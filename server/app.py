@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import logging
+import re
 import time
 from pathlib import Path
 from typing import Any, Literal, Mapping, Optional
@@ -18,7 +19,7 @@ from typing import Any, Literal, Mapping, Optional
 from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from engine.store import load_json
 from agents.participant import ParticipantError
@@ -45,7 +46,10 @@ class ShockBody(BaseModel):
 
 
 class SpeedBody(BaseModel):
-    delay_s: float
+    # Bounded like the hosted control body: an unbounded or non-finite delay
+    # would park the world task in its inter-tick sleep, where Pause and Stop
+    # could not reach it.
+    delay_s: float = Field(ge=0.0, le=3600.0, allow_inf_nan=False)
 
 
 class ParticipantControlBody(BaseModel):
@@ -63,17 +67,38 @@ class ParticipantReleaseBody(BaseModel):
     expected_tick: int
 
 
+_HOSTED_PATH_KEYS = frozenset({"path", "database", "db", "db_path"})
+_HOSTED_PATH_KEY_SUFFIXES = (
+    "_path", "_paths", "_dir", "_directory", "_file", "_root")
+_FILESYSTEM_PATH_VALUE = re.compile(
+    r"^(?:[A-Za-z]:[\\/]|\\\\|/(?!/))[^\r\n]*"
+    r"\.(?:db|sqlite3?|json|jsonl|html|md|log|yaml|yml|txt|csv|parquet)$",
+    re.IGNORECASE,
+)
+
+
+def _hosted_path_key(key: object) -> bool:
+    name = str(key)
+    return name in _HOSTED_PATH_KEYS or name.endswith(_HOSTED_PATH_KEY_SUFFIXES)
+
+
 def _hosted_safe_document(value):
-    """Remove filesystem-bearing fields from a hosted JSON document."""
+    """Remove filesystem-bearing fields and values from a hosted JSON document.
+
+    Acceptance receipts name their run database under ``database`` and report
+    directories under ``*_dir``; a hosted reader must learn neither the key nor
+    any absolute artifact path that reaches a string value.
+    """
     if isinstance(value, dict):
         return {
             key: _hosted_safe_document(item)
             for key, item in value.items()
-            if not (str(key) == "path" or str(key).endswith("_path")
-                    or str(key).endswith("_paths"))
+            if not _hosted_path_key(key)
         }
     if isinstance(value, list):
         return [_hosted_safe_document(item) for item in value]
+    if isinstance(value, str) and _FILESYSTEM_PATH_VALUE.match(value.strip()):
+        return "[redacted-path]"
     return value
 
 
@@ -1062,9 +1087,16 @@ def create_app(world: World, *, served_ticks: int | None = None,
             return JSONResponse(
                 {"error": "duration_ticks must be non-negative"}, status_code=400)
         trigger = body.trigger or {"tick": store.tick + 1}
-        sid = world.shocks.schedule(body.kind, body.trigger_type, trigger,
-                                    duration_ticks=body.duration_ticks, params=body.params,
-                                    label=body.label)
+        try:
+            sid = world.shocks.schedule(body.kind, body.trigger_type, trigger,
+                                        duration_ticks=body.duration_ticks, params=body.params,
+                                        label=body.label)
+        except ValueError as exc:
+            operational_log(logger, logging.WARNING, "shock.rejected",
+                            run_id=world.gateway.run_id, tick=store.tick,
+                            kind=body.kind, trigger_type=body.trigger_type,
+                            reason="invalid_fields")
+            return JSONResponse({"error": str(exc)[:300]}, status_code=400)
         operational_log(logger, logging.INFO, "shock.scheduled",
                         run_id=world.gateway.run_id, tick=store.tick,
                         shock_id=sid, kind=body.kind,

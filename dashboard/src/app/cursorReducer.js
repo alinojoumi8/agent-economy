@@ -20,6 +20,14 @@ function currentLineage(state) {
     state.projectionVersion, state.policyVersion, state.viewKey];
 }
 
+/** The cursor a server frame announces, or null when it carries none. */
+export function announcedCursor(message) {
+  const value = message?.event_cursor;
+  if (value === null || value === undefined) return null;
+  const cursor = Number(value);
+  return Number.isFinite(cursor) ? cursor : null;
+}
+
 export function reduceCursorState(state, message, { historical = false } = {}) {
   if (!message || typeof message !== "object") return state;
   if (message.type === "transport_closed") {
@@ -53,10 +61,21 @@ export function reduceCursorState(state, message, { historical = false } = {}) {
     };
   }
   if (message.type === "tick") {
+    // A tick frame only says the simulation advanced. While a recovery is still
+    // outstanding (gap backfill, cursor reset, lineage reconnect, or a truncated
+    // replay being refetched) the projection stream is behind, so the frame must
+    // not declare it live; a contiguous delta or a hello does that.
+    if (state.status === "stale") return state;
     return { ...state, status: "live", staleReason: null };
   }
   if (message.type === "projection_invalidated") {
-    return { ...state, status: "stale", staleReason: message.reason || "invalidated" };
+    const cursor = announcedCursor(message);
+    return {
+      ...state,
+      cursor: cursor === null ? state.cursor : cursor,
+      status: "stale",
+      staleReason: message.reason || "invalidated",
+    };
   }
   if (message.type !== "projection_delta" || historical) return state;
   if (currentLineage(state).some((value, index) => value !== lineage(message)[index])) {

@@ -13,6 +13,12 @@ import { InvestigationExportActions } from "../components/InvestigationExportAct
 import type { CausalEdge, CausalNode, StableReference } from "../generated/worldOs";
 import { CausalGraph } from "../visualizations/CausalGraph";
 import {
+  defaultRootEventId,
+  resolveCausalRoot,
+  rootEventSearch,
+  validSelection,
+} from "./investigationsWorkspaceModel.js";
+import {
   acceptSavedInvestigation,
   cancelInvestigationEdit,
   continueInvestigationConflict,
@@ -27,6 +33,7 @@ import {
 } from "./investigationState";
 
 type EventPage = { items: Array<{ id: number; tick: number; kind: string; phase: string }> };
+type SnapshotEvents = { events?: EventPage };
 type CausalData = {
   root: StableReference;
   nodes: CausalNode[];
@@ -55,7 +62,7 @@ export function InvestigationsWorkspace() {
   const tick = observerState.tick;
   const relation = search.get("relation") || "";
   const authority = search.get("authority") || "";
-  const [selected, setSelected] = useState<StableReference | null>(null);
+  const [chosen, setSelected] = useState<StableReference | null>(null);
   const [hypothesis, setHypothesis] = useState("");
   const [draft, setDraft] = useState<any>(null);
   const [pendingInvestigationId, setPendingInvestigationId] = useState<string | null>(null);
@@ -86,19 +93,23 @@ export function InvestigationsWorkspace() {
     onEscape: resetNavigationGuard,
   });
 
+  // /api/v2/events pages oldest-first, so a plain `limit` pinned the default
+  // root to the run's first events forever. The snapshot's events domain is the
+  // newest committed window (the last 50 events), which is what a default root
+  // should come from.
   const events = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "investigation-events", tick],
     queryFn: ({ signal }) => {
       const params = projectionScopeParams(observerState);
-      params.set("limit", "200");
-      return projectionApi<EventPage>(`/api/v2/events?${params}`, signal);
+      params.set("domains", "events");
+      return projectionApi<SnapshotEvents>(`/api/v2/snapshot?${params}`, signal);
     },
+    retry: false,
   });
-  const requestedEvent = Number(search.get("event") || 0);
-  const fallbackEvent = [...(events.data?.data.items || [])].reverse().find(
-    item => item.kind === "goods_sale") || events.data?.data.items.at(-1);
-  const rootKind = search.get("kind") || "event";
-  const rootId = Number(search.get("id") || requestedEvent || fallbackEvent?.id || 0);
+  const fallbackEventId = defaultRootEventId(events.data?.data.events?.items);
+  const root = resolveCausalRoot(search, fallbackEventId);
+  const rootKind: string = root.kind;
+  const rootId: number = root.id;
   const causal = useQuery({
     queryKey: ["world-os", runId, observerState.fork, "causal", rootKind, rootId, tick, relation, authority],
     queryFn: ({ signal }) => {
@@ -113,7 +124,14 @@ export function InvestigationsWorkspace() {
       );
     },
     enabled: rootId > 0,
+    retry: false,
   });
+  // A node chosen in one graph is not a node of the next: once the root or the
+  // filters produce a graph without it, the selection is dropped rather than
+  // shown (and pinned) as evidence of the new trace.
+  const selected = causal.data
+    ? (validSelection(chosen, causal.data.data.nodes) as StableReference | null)
+    : chosen;
   const selectedKey = refKey(selected || causal.data?.data.root || null);
   const selectedRow = useMemo(() => causal.data?.data.semantic_rows.find(
     row => refKey(row.stable_ref) === selectedKey), [causal.data, selectedKey]);
@@ -123,6 +141,7 @@ export function InvestigationsWorkspace() {
   const session = useQuery({
     queryKey: ["world-os", "operator-session"],
     queryFn: () => workspaceApi<{ owner_id: string; csrf_token: string }>("/api/v2/operator/session"),
+    retry: false,
   });
   const canMutate = Boolean(session.data?.csrf_token);
   const requireCsrfToken = () => {
@@ -134,6 +153,7 @@ export function InvestigationsWorkspace() {
   const investigations = useQuery({
     queryKey: ["world-os", runId, "investigations"],
     queryFn: () => workspaceApi<{ items: Investigation[] }>("/api/v2/operator/investigations"),
+    retry: false,
   });
   const currentInvestigation = investigations.data?.items.find(
     item => String(item.id) === String(investigationId),
@@ -284,6 +304,9 @@ export function InvestigationsWorkspace() {
           {pinEvidence.error && <p className="world-os-error" role="alert">
             {pinEvidence.error instanceof Error ? pinEvidence.error.message : "Evidence pin failed."}
           </p>}
+          {createInvestigation.error && <p className="world-os-error" role="alert">
+            {createInvestigation.error instanceof Error ? createInvestigation.error.message : "Investigation could not be created."}
+          </p>}
         </div>
       </div>
     </div>
@@ -291,12 +314,25 @@ export function InvestigationsWorkspace() {
       <label>Relation <select value={relation} onChange={event => setFilter("relation", event.target.value)}><option value="">All</option><option>observed</option><option>triggered</option><option>motivated</option><option>settled</option><option>cited</option></select></label>
       <label>Authority <select value={authority} onChange={event => setFilter("authority", event.target.value)}><option value="">All</option><option>engine</option><option>actor_claim</option><option>model_inference</option></select></label>
       <label>Root event <input inputMode="numeric" value={rootId || ""} onChange={event => {
-        const next = new URLSearchParams(search); next.set("event", event.target.value.replace(/\D/g, "")); setSearch(next);
+        setSearch(rootEventSearch(search, event.target.value));
       }} /></label>
     </div>
+    {session.error && <div className="world-os-error" role="alert">
+      Operator authorization is unavailable: {session.error instanceof Error ? session.error.message : "request failed"}
+    </div>}
+    {investigations.error && <div className="world-os-error" role="alert">
+      Saved investigations could not be loaded: {investigations.error instanceof Error ? investigations.error.message : "request failed"}
+    </div>}
+    {events.error && <div className="world-os-error" role="alert">
+      Recent events could not be loaded: {events.error instanceof Error ? events.error.message : "request failed"}
+    </div>}
+    {root.source === "recent" && <p className="world-os-policy-note">
+      Root defaults to the newest committed event; enter an event ID or open a trace link to choose another.
+    </p>}
     {investigations.data?.items.length ? <nav className="world-os-investigation-list" aria-label="Saved investigations">
       {investigations.data.items.map(item => <button type="button" key={item.id}
         className={String(item.id) === String(investigationId) ? "selected" : ""}
+        aria-current={String(item.id) === String(investigationId) ? "true" : undefined}
         onClick={() => chooseInvestigation(item.id)}>{item.title}<small>v{item.version}</small></button>)}
     </nav> : null}
     {!rootId && !events.isLoading && <div className="world-os-empty"><h3>No causal root yet</h3><p>Run the world or enter an event ID to begin a bounded trace.</p></div>}

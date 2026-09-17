@@ -235,7 +235,11 @@ export function CivicCity(props) {
     .sort((left, right) => Number(right.occupancy) - Number(left.occupancy))[0];
   const commonParams = new URLSearchParams();
   if (observerState?.fork) commonParams.set("fork", observerState.fork);
-  if (tick !== "live") commonParams.set("tick", tick);
+  /* A tick is carried into the lens links only when this view is itself a
+     reconstruction. The live Observatory passes the feed's current tick for
+     display; pinning it into a link would open the destination workspace as a
+     frozen historical view of a run that is still moving. */
+  if (historical && tick !== "live") commonParams.set("tick", tick);
   if (observerState?.event) commonParams.set("event", String(observerState.event));
   const commonSuffix = commonParams.toString() ? `?${commonParams}` : "";
   const peopleHref = selected && runId
