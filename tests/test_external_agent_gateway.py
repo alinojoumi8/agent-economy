@@ -353,6 +353,52 @@ def test_semantics14_records_every_missed_due_turn_with_operational_reason(
 
 
 @pytest.mark.parametrize("submitted", [True, False])
+def test_semantics14_new_arrival_attendance_replays_after_night(tmp_path, submitted):
+    source_dir = tmp_path / "source"
+    source_dir.mkdir()
+    source = _world(source_dir, engine_semantics_version=14)
+    replay = None
+    try:
+        replay_path = tmp_path / "replay.db"
+        created = source.runtime.external.create_connection(
+            tenant_id="tenant-a", owner_id="owner-a", display_name="Night arrival",
+            biography="A replay regression citizen.", preferred_occupation="builder", tier="actor")
+        # Arrival happens inside NIGHT, not before the initial replay import.
+        asyncio.run(source.step())
+        service = source.runtime.external
+        auth = service.authenticate(created["credential"]["token"], rate_limit=False)
+        turn = service.turn(auth)
+        if submitted:
+            service.submit_action(auth, {
+                "target_tick": turn["target_tick"], "action": {"type": "do_nothing"},
+                "observed_projection_hash": turn["projection_hash"],
+                "idempotency_key": "arrival-attendance",
+            })
+        else:
+            source.store.execute("UPDATE external_agent_connections SET lease_expires_at=?",
+                                 ("2000-01-01T00:00:00+00:00",))
+        asyncio.run(source.step())
+        source.store.commit()
+        replay_config = deepcopy(source.config)
+        replay_config["replay_source_path"] = str(Path(source.store.path).resolve())
+        replay_store = Store(str(replay_path))
+        replay_store.init_run_meta("external-replay", 42, replay_config)
+        replay = World(replay_store, replay_config, replay=True)
+        replay.initialize()
+        asyncio.run(replay.step())
+        asyncio.run(replay.step())
+        replay.store.commit()
+        proof = verify_replay(source.store.path, replay.store.path)
+        assert proof["exact"], proof["differences"]
+        assert source.economy.ledger.reconcile()[0]
+        assert replay.economy.ledger.reconcile()[0]
+    finally:
+        if replay is not None:
+            replay.close()
+        source.close()
+
+
+@pytest.mark.parametrize("submitted", [True, False])
 def test_semantics14_submitted_and_missed_attendance_replay_exactly(
     tmp_path,
     submitted,

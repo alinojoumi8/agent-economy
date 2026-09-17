@@ -726,9 +726,9 @@ class ExternalAgentService:
             # exact without contacting the external agent.
             if self._replay_commons_precedes_control(tick):
                 self._restore_replay_commons(tick)
-                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
+                self._replay_decisions(tick, before_night=True)
             else:
-                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
+                self._replay_decisions(tick, before_night=True)
                 self._restore_replay_commons(tick)
             return
         while True:
