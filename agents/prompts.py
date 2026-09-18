@@ -2739,6 +2739,13 @@ class ContextBuilder:
             system += (SEMANTICS7_INSTITUTIONAL_ACTIONS_SUFFIX
                        if getattr(self, "engine_semantics_version", 2) >= 7
                        else INSTITUTIONAL_ACTIONS_SUFFIX)
+        if context.get("frontier"):
+            system += ("\nFrontier actions are available only as supplied in frontier.options. "
+                       "Copy one action exactly; for found_settlement you may choose a unique name. "
+                       "Submit at most one frontier action this turn. If frontier.task is pending, "
+                       "submit only do_nothing until completion. Exploration reveals land; "
+                       "construction requires three completed work units, then residents may move "
+                       "and vote to charter a region. Supplies are consumed and cannot be refunded.")
         if context.get("startup_work"):
             system += STARTUP_ACTIONS_SUFFIX
         if getattr(self, "engine_semantics_version", 2) >= 6:
