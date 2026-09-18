@@ -18,6 +18,8 @@ V4_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v4.json")
 V5_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v5.json")
 V6_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v6.json")
 CURRENT_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v7.json")
+FRONTIER_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v10.json")
+FRONTIER_TABLES = {"frontier_sites", "frontier_settlements", "frontier_residences", "frontier_tasks", "frontier_votes", "frontier_history"}
 URBAN_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v9.json")
 URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "urban_construction_receipts", "urban_projection_history"}
 POPULATION_CONTRACT_PATH = Path(__file__).with_name("hash-contract-v8.json")
@@ -30,7 +32,7 @@ class HashContractError(RuntimeError):
 def load_hash_contract(path: str | Path | None = None) -> dict:
     contract_path = Path(path) if path is not None else CONTRACT_PATH
     contract = json.loads(contract_path.read_text(encoding="utf-8"))
-    if contract.get("id") not in {"hash-contract-v1", "hash-contract-v2", "hash-contract-v3", "hash-contract-v4", "hash-contract-v5", "hash-contract-v6", "hash-contract-v7", "hash-contract-v8", "hash-contract-v9"}:
+    if contract.get("id") not in {"hash-contract-v1", "hash-contract-v2", "hash-contract-v3", "hash-contract-v4", "hash-contract-v5", "hash-contract-v6", "hash-contract-v7", "hash-contract-v8", "hash-contract-v9", "hash-contract-v10"}:
         raise HashContractError("unsupported hash contract")
     return contract
 
@@ -46,6 +48,8 @@ def _contract_for_database(database: Any) -> dict:
     except (sqlite3.Error, TypeError, ValueError, json.JSONDecodeError):
         semantics = 0
         config = {}
+    if config.get("frontier", {}).get("version") == 1:
+        return load_hash_contract(FRONTIER_CONTRACT_PATH)
     if semantics >= 13 and config.get("urban_development", {}).get("enabled"):
         return load_hash_contract(URBAN_CONTRACT_PATH)
     return load_hash_contract(POPULATION_CONTRACT_PATH if semantics >= 21 else
@@ -129,6 +133,15 @@ def _contract_inventory(connection: sqlite3.Connection, contract: dict) -> list[
 
 
 def _compatible_extensions(contract: dict) -> tuple[set[str], dict[str, set[str]]]:
+    if contract.get("id") == "hash-contract-v10":
+        tables, columns = _compatible_extensions(load_hash_contract(V2_CONTRACT_PATH))
+        return tables - FRONTIER_TABLES, {key: names - ({"created_tick"} if key == "regions" else set()) for key, names in columns.items()}
+    tables, columns = _legacy_compatible_extensions(contract)
+    columns.setdefault("regions", set()).add("created_tick")
+    return tables | FRONTIER_TABLES, columns
+
+
+def _legacy_compatible_extensions(contract: dict) -> tuple[set[str], dict[str, set[str]]]:
     if contract.get("id") == "hash-contract-v8":
         return set(URBAN_TABLES), {}
     if contract.get("id") == "hash-contract-v9":
@@ -181,6 +194,8 @@ def verify_hash_contract(database: Any, contract: dict | None = None) -> dict:
             "hash contract classifies tables more than once: " + ",".join(sorted(overlaps)))
     connection = _connection(database)
     required = _contract_for_database(connection)["id"]
+    if required == "hash-contract-v10" and contract != load_hash_contract(FRONTIER_CONTRACT_PATH):
+        raise HashContractError("Frontier geography requires hash-contract-v10")
     if required == "hash-contract-v9" and contract != load_hash_contract(URBAN_CONTRACT_PATH):
         raise HashContractError("Urban development requires hash-contract-v9")
     if required == "hash-contract-v8" and contract.get("id") != required:
@@ -202,6 +217,12 @@ def verify_hash_contract(database: Any, contract: dict | None = None) -> dict:
     for table in sorted((discovered - declared) & URBAN_TABLES):
         if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
             raise HashContractError("populated urban construction requires hash-contract-v9")
+    for table in sorted((discovered - declared) & FRONTIER_TABLES):
+        if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:
+            raise HashContractError("populated frontier geography requires hash-contract-v10")
+    if contract.get("id") != "hash-contract-v10" and "created_tick" in {r[1] for r in connection.execute("PRAGMA table_info(regions)")}:
+        if connection.execute("SELECT 1 FROM regions WHERE created_tick<>0 LIMIT 1").fetchone():
+            raise HashContractError("prospective region history requires hash-contract-v10")
     household_tables = set(load_hash_contract(V3_CONTRACT_PATH)["household_tables"])
     for table in sorted((discovered - declared) & household_tables):
         if connection.execute(f"SELECT 1 FROM {_quote(table)} LIMIT 1").fetchone() is not None:

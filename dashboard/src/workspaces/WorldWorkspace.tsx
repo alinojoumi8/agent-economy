@@ -15,6 +15,8 @@ import {
   useWorkspaceProjection,
 } from "./workspaceShared";
 
+import { FrontierPanel, type FrontierState } from "./FrontierPanel";
+
 const CityViewport = lazy(() => import("../city/CityViewport"));
 
 type WorldRow = {
@@ -38,6 +40,7 @@ type WorldFlow = WorldRow & {
 };
 
 type WorldProjection = {
+  frontier?: FrontierState;
   enabled?: boolean;
   regions?: WorldRow[];
   agents?: WorldRow[];
@@ -209,6 +212,7 @@ export function WorldWorkspace() {
 
   return <section className="world-os-world-workspace">
     <WorkspaceState loading={projection.loading} error={projection.error}>
+      <FrontierPanel data={projection.data?.frontier} />
       {city3d && <div className="city3d-toggle" role="group" aria-label="City presentation">
         <button aria-pressed={!city3d} onClick={() => setCityView(false)}>2D atlas</button>
         <button aria-pressed={city3d} onClick={() => setCityView(true)}>3D city</button>

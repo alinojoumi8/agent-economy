@@ -194,7 +194,7 @@ def _build_bundle(sqlite_connection, output_root, *, contract_path, fault_hook, 
     contract = load_hash_contract(contract_path)
     if contract_path is None:
         selected = _contract_for_database(sqlite_connection)
-        if selected["id"] in {"hash-contract-v3", "hash-contract-v4", "hash-contract-v5", "hash-contract-v6", "hash-contract-v7", "hash-contract-v8", "hash-contract-v9"}:
+        if selected["id"] in {"hash-contract-v3", "hash-contract-v4", "hash-contract-v5", "hash-contract-v6", "hash-contract-v7", "hash-contract-v8", "hash-contract-v9", "hash-contract-v10"}:
             contract = selected
     verify_hash_contract(sqlite_connection, contract)
     hashes = canonical_hashes(sqlite_connection, contract)
@@ -352,7 +352,7 @@ def validate_bundle(path: str | Path, *, database: Any = None,
             with resources.sqlite_source(connection):
                 if contract_path is None:
                     contract_id = manifest.get("contract_id")
-                    if contract_id not in {f"hash-contract-v{version}" for version in range(1, 10)}:
+                    if contract_id not in {f"hash-contract-v{version}" for version in range(1, 11)}:
                         raise ExportBundleError("research bundle hash contract is unsupported")
                     contract_path = Path(__file__).with_name(f"{contract_id}.json")
                 contract = load_hash_contract(contract_path)

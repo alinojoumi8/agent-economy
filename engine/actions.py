@@ -24,6 +24,7 @@ from .semantics import semantics_version
 from .types import ActionEnvelope, ValidationError, positive_integer_id
 from .commands import CommandValidationError, default_registry
 from .commands.registry import POPULATION_MODELS
+from .commands.frontier import FRONTIER_MODELS
 from causal import CausalLinkService
 from communications.handlers import CommunicationRejected, CommunicationService
 from communications.privacy import safe_action_for_diagnostic, safe_command_metadata
@@ -78,6 +79,7 @@ ESTATE_BID_TYPES = {
 }
 VALID_TYPES |= ESTATE_BID_TYPES
 VALID_TYPES |= set(POPULATION_MODELS)
+VALID_TYPES |= set(FRONTIER_MODELS)
 
 COMMUNICATION_TYPES = {"send_message", "reply_message", "forward_message"}
 _ACTION_PROVENANCE_FIELDS = {
@@ -322,6 +324,11 @@ class ActionExecutor:
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
             return result
+        if self.e.frontier.active(tick) and self.e.frontier.busy(actor_id) and atype != "do_nothing":
+            result = self._reject(tick, actor_id, action, "citizen is occupied by a frontier task", phase)
+            self.store.update("action_proposals", proposal_id, validation_status="rejected",
+                              result_json=json.dumps(result, sort_keys=True))
+            return result
         handler_name = definition.handler_name if definition is not None else f"_do_{atype}"
         handler = getattr(self, handler_name, None)
         if handler is None:
@@ -494,6 +501,9 @@ class ActionExecutor:
         return bool(v)
 
     # ── household / firm actions ─────────────────────────────────────────────
+    def _do_frontier(self, tick, actor_id, action, phase):
+        return self.e.frontier.execute(tick, actor_id, action, phase)
+
     def _do_do_nothing(self, tick, actor_id, action, phase) -> dict:
         return {"ok": True}
 

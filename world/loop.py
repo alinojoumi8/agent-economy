@@ -154,6 +154,7 @@ class World:
             SpecClosureFixtureSeeder(self.economy, self.config).seed()
         from engine.personal_names import assign_personal_names
         assign_personal_names(self.store, self.config, 0)
+        self.economy.frontier.run_nightly(0)
         self.economy.cognition.seed_world(0)
         self.shocks.load_from_config()
         if self.population_scenario is not None:
@@ -676,6 +677,7 @@ class World:
         self._spawn_due_arrivals(tick)
         from engine.personal_names import assign_personal_names
         assign_personal_names(self.store, self.config, tick)
+        e.frontier.run_nightly(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
         if self.engine_semantics_version < 18:
             self._bank_liquidity_sweep(tick)

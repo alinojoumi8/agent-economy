@@ -830,6 +830,15 @@ class ParticipantService:
                     select("project_id","Project",[{"value":p["id"],"label":f"Project {p['id']}"} for p in projects if p["status"]==status]),
                     text("request_key","Unique request key",maximum=120)]})
 
+        frontier = ctx.get("frontier") or {}
+        for index, option in enumerate(frontier.get("options", [])):
+            item = exact_action(option["action"], option["label"], f"frontier-{index}")
+            if item["type"] == "found_settlement":
+                item["fields"] = [field for field in item["fields"] if field["name"] != "name"]
+                item["fields"].append(text("name", "Settlement name", option["action"]["name"], maximum=48))
+            items.append(item)
+        if frontier.get("task"):
+            items = [item for item in items if item["type"] == "do_nothing"]
         for item in items:
             item.setdefault("variant", "default")
             spec = action_spec(str(item["type"]))
@@ -1010,7 +1019,7 @@ class ParticipantService:
                 "SELECT * FROM participant_actions WHERE target_tick=? "
                 "AND status IN ('executed','rejected') ORDER BY id LIMIT 1", (tick,)).fetchone()
             if not source:
-                if self.engine_semantics_version >= 13:
+                if self.engine_semantics_version >= 13 or self.ctx.e.frontier.active(tick):
                     idle = conn.execute("SELECT payload_json FROM events WHERE tick=? AND kind='participant_idle' ORDER BY id LIMIT 1", (tick,)).fetchone()
                     if idle:
                         return {"replay_idle": True, "agent_id": int(json.loads(idle["payload_json"])["agent_id"])}

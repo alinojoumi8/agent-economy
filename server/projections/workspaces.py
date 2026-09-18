@@ -134,6 +134,8 @@ def build_world_map_geography(store, *, as_of_tick: int) -> dict:
         (tick, tick, tick))}
     regions = []
     for row in store.query("SELECT * FROM regions ORDER BY id"):
+        if dict(row).get("created_tick", 0) > tick:
+            continue
         region = dict(row)
         region.update(specialization=load_json(region.get("specialization_json"), []),
                       population=population.get(int(row["id"]), 0),
@@ -209,6 +211,8 @@ def _agent_regions_at(
     *, population: dict | None = None,
 ) -> dict[int, int | None]:
     tick = int(as_of_tick)
+    from engine.frontier import residence_regions_at
+    frontier_regions = residence_regions_at(store, agents, tick)
     from .population import population_at, resident_regions_at
     cohort = population if population is not None else population_at(store, tick)
     if cohort is not None:
@@ -247,6 +251,7 @@ def _agent_regions_at(
         agent_id = int(row["agent_id"])
         if agent_id in result and agent_id not in completed_agents:
             result[agent_id] = int(row["origin_region_id"])
+    result.update(frontier_regions)
     return result
 
 
@@ -289,6 +294,10 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
     regions = [_json_fields(row, "specialization_json") for row in _dicts(store.query(
         "SELECT id,region_key,name,currency_code,population_target,specialization_json,x,y,"
         "legal_ruleset FROM regions ORDER BY id"))]
+    from engine.frontier import snapshot_at
+    frontier = snapshot_at(store, tick)
+    created = {row["id"]: dict(row).get("created_tick", 0) for row in store.query("SELECT * FROM regions")}
+    regions = [row for row in regions if created[row["id"]] <= tick]
     region_by_id = {int(row["id"]): row for row in regions}
     agents = _dicts(store.query(
         "SELECT id,name,role,occupation,population_tier,region_id,arrived_tick,died_tick "
@@ -361,6 +370,7 @@ def build_world_workspace(store, *, as_of_tick: int) -> dict:
         "enabled": bool(regions), "regions": regions, "agents": agents,
         "organizations": organizations, "places": places, "presence": presence,
         "flows": flows, "construction_projects": construction_projects,
+        **({"frontier": frontier} if frontier else {}),
         "summary": {
             "population": len(agents), "active_organizations": len(organizations),
             **population_counts(cohort),

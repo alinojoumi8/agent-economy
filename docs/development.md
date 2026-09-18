@@ -37,6 +37,10 @@ pending, and an imported allowance cannot resume execution in a second namespace
 `tests/test_policy_evidence.py` covers all six fresh/saved and frozen/day/phase
 paths in a separate required CI job using controlled loopback HTTP.
 
+Saved semantics-11 Hermes worlds can opt into persistent geography, exploration,
+settlement construction and resident charter votes. See [frontier geography](frontier.md)
+for the backup-first upgrade and history contract.
+
 ## Repository workflow
 
 Work on a feature branch or dedicated worktree. Preserve unrelated changes,

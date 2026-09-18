@@ -1,0 +1,3 @@
+# Fresh provider-free native world with optional live Hermes citizens.
+extends: hermes-local.yaml
+frontier: {version: 1, activation_tick: 0}

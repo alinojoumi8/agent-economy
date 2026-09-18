@@ -592,6 +592,10 @@ class ExternalAgentService:
                 _PUBLIC_EVENT_KINDS)]
         result = {"completed_tick": self.store.tick, "actor": actor, "accounts": accounts,
                   "metrics": metrics, "market": prices, "recent_public_events": public_events}
+        if actor_id is not None:
+            frontier = self.economy.frontier.context(actor_id, self.store.tick + 1)
+            if frontier is not None:
+                result["frontier"] = frontier
         if self.economy.engine_semantics_version >= 21 and actor_id is not None:
             result['population_boundary'] = self.economy.population.action_context(actor_id, self.store.tick + 1)
         return result

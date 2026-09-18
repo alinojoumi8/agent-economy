@@ -21,6 +21,7 @@ from . import (
     v024_estate_cash,
     v025_asset_succession,
     v027_urban_development,
+    v028_frontier,
 )
 
 
@@ -96,6 +97,7 @@ _MIGRATIONS = (
         25, v025_asset_succession.NAME, v025_asset_succession.SQL,
         verify=v025_asset_succession.verify),
     Migration.create(27, v027_urban_development.NAME, v027_urban_development.SQL, verify=v027_urban_development.verify),
+    Migration.create(28, v028_frontier.NAME, v028_frontier.SQL, verify=v028_frontier.verify),
 )
 
 

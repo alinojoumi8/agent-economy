@@ -153,6 +153,8 @@ class Economy:
             institution.population = self.population
         self.urban = UrbanDevelopment(self)
         self.firms.urban = self.urban
+        from .frontier import Frontier
+        self.frontier = Frontier(self)
         self.lifecycle.urban = self.urban
 
     # ── system accounts (created once at genesis) ────────────────────────────

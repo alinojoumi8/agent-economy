@@ -386,6 +386,9 @@ class ContextBuilder:
             if opportunity is not None:
                 ctx["scripted_communication_action"] = opportunity
             self._add_supplier_warning_policy_input(ctx, agent_row, tick)
+        frontier = self.e.frontier.context(int(agent_row["id"]), tick)
+        if frontier is not None:
+            ctx["frontier"] = frontier
         if self.engine_semantics_version >= 11:
             ctx.update(self.e.cognition.decision_context(int(agent_row["id"]), tick))
         if self.engine_semantics_version >= 12 and self.e.city.enabled:
@@ -2353,6 +2356,9 @@ class ContextBuilder:
             lines.append(
                 "[COMPUTE PLAN] "
                 + json.dumps(context["compute_plan"], separators=(",", ":")))
+        if context.get("frontier"):
+            lines.append("[FRONTIER - COPY AVAILABLE ACTIONS; YOU MAY CHOOSE A UNIQUE SETTLEMENT NAME] "
+                         + json.dumps(context["frontier"], separators=(",", ":")))
         if context.get("skills"):
             lines.append(
                 "[LEARNED SKILLS - LEVELS 0 TO 5; XP IS ENGINE-AUTHORITATIVE] "
