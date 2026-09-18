@@ -46,6 +46,10 @@ def read_json(path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+class MissingQueuedAction(RuntimeError):
+    """A completed model turn has no accepted submission and can be corrected."""
+
+
 class CohortOperator:
     def __init__(self, args):
         self.args = args
@@ -157,6 +161,25 @@ class CohortOperator:
         print(f"Recovered saved day {active} without re-dispatching Hermes", flush=True)
 
     def decide(self, citizen, tick):
+        for attempt in range(1, 4):
+            if any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
+                return
+            if (self.root / "STOP").exists():
+                return
+            if attempt > 1 and self.check_world()["tick"] != tick - 1:
+                raise RuntimeError("The world changed before decision recovery; refusing to retry a stale day")
+            try:
+                self._decide_once(citizen, tick, attempt=attempt)
+                return
+            except MissingQueuedAction:
+                with (self.root / "decision-retries.jsonl").open("a", encoding="utf-8") as journal:
+                    journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
+                        "tick": tick, "attempt": attempt, "reason": "no_queued_receipt"}) + "\n")
+                if attempt == 3:
+                    raise
+                print(f"{citizen['name']}: refreshing turn after missing receipt (attempt {attempt}/3)", flush=True)
+
+    def _decide_once(self, citizen, tick, *, attempt=1):
         if any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
             return
         if (self.root / "STOP").exists():
@@ -168,13 +191,21 @@ class CohortOperator:
             raise RuntimeError(f"{citizen['name']} has not arrived yet")
         output = self.root / citizen["profile"]
         output.mkdir(exist_ok=True)
-        prompt = output / f"tick-{tick}.txt"
+        # Keep failed attempts, including those from a previous process, for diagnosis.
+        attempt_id = f"tick-{tick}-attempt-{attempt}-{time.time_ns()}"
+        prompt = output / f"{attempt_id}.txt"
         prompt.write_text(
             f"You are {citizen['name']}, a persistent Agent Economy citizen. {citizen['goal']} "
             f"Continue your own saved life and prior plans. Target tick {tick}. "
             "Use only agent_economy MCP tools. Read identity and the receipt for your previous action if available. "
             "Observe the world, list legal actions, and get a fresh turn envelope. Submit exactly one valid action "
-            "for this wake using its exact tick, projection hash and a unique idempotency key. Choose useful economic "
+            "for this wake using its exact tick, projection hash and a unique idempotency key. "
+            "Call ae_turn_wait immediately before submitting. Copy its complete 64-character projection hash "
+            "verbatim into observed_projection_hash; never abbreviate, guess, or reuse an old hash. "
+            "Call one MCP tool per tool_call. If tool argument validation fails or the turn is stale, "
+            "fetch ae_turn_wait again and correct the submission. Do not finish until a queued receipt is confirmed. "
+            f"This is attempt {attempt} of at most 3; if recovering, your previous turn did not yield a queued receipt. "
+            "Choose useful economic "
             "work, job seeking, training, exploration, settlement founding or building, moving, civic voting, "
             "or essential purchases based on your own goals and affordability. Frontier actions appear only when available; "
             "you may choose a meaningful unique name for a new settlement. Read action "
@@ -199,7 +230,7 @@ class CohortOperator:
                 raise RuntimeError("DEEPSEEK_API_KEY is unavailable; no substitute agent will act")
             env["DEEPSEEK_API_KEY"] = key
         env["PYTHONIOENCODING"] = "utf-8"
-        log_path = output / f"tick-{tick}.log"
+        log_path = output / f"{attempt_id}.log"
         with log_path.open("w", encoding="utf-8") as log:
             result = subprocess.run(command, cwd=home, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=240)
         # Desktop and connection checks can create newer conversations while
@@ -214,8 +245,9 @@ class CohortOperator:
                 write_json(session, {"session_id": row[0], "last_attempt_tick": tick})
             elif result.returncode == 0:
                 raise RuntimeError(f"{citizen['name']} did not identify its saved session; no unrelated session will be substituted")
-        if result.returncode or not any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
-            raise RuntimeError(f"{citizen['name']} did not queue an action; inspect {output / f'tick-{tick}.log'}")
+        if not any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
+            error = RuntimeError if result.returncode else MissingQueuedAction
+            raise error(f"{citizen['name']} did not queue an action; inspect {log_path}")
         print(f"{citizen['name']}: queued tick {tick}", flush=True)
 
     def run(self):

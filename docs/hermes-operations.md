@@ -13,6 +13,14 @@ The ongoing session is taken from that invocation's CLI session receipt,
 not the newest database conversation; Desktop chats and connection checks
 cannot silently replace the citizen's ongoing conversation.
 
+A completed model turn without a queued action receives up to two corrective
+wakes in the same citizen session. Each wake requests a fresh `ae_turn_wait`
+envelope and requires the complete observation hash. Existing queued receipts
+are checked before every attempt. STOP or an externally advanced world prevents
+another attempt; provider/process failures remain visible for investigation.
+No action or observation hash is fabricated by the operator. Attempt logs have
+unique names and `decision-retries.jsonl` records bounded recovery attempts.
+
 Start the existing world with `Start-Hermes-City.ps1 -Days N` (1–100 additional
 days), or use `-ViewOnly` to inspect it without advancing. If interrupted, use
 the remaining number of days, not the original total. For the day-41 to day-141

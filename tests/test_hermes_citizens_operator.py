@@ -5,10 +5,11 @@ import sqlite3
 
 import pytest
 
-from scripts.hermes_citizens import CohortOperator, COHORT, write_json
+from scripts.hermes_citizens import CohortOperator, COHORT, MissingQueuedAction, write_json
 
 
-def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path):
+@pytest.mark.parametrize('missing_attempts', [0, 1, 3])
+def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, missing_attempts):
     monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
     monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
     operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
@@ -24,18 +25,60 @@ def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path):
     citizen = {'name': 'Maya Chen', 'profile': 'maya', 'home': str(home), 'goal': 'Work'}
     queued = []
     monkeypatch.setattr(operator, 'receipts', lambda *args: queued)
-    monkeypatch.setattr(operator, 'api', lambda *args, **kwargs: {'actor': {'id': 1}})
+    monkeypatch.setattr(operator, 'api', lambda *args, **kwargs: {'actor': {'id': 1}, 'run_id': 'one', 'tick': 63})
+    attempts = []
     def run(command, **kwargs):
         assert command[command.index('--provider')+1] == 'openai-codex'
         assert command[command.index('--model')+1] == 'gpt-5.6-luna'
         assert 'DEEPSEEK_API_KEY' not in kwargs['env']
-        queued.append({'status': 'queued'})
+        prompt = Path(command[command.index('--query-file')+1]).read_text()
+        assert 'complete 64-character projection hash' in prompt and 'ae_turn_wait' in prompt
+        attempts.append(command)
+        if len(attempts) > 1:
+            assert command[command.index('--resume')+1] == 'saved-session'
+        if len(attempts) > missing_attempts:
+            queued.append({'status': 'queued'})
         kwargs['stdout'].write('Session: saved-session\n')
         return Namespace(returncode=0)
     monkeypatch.setattr('scripts.hermes_citizens.subprocess.run', run)
     try:
-        operator.decide(citizen, 64)
+        if missing_attempts == 3:
+            with pytest.raises(MissingQueuedAction):
+                operator.decide(citizen, 64)
+        else:
+            operator.decide(citizen, 64)
+        assert len(attempts) == min(missing_attempts+1, 3)
+        assert len(list((operator.root / 'maya').glob('tick-64-attempt-*.log'))) == len(attempts)
         assert json.loads((operator.root / 'maya/session.json').read_text())['session_id'] == 'saved-session'
+    finally:
+        operator.client.close()
+
+
+@pytest.mark.parametrize('interruption', ['world_changed', 'stop', 'late_receipt', 'provider_error'])
+def test_recovery_respects_world_stop_receipts_and_provider_failure(monkeypatch, tmp_path, interruption):
+    monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
+    operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
+        hermes_python='unused', profiles_root=str(tmp_path), days=1))
+    queued, calls = [], []
+    monkeypatch.setattr(operator, 'receipts', lambda *args: queued)
+    monkeypatch.setattr(operator, 'check_world', lambda: {'tick': 64})
+    def attempt(*args, **kwargs):
+        calls.append(1)
+        if interruption == 'stop':
+            (operator.root / 'STOP').touch()
+        if interruption == 'late_receipt':
+            queued.append({'status': 'queued'})
+        if interruption == 'provider_error':
+            raise RuntimeError('Provider unavailable')
+        raise MissingQueuedAction('No receipt')
+    monkeypatch.setattr(operator, '_decide_once', attempt)
+    try:
+        if interruption in {'world_changed', 'provider_error'}:
+            with pytest.raises(RuntimeError):
+                operator.decide({'name': 'Maya Chen'}, 64)
+        else:
+            operator.decide({'name': 'Maya Chen'}, 64)
+        assert len(calls) == 1
     finally:
         operator.client.close()
 
