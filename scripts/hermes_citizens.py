@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import sqlite3
 import subprocess
+import sys
 import time
 
 import httpx
@@ -108,7 +109,7 @@ class CohortOperator:
                                       body={}, token=registration["bootstrap_token"])
                 write_json(credential_path, credential)
             config = {
-                "model": {"provider": "deepseek", "default": "deepseek-flash", "max_tokens": 2000},
+                "model": {"provider": "openai-codex", "default": "gpt-5.6-luna", "max_tokens": 2000},
                 "agent": {"max_turns": 12, "reasoning_effort": "low", "api_max_retries": 1},
                 "toolsets": ["agent_economy"],
                 "mcp_servers": {"agent_economy": {"url": self.args.url + "/mcp",
@@ -180,24 +181,39 @@ class CohortOperator:
             "schemas; never invent parameters. If already queued, do not duplicate it. Do not publish posts or send "
             "messages, including say_public or Commons writes. Do not advance the world. End with your receipt ID "
             "and a short plan to carry into the next day. The operator executes the day after all citizens finish.", encoding="utf-8")
+        model = yaml.safe_load((home / "config.yaml").read_text(encoding="utf-8"))["model"]
         command = [str(self.hermes), "-m", "hermes_cli.main", "--profile", citizen["profile"],
-                   "chat", "--oneshot", "--provider", "deepseek", "--model", "deepseek-flash",
+                   "chat", "--oneshot", "--provider", model["provider"], "--model", model["default"],
                    "--toolsets", "agent_economy", "--ignore-rules", "--max-turns", "12",
                    "--run-budget", "180", "--query-file", str(prompt)]
         session = output / "session.json"
         if session.exists():
             command += ["--resume", read_json(session)["session_id"], "--no-restore-cwd"]
         env = os.environ.copy()
-        key = dotenv_values(ROOT / ".env").get("DEEPSEEK_API_KEY") or env.get("DEEPSEEK_API_KEY")
-        if not key:
-            raise RuntimeError("DEEPSEEK_API_KEY is unavailable; no substitute agent will act")
-        env.update(DEEPSEEK_API_KEY=key, PYTHONIOENCODING="utf-8")
-        with (output / f"tick-{tick}.log").open("w", encoding="utf-8") as log:
+        # Resolve OAuth through Hermes' profile/global auth store. Never clone
+        # rotating ChatGPT tokens or require an unrelated provider's API key.
+        if model["provider"] == "deepseek":
+            key = (dotenv_values(home / ".env").get("DEEPSEEK_API_KEY")
+                   or dotenv_values(ROOT / ".env").get("DEEPSEEK_API_KEY") or env.get("DEEPSEEK_API_KEY"))
+            if not key:
+                raise RuntimeError("DEEPSEEK_API_KEY is unavailable; no substitute agent will act")
+            env["DEEPSEEK_API_KEY"] = key
+        env["PYTHONIOENCODING"] = "utf-8"
+        log_path = output / f"tick-{tick}.log"
+        with log_path.open("w", encoding="utf-8") as log:
             result = subprocess.run(command, cwd=home, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=240)
+        # Desktop and connection checks can create newer conversations while
+        # this citizen resumes an older one. Persist the session from THIS CLI
+        # invocation, never the latest row in the shared profile database.
+        transcript = re.sub(r"\x1b\[[0-9;]*m", "", log_path.read_text(encoding="utf-8", errors="replace"))
+        session_ids = re.findall(r"Session:\s+([a-zA-Z0-9_-]+)", transcript)
+        session_id = session_ids[-1] if session_ids else (read_json(session)["session_id"] if session.exists() else None)
         with sqlite3.connect(f"file:{(home / 'state.db').as_posix()}?mode=ro", uri=True) as db:
-            row = db.execute("SELECT id FROM sessions ORDER BY started_at DESC LIMIT 1").fetchone()
+            row = db.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row:
                 write_json(session, {"session_id": row[0], "last_attempt_tick": tick})
+            elif result.returncode == 0:
+                raise RuntimeError(f"{citizen['name']} did not identify its saved session; no unrelated session will be substituted")
         if result.returncode or not any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
             raise RuntimeError(f"{citizen['name']} did not queue an action; inspect {output / f'tick-{tick}.log'}")
         print(f"{citizen['name']}: queued tick {tick}", flush=True)
@@ -254,11 +270,16 @@ def main():
     parser.add_argument("--profiles-root", default=str(Path(os.environ.get("LOCALAPPDATA", "")) / "hermes/profiles"))
     parser.add_argument("--setup", action="store_true")
     parser.add_argument("--days", type=int, default=3)
+    parser.add_argument("--supervise", action="store_true", help="Record child exits and progress independently")
     args = parser.parse_args()
-    if not re.fullmatch(r"[a-zA-Z0-9_-]+", args.run_id) or not 1 <= args.days <= 30:
-        parser.error("Use a safe run ID and 1-30 days per bounded session")
+    if not re.fullmatch(r"[a-zA-Z0-9_-]+", args.run_id) or not 1 <= args.days <= 100:
+        parser.error("Use a safe run ID and 1-100 days per bounded session")
     if args.url not in {"http://127.0.0.1:8000", "http://localhost:8000"}:
         parser.error("This operator supports the local sandbox only")
+    if args.supervise:
+        from hermes_supervision import supervise
+        return supervise(ROOT, args.run_id, [sys.executable, str(Path(__file__).resolve()),
+            *[arg for arg in sys.argv[1:] if arg != "--supervise"]], args.days)
     operator = CohortOperator(args)
     try:
         operator.setup() if args.setup else operator.run()
@@ -270,4 +291,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

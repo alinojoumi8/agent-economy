@@ -1,8 +1,72 @@
 from argparse import Namespace
+import json
+from pathlib import Path
+import sqlite3
 
 import pytest
 
 from scripts.hermes_citizens import CohortOperator, COHORT, write_json
+
+
+def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path):
+    monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
+    monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
+    operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
+        hermes_python='unused', profiles_root=str(tmp_path), days=1))
+    home = tmp_path / 'maya'
+    home.mkdir()
+    write_json(home / 'agent-economy.json', {'access_token': 'test-only'})
+    (home / 'config.yaml').write_text('model:\n  provider: openai-codex\n  default: gpt-5.6-luna\n')
+    with sqlite3.connect(home / 'state.db') as db:
+        db.execute('CREATE TABLE sessions(id TEXT, started_at INTEGER)')
+        db.execute("INSERT INTO sessions VALUES ('saved-session',1)")
+        db.execute("INSERT INTO sessions VALUES ('unrelated-diagnostic',2)")
+    citizen = {'name': 'Maya Chen', 'profile': 'maya', 'home': str(home), 'goal': 'Work'}
+    queued = []
+    monkeypatch.setattr(operator, 'receipts', lambda *args: queued)
+    monkeypatch.setattr(operator, 'api', lambda *args, **kwargs: {'actor': {'id': 1}})
+    def run(command, **kwargs):
+        assert command[command.index('--provider')+1] == 'openai-codex'
+        assert command[command.index('--model')+1] == 'gpt-5.6-luna'
+        assert 'DEEPSEEK_API_KEY' not in kwargs['env']
+        queued.append({'status': 'queued'})
+        kwargs['stdout'].write('Session: saved-session\n')
+        return Namespace(returncode=0)
+    monkeypatch.setattr('scripts.hermes_citizens.subprocess.run', run)
+    try:
+        operator.decide(citizen, 64)
+        assert json.loads((operator.root / 'maya/session.json').read_text())['session_id'] == 'saved-session'
+    finally:
+        operator.client.close()
+
+
+def test_hundred_day_session_pauses_at_target(monkeypatch, tmp_path):
+    monkeypatch.setattr("scripts.hermes_citizens.ROOT", tmp_path)
+    operator = CohortOperator(Namespace(run_id="one", url="http://127.0.0.1:8000",
+        hermes_python="unused", profiles_root=str(tmp_path), days=100))
+    citizens = [{"name": name, "home": str(tmp_path / slug)} for slug, name, _, _ in COHORT]
+    for citizen in citizens:
+        write_json(Path(citizen["home"]) / "agent-economy.json", {"access_token": "test-only"})
+    write_json(operator.manifest_path, {"citizens": citizens})
+    state = {"run_id": "one", "tick": 41, "status": "paused"}
+    decisions = []
+    def api(path, **kwargs):
+        if path == "/api/run/step":
+            state["tick"] += 1
+        if path == "/api/v2/agent/me":
+            return {"status": "active"}
+        return dict(state)
+    monkeypatch.setattr(operator, "api", api)
+    monkeypatch.setattr(operator, "decide", lambda citizen, tick: decisions.append((citizen["name"], tick)))
+    monkeypatch.setattr(operator, "receipts", lambda *args: [{"status": "executed"}])
+    try:
+        operator.run()
+        assert state["tick"] == 141
+        assert len(decisions) == 1000
+        assert len(list(operator.root.glob("day-*.json"))) == 100
+        assert json.loads((operator.root / "status.json").read_text()) == {"state": "paused", "tick": 141}
+    finally:
+        operator.client.close()
 
 
 def test_operator_rejects_wrong_world_or_partial_tick(monkeypatch, tmp_path):

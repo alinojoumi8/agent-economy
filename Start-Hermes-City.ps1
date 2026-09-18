@@ -1,6 +1,6 @@
 param(
     [string]$RunId,
-    [ValidateRange(1,30)][int]$Days = 3,
+    [ValidateRange(1,100)][int]$Days = 3,
     [switch]$ViewOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -42,8 +42,10 @@ if (-not $ViewOnly) {
         }
     }
     if (Test-Path -LiteralPath "$cohort/STOP") { Remove-Item -LiteralPath "$cohort/STOP" }
-    $operator = Start-Process -FilePath $python -ArgumentList @('scripts/hermes_citizens.py','--run-id',$RunId,'--days',$Days) -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput "$cohort/operator.out.log" -RedirectStandardError "$cohort/operator.err.log" -PassThru
-    @{pid=$operator.Id; run_id=$RunId} | ConvertTo-Json | Set-Content -LiteralPath "$cohort/operator-process.json"
+    $operator = Start-Process -FilePath $python -ArgumentList @('scripts/hermes_citizens.py','--run-id',$RunId,'--days',$Days,'--supervise') -WorkingDirectory $PSScriptRoot -WindowStyle Hidden -RedirectStandardOutput "$cohort/supervisor.out.log" -RedirectStandardError "$cohort/supervisor.err.log" -PassThru
+    # The Python watcher records its actual PID (venv launchers can have a
+    # different PID). Do not race with and overwrite that authoritative record.
+    @{pid=$operator.Id; run_id=$RunId} | ConvertTo-Json | Set-Content -LiteralPath "$cohort/operator-launcher.json"
     Write-Output "Resumed $RunId at day $($state.tick). Hermes will work for up to $Days more days."
 } else { Write-Output "Opened saved world $RunId at day $($state.tick)." }
 Write-Output "$base/runs/$RunId/people"
