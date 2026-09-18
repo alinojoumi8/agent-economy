@@ -21,6 +21,22 @@ another attempt; provider/process failures remain visible for investigation.
 No action or observation hash is fabricated by the operator. Attempt logs have
 unique names and `decision-retries.jsonl` records bounded recovery attempts.
 
+A 240-second Hermes timeout also permits at most two corrective wakes. The
+operator tracks the exact process and its descendants, including Windows venv
+child interpreters, and stops and reaps them before checking receipts or
+retrying. Cleanup failure stops recovery. A queued action remains authoritative
+even if the client times out afterward. The saved session is retained when no
+CLI footer is written; a missing identifiable session blocks retry rather than
+starting a replacement conversation. `decision-timeouts.jsonl` records each
+timeout and completed cleanup without credentials or model reasoning.
+
+At saved day 109, Lucas's call exceeded 240 seconds after reading receipts and
+waiting for a turn. The watcher recorded exit code 1; nine other day-110 actions
+remained queued. Available logs do not establish why the call stalled. Regression
+tests cover bounded timeout retries, late queued receipts, session retention,
+STOP/world-change guards, and real parent/child cleanup while an unrelated
+process remains running.
+
 An expired window is not renewed by normal polling. Before a local cohort wake,
 the operator calls authenticated `POST /api/v2/agent/turn/renew` for its next
 tick. This endpoint is unavailable in hosted mode and supports only a paused

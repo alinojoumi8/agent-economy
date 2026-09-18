@@ -17,6 +17,7 @@ import sys
 import time
 
 import httpx
+import psutil
 import yaml
 from dotenv import dotenv_values
 
@@ -48,6 +49,55 @@ def read_json(path):
 
 class MissingQueuedAction(RuntimeError):
     """A completed model turn has no accepted submission and can be corrected."""
+
+
+class HermesCallTimeout(RuntimeError):
+    """The bounded call timed out and its tracked process tree was reaped."""
+
+
+def run_hermes_process(command, *, timeout, **kwargs):
+    """Track Windows venv children so a timeout cannot leave a second citizen acting."""
+    process = psutil.Popen(command, **kwargs)
+    tracked = {process.pid: process}
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            for parent in list(tracked.values()):
+                try:
+                    for child in parent.children(recursive=True):
+                        tracked.setdefault(child.pid, child)
+                except psutil.NoSuchProcess:
+                    pass
+            returncode = process.poll()
+            if returncode is not None:
+                return subprocess.CompletedProcess(command, returncode)
+            if time.monotonic() >= deadline:
+                raise HermesCallTimeout(f"Hermes call exceeded {timeout} seconds")
+            time.sleep(0.1)
+    finally:
+        # Suspend parents before discovery/termination to prevent new descendants
+        # during cleanup. Process objects guard against PID reuse; never scan or
+        # terminate other profiles or Desktop processes by command-line pattern.
+        pending = list(tracked.values())
+        while pending:
+            parent = pending.pop()
+            try:
+                parent.suspend()
+                for child in parent.children(recursive=True):
+                    if child.pid not in tracked:
+                        tracked[child.pid] = child
+                        pending.append(child)
+            except psutil.NoSuchProcess:
+                pass
+        for child in reversed(list(tracked.values())):
+            try:
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        _, alive = psutil.wait_procs(list(tracked.values()), timeout=10)
+        if alive:
+            raise RuntimeError("Hermes process cleanup failed; refusing another dispatch")
+        process.wait()
 
 
 class CohortOperator:
@@ -171,13 +221,14 @@ class CohortOperator:
             try:
                 self._decide_once(citizen, tick, attempt=attempt)
                 return
-            except MissingQueuedAction:
+            except (MissingQueuedAction, HermesCallTimeout) as error:
+                reason = "call_timeout" if isinstance(error, HermesCallTimeout) else "no_queued_receipt"
                 with (self.root / "decision-retries.jsonl").open("a", encoding="utf-8") as journal:
                     journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
-                        "tick": tick, "attempt": attempt, "reason": "no_queued_receipt"}) + "\n")
+                        "tick": tick, "attempt": attempt, "reason": reason}) + "\n")
                 if attempt == 3:
                     raise
-                print(f"{citizen['name']}: refreshing turn after missing receipt (attempt {attempt}/3)", flush=True)
+                print(f"{citizen['name']}: refreshing turn after {reason} (attempt {attempt}/3)", flush=True)
 
     def _decide_once(self, citizen, tick, *, attempt=1):
         if any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
@@ -234,8 +285,17 @@ class CohortOperator:
             env["DEEPSEEK_API_KEY"] = key
         env["PYTHONIOENCODING"] = "utf-8"
         log_path = output / f"{attempt_id}.log"
+        timed_out = False
         with log_path.open("w", encoding="utf-8") as log:
-            result = subprocess.run(command, cwd=home, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=240)
+            try:
+                result = run_hermes_process(command, cwd=home, env=env, stdout=log, stderr=subprocess.STDOUT, timeout=240)
+            except HermesCallTimeout:
+                timed_out = True
+                result = subprocess.CompletedProcess(command, -1)
+                with (self.root / "decision-timeouts.jsonl").open("a", encoding="utf-8") as journal:
+                    journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
+                        "tick": tick, "attempt": attempt, "timeout_seconds": 240,
+                        "process_cleanup": "complete"}) + "\n")
         # Desktop and connection checks can create newer conversations while
         # this citizen resumes an older one. Persist the session from THIS CLI
         # invocation, never the latest row in the shared profile database.
@@ -246,10 +306,10 @@ class CohortOperator:
             row = db.execute("SELECT id FROM sessions WHERE id=?", (session_id,)).fetchone()
             if row:
                 write_json(session, {"session_id": row[0], "last_attempt_tick": tick})
-            elif result.returncode == 0:
+            elif result.returncode == 0 or timed_out:
                 raise RuntimeError(f"{citizen['name']} did not identify its saved session; no unrelated session will be substituted")
         if not any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
-            error = RuntimeError if result.returncode else MissingQueuedAction
+            error = HermesCallTimeout if timed_out else (RuntimeError if result.returncode else MissingQueuedAction)
             raise error(f"{citizen['name']} did not queue an action; inspect {log_path}")
         print(f"{citizen['name']}: queued tick {tick}", flush=True)
 

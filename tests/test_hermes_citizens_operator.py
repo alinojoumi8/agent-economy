@@ -2,14 +2,20 @@ from argparse import Namespace
 import json
 from pathlib import Path
 import sqlite3
+import subprocess
+import sys
+
+import psutil
 
 import pytest
 
-from scripts.hermes_citizens import CohortOperator, COHORT, MissingQueuedAction, write_json
+from scripts.hermes_citizens import (CohortOperator, COHORT, MissingQueuedAction,
+    HermesCallTimeout, run_hermes_process, write_json)
 
 
 @pytest.mark.parametrize('missing_attempts', [0, 1, 3])
-def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, missing_attempts):
+@pytest.mark.parametrize('timeout', [False, True])
+def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, missing_attempts, timeout):
     monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
     monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
     operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
@@ -23,6 +29,8 @@ def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, mi
         db.execute("INSERT INTO sessions VALUES ('saved-session',1)")
         db.execute("INSERT INTO sessions VALUES ('unrelated-diagnostic',2)")
     citizen = {'name': 'Maya Chen', 'profile': 'maya', 'home': str(home), 'goal': 'Work'}
+    if timeout:
+        write_json(operator.root / 'maya/session.json', {'session_id': 'saved-session'})
     queued = []
     monkeypatch.setattr(operator, 'receipts', lambda *args: queued)
     monkeypatch.setattr(operator, 'api', lambda *args, **kwargs: {'actor': {'id': 1}, 'run_id': 'one', 'tick': 63})
@@ -38,24 +46,31 @@ def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, mi
             assert command[command.index('--resume')+1] == 'saved-session'
         if len(attempts) > missing_attempts:
             queued.append({'status': 'queued'})
+        if timeout:
+            raise HermesCallTimeout('Call exceeded 240 seconds')
         kwargs['stdout'].write('Session: saved-session\n')
         return Namespace(returncode=0)
-    monkeypatch.setattr('scripts.hermes_citizens.subprocess.run', run)
+    monkeypatch.setattr('scripts.hermes_citizens.run_hermes_process', run)
     try:
         if missing_attempts == 3:
-            with pytest.raises(MissingQueuedAction):
+            with pytest.raises(HermesCallTimeout if timeout else MissingQueuedAction):
                 operator.decide(citizen, 64)
         else:
             operator.decide(citizen, 64)
         assert len(attempts) == min(missing_attempts+1, 3)
         assert len(list((operator.root / 'maya').glob('tick-64-attempt-*.log'))) == len(attempts)
         assert json.loads((operator.root / 'maya/session.json').read_text())['session_id'] == 'saved-session'
+        if timeout:
+            events = [json.loads(line) for line in (operator.root / 'decision-timeouts.jsonl').read_text().splitlines()]
+            assert len(events) == len(attempts)
+            assert all(event['process_cleanup'] == 'complete' for event in events)
     finally:
         operator.client.close()
 
 
 @pytest.mark.parametrize('interruption', ['world_changed', 'stop', 'late_receipt', 'provider_error'])
-def test_recovery_respects_world_stop_receipts_and_provider_failure(monkeypatch, tmp_path, interruption):
+@pytest.mark.parametrize('timeout', [False, True])
+def test_recovery_respects_world_stop_receipts_and_provider_failure(monkeypatch, tmp_path, interruption, timeout):
     monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
     operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
         hermes_python='unused', profiles_root=str(tmp_path), days=1))
@@ -70,7 +85,7 @@ def test_recovery_respects_world_stop_receipts_and_provider_failure(monkeypatch,
             queued.append({'status': 'queued'})
         if interruption == 'provider_error':
             raise RuntimeError('Provider unavailable')
-        raise MissingQueuedAction('No receipt')
+        raise (HermesCallTimeout if timeout else MissingQueuedAction)('No receipt')
     monkeypatch.setattr(operator, '_decide_once', attempt)
     try:
         if interruption in {'world_changed', 'provider_error'}:
@@ -81,6 +96,45 @@ def test_recovery_respects_world_stop_receipts_and_provider_failure(monkeypatch,
         assert len(calls) == 1
     finally:
         operator.client.close()
+
+
+@pytest.mark.parametrize('timeout', [False, True])
+def test_hermes_process_reaps_child_before_return_or_timeout(tmp_path, timeout):
+    child_pid = tmp_path / 'child.pid'
+    parent_pid = tmp_path / 'parent.pid'
+    child = "import time; time.sleep(60)"
+    parent = (
+        'import subprocess,sys,time,pathlib,os; '
+        f'pathlib.Path({str(parent_pid)!r}).write_text(str(os.getpid())); '
+        f'p=subprocess.Popen([sys.executable,"-c",{child!r}]); '
+        f'pathlib.Path({str(child_pid)!r}).write_text(str(p.pid)); '
+        f'time.sleep({60 if timeout else 1})'
+    )
+    # An unrelated process must survive cleanup, even if it runs identical code.
+    unrelated = subprocess.Popen([sys.executable, '-c', child])
+    try:
+        if timeout:
+            with pytest.raises(HermesCallTimeout, match='exceeded'):
+                run_hermes_process([sys.executable, '-c', parent], timeout=3,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        else:
+            result = run_hermes_process([sys.executable, '-c', parent], timeout=10,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            assert result.returncode == 0
+        assert not psutil.pid_exists(int(parent_pid.read_text()))
+        assert not psutil.pid_exists(int(child_pid.read_text()))
+        assert unrelated.poll() is None
+    finally:
+        unrelated.kill()
+        unrelated.wait()
+
+
+def test_incomplete_process_cleanup_is_not_retryable(monkeypatch):
+    monkeypatch.setattr('scripts.hermes_citizens.psutil.wait_procs', lambda *args, **kwargs: ([], [object()]))
+    with pytest.raises(RuntimeError, match='cleanup failed') as error:
+        run_hermes_process([sys.executable, '-c', 'pass'], timeout=10,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    assert not isinstance(error.value, HermesCallTimeout)
 
 
 def test_hundred_day_session_pauses_at_target(monkeypatch, tmp_path):
