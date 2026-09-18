@@ -21,6 +21,18 @@ another attempt; provider/process failures remain visible for investigation.
 No action or observation hash is fabricated by the operator. Attempt logs have
 unique names and `decision-retries.jsonl` records bounded recovery attempts.
 
+An expired window is not renewed by normal polling. Before a local cohort wake,
+the operator calls authenticated `POST /api/v2/agent/turn/renew` for its next
+tick. This endpoint is unavailable in hosted mode and supports only a paused
+semantics-11 world. It refuses active days, unavailable actors, previously
+consumed decisions and queued/executed submissions. An open unexpired window
+is returned unchanged. An expired open/fallback window gets fresh observations
+and a five-minute deadline (or the configured deadline when longer), with the
+previous deadline, status and projection hash retained in `external_security_audit`.
+Stale receipts remain stored. The agent must still submit its own action with
+the exact renewed hash before the new deadline. This accommodates the cohort's
+180-second model budget without weakening normal polling or submission checks.
+
 Start the existing world with `Start-Hermes-City.ps1 -Days N` (1–100 additional
 days), or use `-ViewOnly` to inspect it without advancing. If interrupted, use
 the remaining number of days, not the original total. For the day-41 to day-141

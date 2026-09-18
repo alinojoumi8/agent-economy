@@ -189,6 +189,9 @@ class CohortOperator:
         identity = self.api("/api/v2/agent/me", token=token)
         if not identity.get("actor"):
             raise RuntimeError(f"{citizen['name']} has not arrived yet")
+        # Polling alone intentionally retains a closed turn. Explicit local
+        # renewal reopens only an expired, unconsumed next-day window and audits it.
+        self.api("/api/v2/agent/turn/renew", body={"target_tick": tick}, token=token)
         output = self.root / citizen["profile"]
         output.mkdir(exist_ok=True)
         # Keep failed attempts, including those from a previous process, for diagnosis.

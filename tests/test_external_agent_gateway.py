@@ -936,6 +936,77 @@ def test_dead_actor_and_expired_decision_window_close_pending_receipts(world10: 
     assert late["validator_results"][0]["validator"] == "deadline"
 
 
+def test_local_expired_turn_renewal_is_audited_and_preserves_receipts(tmp_path):
+    world = _world(tmp_path, engine_semantics_version=11)
+    try:
+        created = _connection(world)
+        service = world.runtime.external
+        auth = service.authenticate(created['credential']['token'], rate_limit=False)
+        turn = service.turn(auth)
+        world.store.execute('UPDATE external_agent_turns SET deadline_at=? WHERE id=?',
+                            ('2000-01-01T00:00:00+00:00', turn['turn_id']))
+        old = service.submit_action(auth, {'target_tick': turn['target_tick'],
+            'action': {'type': 'do_nothing'}, 'observed_projection_hash': turn['projection_hash'],
+            'idempotency_key': 'expired-attempt'})
+        assert old['status'] == 'stale'
+        assert service.turn(auth)['turn_status'] == 'fallback'
+        ledger_count = world.store.scalar('SELECT COUNT(*) FROM ledger_entries')
+        renewed = service.renew_local_turn(auth, target_tick=turn['target_tick'])
+        assert renewed['turn_status'] == 'open'
+        assert datetime.fromisoformat(renewed['deadline']) > datetime.now(timezone.utc) + timedelta(seconds=290)
+        audit = world.store.query_one("SELECT details_json FROM external_security_audit WHERE event_kind='turn_renewed'")
+        assert json.loads(audit['details_json'])['previous_status'] == 'fallback'
+        assert world.store.scalar('SELECT COUNT(*) FROM ledger_entries') == ledger_count
+        assert service.receipt(auth, old['submission_id'])['status'] == 'stale'
+        assert service.renew_local_turn(auth, target_tick=turn['target_tick']) == renewed
+        queued = service.submit_action(auth, {'target_tick': renewed['target_tick'],
+            'action': {'type': 'do_nothing'}, 'observed_projection_hash': renewed['projection_hash'],
+            'idempotency_key': 'renewed-attempt'})
+        assert queued['status'] == 'queued'
+        with pytest.raises(ExternalAgentError, match='already been'):
+            service.renew_local_turn(auth, target_tick=turn['target_tick'])
+        assert world.economy.ledger.reconcile()
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize('blocked', ['scope', 'target', 'active', 'audit_failure'])
+def test_local_turn_renewal_refuses_invalid_boundary_and_rolls_back(tmp_path, monkeypatch, blocked):
+    world = _world(tmp_path, engine_semantics_version=11)
+    try:
+        created = _connection(world)
+        service = world.runtime.external
+        auth = service.authenticate(created['credential']['token'], rate_limit=False)
+        turn = service.turn(auth)
+        world.store.execute('UPDATE external_agent_turns SET deadline_at=? WHERE id=?',
+                            ('2000-01-01T00:00:00+00:00', turn['turn_id']))
+        if blocked == 'scope': auth = {**auth, 'scopes': ['world.read']}
+        if blocked == 'active': world.store.set_meta(active_tick=1)
+        if blocked == 'audit_failure':
+            def fail(*args): raise RuntimeError('audit unavailable')
+            monkeypatch.setattr(service, '_audit', fail)
+        with pytest.raises((ExternalAgentError, RuntimeError)):
+            service.renew_local_turn(auth, target_tick=turn['target_tick'] + (1 if blocked == 'target' else 0))
+        assert world.store.scalar('SELECT deadline_at FROM external_agent_turns WHERE id=?',
+                                  (turn['turn_id'],)) == '2000-01-01T00:00:00+00:00'
+    finally:
+        world.close()
+
+
+def test_local_renewal_route_requires_credentials_and_is_unavailable_hosted(tmp_path):
+    world = _world(tmp_path, engine_semantics_version=11)
+    try:
+        created = _connection(world)
+        headers = {'Authorization': 'Bearer ' + created['credential']['token']}
+        local = TestClient(create_app(world))
+        assert local.post('/api/v2/agent/turn/renew', json={'target_tick': 1}).status_code == 401
+        assert local.post('/api/v2/agent/turn/renew', headers=headers, json={'target_tick': 1}).status_code == 200
+        hosted = TestClient(create_app(world, hosted_safe=True))
+        assert hosted.post('/api/v2/agent/turn/renew', headers=headers, json={'target_tick': 1}).status_code == 404
+    finally:
+        world.close()
+
+
 def test_event_cursor_excludes_private_communication_events(world10: World):
     created = _connection(world10)
     service = world10.runtime.external

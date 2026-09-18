@@ -72,6 +72,10 @@ class ActionSubmissionBody(_StrictBody):
     rationale_summary: str = Field(default="", max_length=500)
 
 
+class LocalTurnRenewalBody(_StrictBody):
+    target_tick: int = Field(ge=1)
+
+
 class CommonsActionBody(_StrictBody):
     action: dict[str, Any]
 
@@ -605,6 +609,12 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         identity = auth(request)
         return await _wait_turn(service, identity, after_tick=after_tick,
                                 wait_seconds=wait_seconds)
+
+    @app.post("/api/v2/agent/turn/renew")
+    async def renew_local_agent_turn(request: Request, body: LocalTurnRenewalBody):
+        if hosted_safe:
+            raise ExternalAgentError(404, "local turn renewal is unavailable", "not_found")
+        return service.renew_local_turn(auth(request, SCOPE_WORLD_ACT), target_tick=body.target_tick)
 
     @app.post("/api/v2/agent/actions", status_code=202)
     async def submit_agent_action(request: Request, body: ActionSubmissionBody):
