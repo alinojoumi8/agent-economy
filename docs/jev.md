@@ -279,8 +279,18 @@ agreement with those labels, separately for each split. They remain null without
 labels. Choose a threshold on calibration data, then prepare a new held-out
 evaluation without tuning on its results. Interrupted studies retain their
 original reservations and partial files and cannot resume or reset their budget.
+Failed frozen evaluations retain persisted call costs when available. If a
+dispatched attempt has no complete accounting, the evaluation and summary cost
+are null; `known_call_cost_usd` still reports the recorded subtotal. Conservative
+budget reservations remain encumbered and are not presented as exact charges.
 The wall budget bounds awaited calls; it is not a hard operating-system kill of
 synchronous engine work.
+
+The local Hermes cohort operator's `--days N` advances at most N world ticks,
+including first-time admission and recovery of an already-started day. Linux
+dispatches use a separate child subreaper for each call so orphaned descendants
+are terminated and reaped before another decision is attempted. Windows keeps
+its process-handle and ancestry checks. Neither path targets unrelated workers.
 
 ## Whole-app acceptance
 
