@@ -1,6 +1,8 @@
 """Typed evaluations reuse accounting while requiring exact recorded evidence."""
 import asyncio
 import json
+from pathlib import Path
+import sqlite3
 
 import httpx
 import pytest
@@ -23,6 +25,31 @@ def configuration():
 
 def request(**updates):
     return LLMRequest(**({"role": "citizen", "purpose": "decision", "tick": 1} | updates))
+
+
+def test_openrouter_rejects_other_models_but_keeps_recorded_replay_and_direct_providers(store, monkeypatch):
+    from llm.readiness import openrouter_route_error
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "private-fixture-value")
+    config = {"llm": {"providers": {"old_router": {
+        "kind": "openai_compat", "base_url": "https://openrouter.ai/api/v1",
+        "api_key_env": "OPENROUTER_API_KEY"}},
+        "default_route": {"provider": "old_router", "model": "openai/gpt-4.1-mini"}}}
+    with pytest.raises(ProviderConfigurationError, match="restricted to Jev"):
+        Gateway(store, config)
+    config["replay"] = True
+    config["replay_source_path"] = store.path
+    gateway = Gateway(store, config)
+    try:
+        with pytest.raises(ProviderConfigurationError, match="restricted to Jev"):
+            asyncio.run(gateway._dispatch_completion("old_router", gateway.adapters["old_router"],
+                        "openai/gpt-4.1-mini", []))
+    finally:
+        gateway.close()
+    assert openrouter_route_error({"kind": "openai_compat", "base_url": "https://api.deepseek.com"},
+                                  "deepseek-flash") is None
+    assert openrouter_route_error({"kind": "openai_compat", "base_url": "https://api.minimax.io/v1"},
+                                  "MiniMax-M3") is None
 
 
 def test_readiness_protects_text_routes_and_historical_semantics(monkeypatch):
@@ -106,12 +133,6 @@ def test_prose_call_on_same_provider_does_not_set_typed_model_identity(store, mo
         response_json='{"text":"{\\"ok\\":true}"}', in_tokens=1, out_tokens=1, cost_usd=0, cached=0, latency_ms=0)
     transport(monkeypatch, lambda req: httpx.Response(200, json=response()))
     gateway = Gateway(store, configuration())
-    # An injected historical non-typed call is only a validator fixture; use
-    # a precreated allowance so admission does not mistake it for a lost ledger.
-    from llm.decision_budget import open_run_budget
-    store.conn.execute("UPDATE llm_calls SET provider='scripted' WHERE cache_key='prose-smoke'")
-    gateway._typed_completion_guard = open_run_budget(store, gateway.config, gateway.pricing)
-    store.conn.execute("UPDATE llm_calls SET provider='jev' WHERE cache_key='prose-smoke'")
     assert asyncio.run(gateway.evaluate(request(), evaluation())).ok
 
 
@@ -175,3 +196,46 @@ def test_preflight_uses_accounted_typed_smoke_not_chat(store, monkeypatch):
     assert len(calls) == 1
     assert "messages" not in calls[0]
     assert store.scalar("SELECT COUNT(*) FROM llm_calls WHERE purpose='preflight'") == 1
+
+
+@pytest.mark.parametrize("status", [200, 401])
+def test_cli_typed_preflight_keeps_durable_receipts_and_allowance(tmp_path, monkeypatch, status):
+    import run
+
+    monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    monkeypatch.setattr(run, "DATA_DIR", tmp_path / "runs")
+    calls = []
+
+    def handler(req):
+        calls.append(json.loads(req.content))
+        body = response()
+        body["answers"] = {"check": {"type": "choice", "choice": "pass"}}
+        return httpx.Response(status, json=body if status == 200 else {"error": "denied"})
+
+    transport(monkeypatch, handler)
+    report = asyncio.run(run.provider_preflight(configuration(), live=True))
+    assert report["live_ready"] is (status == 200), report
+    assert len(calls) == 1
+    evidence = Path(report["preflight_evidence_path"])
+    assert evidence.parent == tmp_path / "runs" / "preflight"
+    assert report["preflight_run_id"] == evidence.stem
+    with sqlite3.connect(evidence) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone()[0] == (status == 200)
+    with sqlite3.connect(evidence.with_suffix(".jev-budget.db")) as conn:
+        state, reserved = conn.execute("SELECT state,reserved_cost FROM reservations").fetchone()
+    assert state == ("settled" if status == 200 else "unknown")
+    assert reserved > 0
+    assert evidence.with_suffix(".jev-budget.json").is_file()
+
+
+def test_in_memory_store_requires_an_explicit_durable_typed_budget(monkeypatch):
+    from llm.decision_budget import open_run_budget
+
+    monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    store = Store(":memory:")
+    try:
+        store.init_run_meta("preflight", 1, configuration())
+        with pytest.raises(BudgetExceeded, match="file-backed store"):
+            open_run_budget(store, configuration(), {})
+    finally:
+        store.close()

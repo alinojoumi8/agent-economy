@@ -195,13 +195,26 @@ async def provider_preflight(config: dict, *, live: bool = False) -> dict:
     report = validate_llm_config(config, raise_on_error=False)
     if not report["ready"] or not live:
         return {**report, "live_checked": False}
-    store = Store(":memory:")
-    store.init_run_meta("preflight", int(config.get("seed", 42)), config)
-    gateway = Gateway(store, config)
+    evidence_path = None
+    run_id = "preflight"
+    if config.get("llm", {}).get("decision_policy"):
+        from llm.decision_budget import typed_targets
+        if typed_targets(config):
+            run_id = f"preflight-{new_run_id()}"
+            evidence_path = DATA_DIR / "preflight" / f"{run_id}.db"
+    store = Store(str(evidence_path) if evidence_path else ":memory:")
+    gateway = None
     try:
-        return await gateway.preflight(live=True)
+        store.init_run_meta(run_id, int(config.get("seed", 42)), config)
+        gateway = Gateway(store, config)
+        result = await gateway.preflight(live=True)
+        if evidence_path:
+            result.update(preflight_run_id=run_id,
+                          preflight_evidence_path=str(evidence_path.resolve()))
+        return result
     finally:
-        gateway.close()
+        if gateway is not None:
+            gateway.close()
         store.close()
 
 

@@ -3,7 +3,7 @@ from pathlib import Path
 import math
 
 from llm.completion_guard import BudgetExceeded
-from llm.decisions import decision_hash
+from llm.decisions import DECISIONS_CONTRACT, decision_hash
 from research.provider_budget import (
     GatewayBinding, GatewayTarget, ProviderBudget, ProviderBudgetContract,
     TokenTariff, gateway_config_identity,
@@ -36,6 +36,9 @@ def open_run_budget(store, config, pricing):
     targets = typed_targets(config)
     if not targets:
         return None
+    if str(store.path) == ":memory:":
+        raise BudgetExceeded(
+            "typed calls require a file-backed store or an explicit durable budget guard")
     cap = config.get("budget", {}).get("cap_usd", 5)
     if type(cap) not in {int, float} or not math.isfinite(cap) or cap <= 0:
         raise BudgetExceeded("typed calls require a positive finite run budget")
@@ -55,7 +58,9 @@ def open_run_budget(store, config, pricing):
         if not witness.is_file() or witness.read_text(encoding="utf-8") != encoded:
             raise BudgetExceeded("typed budget binding is missing or changed")
         return ProviderBudget(path, contract, scope="run", binding_key="typed")
-    if witness.exists() or store.scalar("SELECT COUNT(*) FROM llm_calls WHERE provider NOT IN ('scripted','mock')"):
+    if witness.exists() or store.scalar(
+            "SELECT COUNT(*) FROM llm_calls WHERE provider NOT IN ('scripted','mock') "
+            "AND json_extract(request_json,'$.contract')=?", (DECISIONS_CONTRACT,)):
         raise BudgetExceeded("original typed budget ledger is missing; refusing a new allowance")
     with witness.open("x", encoding="utf-8") as stream:
         stream.write(encoded)

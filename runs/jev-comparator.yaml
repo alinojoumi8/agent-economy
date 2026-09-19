@@ -1,19 +1,2 @@
-# Equal menu, state, background policy and action executor; different selector.
+# Provider-free comparison: the same menu and engine, using the local baseline.
 extends: jev-offline.yaml
-budget:
-  cap_usd: 25.0
-  oracle_reserve_usd: 0.0
-llm:
-  providers:
-    openrouter_chat:
-      kind: openai_compat
-      base_url: https://openrouter.ai/api/v1
-      api_key_env: OPENROUTER_API_KEY
-      timeout_s: 20
-      concurrency: 3
-      request_defaults:
-        provider: {only: [OpenAI], allow_fallbacks: false}
-  pricing:
-    openai/gpt-4.1-mini: {in: 0.40, out: 1.60, cache: 0.10}
-  decision_policy:
-    primary: {provider: openrouter_chat, model: openai/gpt-4.1-mini, timeout_s: 20}

@@ -25,9 +25,11 @@ Live evidence is a separate acceptance surface: approximately 2,000 held-out
 observations and ten paired seeds over thirty ticks were proposed in the review.
 Implement that evaluation path and retain all exclusions; never claim the
 model's quality, speed, or cost targets have passed based on fake responses.
-The initial proposed limits are $5 for Jev and $25 for a declared comparator.
-The key is currently absent from the local environment and ignored `.env`;
-controlled HTTP fixtures must exercise the full integration before live testing.
+The initial review proposed separate Jev and comparator allowances. The owner
+subsequently restricted OpenRouter to Jev only. Current maintained comparator
+and hybrid profiles make no other OpenRouter model calls. The key was absent
+during initial implementation; the owner then added it privately and the live
+tests below succeeded. A larger adoption study remains a separate decision.
 
 ## Frozen boundaries
 
@@ -46,7 +48,8 @@ controlled HTTP fixtures must exercise the full integration before live testing.
 ## Evidence log
 
 Implemented on `JEV`. Setup, commands, contracts and limitations are in
-[the Jev operator guide](../jev.md). No live calls or claimed benchmark results.
+[the Jev operator guide](../jev.md). The first validation batch below used no
+live calls. Subsequent real-provider evidence is recorded separately.
 
 Validation on September 19, 2026:
 
@@ -81,6 +84,17 @@ resume/reset their allowance. The documented wall timeout is cooperative for
 synchronous engine work. These are explicit pilot limits, not hidden completion
 or quality claims.
 
-Live acceptance is pending private key setup, account/credit readiness, and the
-owner's whole-app test. Jev speed, cost, calibration and economic usefulness are
-unmeasured until the prospective real-provider study is run.
+## Subsequent live validation
+
+The owner's key passed native OpenRouter Decisions preflight. A Jev-only world
+completed three ticks with 18 successful native calls. The requested matched
+DeepSeek/MiniMax Hermes-profile comparison then completed three ticks per arm,
+using one seed and prospective semantics 16 while preserving the original
+semantics-11 profile. Both worlds reconciled and replayed exactly with all three
+provider keys removed and HTTP disabled.
+
+The mixed-provider Jev arm was cheaper and faster in this smoke test, but selected
+wait in 77 of 78 eligible menus. It is not approved as the default policy on that
+evidence. See [the full live validation and next-test plan](2026-09-19-jev-live-validation.md)
+for run IDs, costs, model behavior, legacy-provider contract failures, current
+test commands and the remaining adoption gates.

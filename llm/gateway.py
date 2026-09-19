@@ -23,7 +23,7 @@ from typing import Any, Callable, Optional
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, AdapterTimeoutError, build_adapters
 from .completion_guard import BudgetExceeded, CompletionGuard
-from .readiness import ProviderConfigurationError, validate_llm_config
+from .readiness import ProviderConfigurationError, openrouter_route_error, validate_llm_config
 from .decision_config import decision_policy
 from .decisions import DECISIONS_CONTRACT, canonical_json, decision_hash, response_error, validate_evaluation
 from observability import get_logger, log_event as operational_log, safe_fields
@@ -1159,6 +1159,9 @@ class Gateway:
     async def _dispatch_completion(self, provider: str, adapter: Adapter, model: str,
                                    messages: list[dict], **kwargs: Any) -> AdapterResult:
         """Guard every physical completion, including preflight and repairs."""
+        route_error = openrouter_route_error(self.provider_configs.get(provider, {}), model)
+        if route_error:
+            raise ProviderConfigurationError([route_error])
         guard = self._completion_guard
         if (guard is None and self.decision_policy and not self.replay
                 and (kwargs.get("context") or {}).get("_evaluation") is not None

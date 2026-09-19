@@ -4,6 +4,7 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 from .cache_config import normalize_prompt_cache_mode
 from .decision_config import decision_policy
@@ -29,6 +30,19 @@ class ProviderConfigurationError(RuntimeError):
     def __init__(self, errors: list[str]):
         self.errors = errors
         super().__init__("LLM configuration is not ready: " + "; ".join(errors))
+
+
+def openrouter_route_error(provider_config: dict, model: str) -> str | None:
+    """The owner's OpenRouter connection is reserved for the Jev pilot."""
+    kind = provider_config.get("kind")
+    urls = (provider_config.get("base_url", ""), provider_config.get("endpoint", ""))
+    hosts = {(urlsplit(str(url)).hostname or "").lower() for url in urls}
+    is_openrouter = (kind == "openrouter_decisions"
+                     or provider_config.get("api_key_env") == "OPENROUTER_API_KEY"
+                     or any(host == "openrouter.ai" or host.endswith(".openrouter.ai") for host in hosts))
+    if is_openrouter and (kind != "openrouter_decisions" or model != "typesafe/jev-1.13"):
+        return "OpenRouter is restricted to Jev 1.13 through the Decisions API; other model routes are disabled"
+    return None
 
 
 def validate_llm_config(
@@ -198,6 +212,12 @@ def validate_llm_config(
         key_required = kind in NETWORK_PROVIDER_KINDS and not auth_none
         key_value = str(env.get(key_env, "")).strip() if key_env else ""
         key_present = bool(key_value)
+
+        if not config.get("replay"):
+            for model in models:
+                route_error = openrouter_route_error(pcfg, model)
+                if route_error:
+                    errors.append(f"provider '{provider}': {route_error}")
 
         if kind not in KNOWN_PROVIDER_KINDS:
             errors.append(f"provider '{provider}' has unknown kind '{kind or '<empty>'}'")

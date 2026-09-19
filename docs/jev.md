@@ -53,22 +53,52 @@ lookup is not its readiness test. Missing keys fail before dispatch. 401/403 and
 402 responses pause visibly; they do not trigger another model. 429/529 and
 transient failures use bounded retries within the logical request deadline.
 
+Live typed preflights keep their receipts and budget evidence in the ignored
+`data/runs/preflight/` directory. The result prints the evidence path. This
+separate smoke allowance is capped by the selected profile and is not the later
+world's allowance; retain it when reconciling total test spend.
+
 ## Profiles and capability boundaries
 
 | Profile | Routine selector | Background | Run cap |
 |---|---|---|---|
 | `runs/jev-offline.yaml` | Deterministic equal-menu rule | Scripted | Inherited offline governor |
 | `runs/jev-live.yaml` | Jev 1.13 | Scripted | USD 5 |
-| `runs/jev-comparator.yaml` | GPT-4.1 mini, same typed menu | Scripted | USD 25 |
-| `runs/jev-hybrid.yaml` | Jev, then one declared comparator on abstention | Scripted | USD 25 shared |
+| `runs/jev-comparator.yaml` | Deterministic equal-menu rule | Scripted | Inherited offline governor |
+| `runs/jev-hybrid.yaml` | Jev; low confidence produces a local wait | Scripted | USD 5 |
+| `runs/jev-hermes-baseline.yaml` | Existing unrestricted DeepSeek/MiniMax policy | Existing DeepSeek/MiniMax M3 Hermes routes | USD 1 |
+| `runs/jev-hermes-live.yaml` | Jev for eligible bounded routine choices | Same DeepSeek/MiniMax M3 Hermes routes | USD 1 |
 
-The comparator uses the same OpenRouter key. Its OpenAI upstream is explicit and
-provider fallback is disabled. Tariffs checked September 19, 2026 are USD 0.042/M
-input and zero output for [Jev](https://openrouter.ai/typesafe/jev-1.13), and
-USD 0.40/M input, USD 1.60/M output for
-[GPT-4.1 mini](https://openrouter.ai/openai/gpt-4.1-mini). These are declarations,
-not measured invoices. Actual returned costs take precedence in call receipts;
+OpenRouter is reserved for Jev. Readiness and the physical-dispatch guard reject
+other OpenRouter models and chat routes, including routes in older live profiles.
+Recorded replay remains keyless and does not dispatch those routes. DeepSeek and
+MiniMax retain their existing direct endpoints. The comparator profile is now a
+provider-free baseline; the hybrid filename is retained for the Jev-plus-local-wait
+configuration, which has no second model route.
+
+The tariff checked September 19, 2026 is USD 0.042/M input and zero output for
+[Jev](https://openrouter.ai/typesafe/jev-1.13). This is a declaration, not a measured
+invoice. Actual returned costs take precedence in call receipts;
 missing cost uses the declared tariff and is labelled accordingly.
+
+For a small comparison against the existing app setup:
+
+```powershell
+.\.venv\Scripts\python.exe run.py --config runs/jev-hermes-baseline.yaml --ticks 3 --preflight-live --approve-live-inference
+.\.venv\Scripts\python.exe run.py --config runs/jev-hermes-live.yaml --ticks 3 --preflight-live --approve-live-inference
+```
+
+Both profiles inherit `hermes-local-live-deepseek.yaml`, retain its seed, population,
+gateway and background routes, and use prospective engine semantics 16. The
+original semantics-11 profile and existing worlds are not migrated. The Jev arm
+adds only the bounded decision policy and its provider/tariff. Hermes denotes the
+external-agent gateway/profile here; these commands do not launch a Hermes worker.
+They require the existing private DeepSeek and MiniMax keys as well as the Jev key.
+Each world has its own cap; preflight spend is additional and must be included in
+the final accounting. These are operational smoke comparisons, not the scripted
+background research protocol below. The unrestricted baseline and bounded Jev
+policy have different action spaces, so differences cannot be attributed solely
+to model quality.
 
 The compiler uses one actor's existing authorized observation. It bounds
 shopping quantities, stock, spending, currency and job eligibility, and emits
@@ -87,8 +117,8 @@ before comparing this experiment with existing production configurations.
 
 Jev confidence is **answer-distribution concentration**, not a probability of
 economic success. The hybrid's 0.70 threshold is provisional. Missing confidence
-with a positive threshold triggers the declared abstention action. A comparator
-that also chooses escalation produces a visible wait. Invalid schemas, unknown
+with a positive threshold produces a visible wait in the supplied profiles.
+Invalid schemas, unknown
 candidate IDs and unexpected model changes pause the run instead of being
 silently repaired into actions. Stock may change before execution; that is an
 observable engine rejection, not authority for the model to bypass validation.
@@ -135,14 +165,13 @@ uses one shared durable allowance across every arm and seed, and refuses a secon
 execution of the same study. Live account access is required only at execution.
 
 ```powershell
-.\.venv\Scripts\python.exe -m research.decision_studies prepare --arm baseline=runs/jev-offline.yaml --arm jev=runs/jev-live.yaml --arm comparator=runs/jev-comparator.yaml --arm hybrid=runs/jev-hybrid.yaml --seeds 1,2 --ticks 3 --max-calls 200 --max-usd 1 --out data/studies/jev-smoke
+.\.venv\Scripts\python.exe -m research.decision_studies prepare --arm baseline=runs/jev-offline.yaml --arm jev=runs/jev-live.yaml --arm conservative=runs/jev-hybrid.yaml --seeds 1,2 --ticks 3 --max-calls 200 --max-usd 1 --out data/studies/jev-smoke
 .\.venv\Scripts\python.exe -m research.decision_studies execute data/studies/jev-smoke --approve-live
 ```
 
 The small allowance is for a smoke comparison. The proposed exploratory study
-uses ten paired seeds and thirty ticks, with a separately reviewed allowance
-(initial planning envelope: USD 5 Jev plus USD 25 comparator). This runner's cap
-is aggregate, not two independent provider caps. Each completed cell must
+uses ten paired seeds and thirty ticks, with a separately reviewed Jev allowance.
+This runner's cap is aggregate across its declared routes. Each completed cell must
 reconcile and pass exact recorded replay. `result.json` retains every assigned
 cell, explicit failures/exclusions, available terminal macro observations and
 per-seed paired differences. Standard errors use independent seed pairs, never
@@ -180,13 +209,18 @@ synchronous engine work.
 
 ## Whole-app acceptance
 
-Check an offline world, a small Jev world, and a hybrid world. In each, verify
+Check an offline world, a small Jev world, and the existing-Hermes/Jev pair. In each, verify
 Decisions receipts, historical tick filtering, accepted/rejected actions, private
 input omission, pause/resume and exact replay after removing the key. Exercise a
 missing key and credit failure before a longer run. Measure actual account cost,
 latency, menu coverage, model-resolution stability and background-call share.
 Scale only after those results and the paired-world outcomes justify adoption.
 
-Implementation validation uses deterministic fixtures and real loopback HTTP.
-Those tests establish integration behavior; they do not establish actual Jev
-quality, OpenRouter account access, throughput or live economic outcomes.
+Live validation on September 19, 2026 confirmed key access, native Decisions
+responses, mixed-provider operation and exact offline replay. The three-day
+Hermes-profile comparison recorded USD 0.118618 for the existing policy and
+USD 0.052526 with Jev, excluding preflights. Jev selected wait in 77 of 78 menus,
+including menus with active alternatives; 75 of those turns belonged to staff.
+Keep the existing default pending a better scoped and independently evaluated
+decision policy. These are one-seed operational measurements, not evidence that
+Jev makes better economic decisions. See the [live validation and next-test plan](plans/2026-09-19-jev-live-validation.md).
