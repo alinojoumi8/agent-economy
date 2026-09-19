@@ -19,8 +19,9 @@ type ExperimentsProjection = {
   predictions?: EvidenceRow[]; acceptance?: EvidenceRow[]; datasets?: EvidenceRow[];
   scenarios?: EvidenceRow[]; experiments?: EvidenceRow[]; results?: EvidenceRow[];
   current_only_artifacts_omitted?: boolean;
+  decisions?: {total: number; window: number; items: EvidenceRow[]};
 };
-type View = "evidence" | "rehearsals" | "forecasts" | "campaigns" | "inputs" | "price-studies";
+type View = "evidence" | "rehearsals" | "forecasts" | "campaigns" | "inputs" | "price-studies" | "decisions";
 
 function text(value: unknown, fallback = "—") {
   return value === null || value === undefined || value === "" ? fallback : String(value).replaceAll("_", " ");
@@ -46,7 +47,7 @@ export function ExperimentsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const model = normalizeExperimentsWorkspace(projection.data || {});
   const requested = searchParams.get("view");
-  const view: View = ["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies"].includes(String(requested)) ? requested as View : "evidence";
+  const view: View = ["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies", "decisions"].includes(String(requested)) ? requested as View : "evidence";
   const selectedId = validatedSelectedId(experimentId);
   const selected = model.experiments.find(item => Number(item.id) === selectedId) as EvidenceRow | undefined;
   const selectedResults = selected ? model.results.filter(item => Number(item.experiment_id) === Number(selected.id)) : [];
@@ -82,10 +83,26 @@ export function ExperimentsWorkspace() {
       </aside>
       </>}
       <div className="world-os-view-switch world-os-experiment-tabs" role="group" aria-label="Experiment evidence view">
-        {(["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies"] as View[]).map(item => <button type="button" key={item} aria-pressed={view === item} onClick={() => choose(item)}>{item === "price-studies" ? "Price studies" : text(item)}</button>)}
+        {(["evidence", "rehearsals", "forecasts", "campaigns", "inputs", "price-studies", "decisions"] as View[]).map(item => <button type="button" key={item} aria-pressed={view === item} onClick={() => choose(item)}>{item === "price-studies" ? "Price studies" : text(item)}</button>)}
       </div>
 
       {view === "price-studies" && <PriceStudyWorkbench />}
+      {view === "decisions" && <article className="world-os-workspace-card">
+        <header><div><p className="world-os-kicker">Bounded economic choices</p><h3>Agent decisions</h3></div></header>
+        <p>Latest {projection.data?.decisions?.items.length || 0} of {projection.data?.decisions?.total || 0} recorded decisions at this tick. Confidence describes answer concentration, not the probability of economic success. Accepted actions passed engine validation.</p>
+        <WorkspaceTable caption="Agent decisions" rows={projection.data?.decisions?.items || []}
+          empty="No bounded decision policy has produced receipts in this view." columns={[
+            {key: "tick", label: "Tick", render: row => text(row.tick)},
+            {key: "agent", label: "Citizen", render: row => `#${row.agent_id}`},
+            {key: "actions", label: "Actions", render: row => text((row.action_types as string[])?.join(", "), "Wait / outside menu")},
+            {key: "status", label: "Status", render: row => `${text(row.status)} · ${text(row.reason)}`},
+            {key: "confidence", label: "Confidence", render: row => row.confidence == null ? "Unavailable" : `${(Number(row.confidence) * 100).toFixed(0)}%`},
+            {key: "outcomes", label: "Accepted", render: row => `${row.accepted}/${row.attempted}`},
+            {key: "model", label: "Models", render: row => text((row.models as string[])?.join(", "), "Deterministic")},
+            {key: "cost", label: "Call cost (USD)", render: row => `$${Number(row.cost_usd || 0).toFixed(6)}`},
+            {key: "latency", label: "Latency", render: row => `${row.latency_ms} ms`},
+          ]} />
+      </article>}
 
       {view === "evidence" && <section className="world-os-evidence-cards" aria-label="Acceptance and release evidence">
         {(model.acceptance as unknown as EvidenceRow[]).map(item => <article key={item.id} className={`world-os-evidence-card world-os-evidence-card--${item.classification}`}>

@@ -4,6 +4,7 @@ from __future__ import annotations
 from engine.store import load_json
 
 from .activity import project_event_activity
+from .decisions import observer_event_payload
 
 
 def _safe_event(row) -> dict:
@@ -15,7 +16,7 @@ def _safe_event(row) -> dict:
         "subject_type": row["subject_type"],
         "subject_id": int(row["subject_id"]) if row["subject_id"] is not None else None,
         "importance": float(row["importance"]),
-        "payload": load_json(row["payload_json"], {}) or {},
+        "payload": observer_event_payload(row["kind"], load_json(row["payload_json"], {}) or {}),
         "activity": project_event_activity(row, historical=True),
     }
 

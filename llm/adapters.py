@@ -28,6 +28,7 @@ from email.utils import parsedate_to_datetime
 from typing import Any, Callable, Optional
 
 from .cache_config import normalize_prompt_cache_mode
+from .decisions import finite_number
 
 
 def catalog_model_suggestions(
@@ -69,6 +70,8 @@ class AdapterResult:
     # Separate provider-reported totals from legacy fallback estimates. Keeping
     # the existing fields unchanged preserves historical gateway accounting.
     reported_usage: tuple[int, int] | None = None
+    # Typed providers may expose an actual inference cost separately from tokens.
+    reported_cost_usd: float | None = None
 
 
 class AdapterHTTPError(RuntimeError):
@@ -250,6 +253,8 @@ class OpenAICompatAdapter(Adapter):
             out_tokens=int(usage.get("completion_tokens", 0)) or estimate_tokens(text),
             cached_in_tokens=cached_in,
             raw=data,
+            reported_cost_usd=float(usage["cost"]) if (context or {}).get("_evaluation") is not None
+                and finite_number(usage.get("cost"), 0, 1_000_000) else None,
             reported_usage=(usage["prompt_tokens"], usage["completion_tokens"])
             if "prompt_tokens" in usage and "completion_tokens" in usage else None)
 
@@ -636,6 +641,9 @@ def build_adapters(config: dict) -> dict[str, Adapter]:
         kind = pcfg.get("kind")
         if kind == "openai_compat":
             adapters[pname] = OpenAICompatAdapter(pcfg)
+        elif kind == "openrouter_decisions":
+            from .openrouter_decisions import OpenRouterDecisionsAdapter
+            adapters[pname] = OpenRouterDecisionsAdapter(pcfg)
         elif kind == "anthropic":
             adapters[pname] = AnthropicAdapter(pcfg)
         elif kind == "cli":

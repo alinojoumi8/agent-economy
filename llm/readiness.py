@@ -6,10 +6,11 @@ from collections.abc import Mapping
 from typing import Any
 
 from .cache_config import normalize_prompt_cache_mode
+from .decision_config import decision_policy
 
 
 BUILTIN_PROVIDERS = {"scripted", "mock"}
-NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic"}
+NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic", "openrouter_decisions"}
 KNOWN_PROVIDER_KINDS = NETWORK_PROVIDER_KINDS | {"cli"}
 PROMPT_CACHE_MODES = {
     "off", "provider_automatic", "openai_key", "anthropic_ephemeral",
@@ -18,6 +19,7 @@ PROMPT_CACHE_MODES_BY_KIND = {
     "openai_compat": {"off", "provider_automatic", "openai_key"},
     "anthropic": {"off", "anthropic_ephemeral"},
     "cli": {"off"},
+    "openrouter_decisions": {"off"},
 }
 
 
@@ -49,6 +51,16 @@ def validate_llm_config(
     route_contract = llm.get("route_contract")
 
     route_items = [("default", default_route), *sorted(routes.items())]
+    typed_errors = []
+    try:
+        typed_policy = decision_policy(config)
+    except (ValueError, TypeError) as exc:
+        typed_policy = None
+        typed_errors.append(str(exc))
+    if typed_policy is not None:
+        for label in ("primary", "escalation"):
+            if typed_policy.get(label) is not None:
+                route_items.append((f"decision_policy.{label}", typed_policy[label]))
     tier_routes = llm.get("tier_routes", {}) or {}
     premium_routes = llm.get("premium_routes", {}) or {}
     citizen_model_cohorts = llm.get("citizen_model_cohorts", [])
@@ -97,7 +109,7 @@ def validate_llm_config(
                 add_route_group(
                     "citizen_model_cohorts", name or str(index), cohort)
     referenced: dict[str, set[str]] = {}
-    errors: list[str] = list(cohort_errors)
+    errors: list[str] = [*cohort_errors, *typed_errors]
     warnings: list[str] = []
 
     for route_name, route in route_items:
@@ -112,6 +124,9 @@ def validate_llm_config(
         if not model:
             errors.append(f"route '{route_name}' has no model")
         referenced.setdefault(provider, set()).add(model)
+        if (providers.get(provider, {}).get("kind") == "openrouter_decisions"
+                and not route_name.startswith("decision_policy.")):
+            errors.append(f"route '{route_name}' cannot send prose purposes to a Decisions provider")
 
     contract_report: dict[str, Any] = {"enforced": False}
     if route_contract is not None:
@@ -197,6 +212,18 @@ def validate_llm_config(
                 f"prompt_cache_mode '{prompt_cache_mode}' (allowed: {allowed})")
         if kind == "openai_compat" and not base_url:
             errors.append(f"provider '{provider}' requires base_url")
+        if kind == "openrouter_decisions":
+            from .openrouter_decisions import OpenRouterDecisionsAdapter, PINNED_MODEL
+            try:
+                OpenRouterDecisionsAdapter(pcfg)
+            except (ValueError, TypeError) as exc:
+                errors.append(f"provider '{provider}': {exc}")
+            if auth_none:
+                errors.append(f"provider '{provider}' requires bearer authentication")
+            if pcfg.get("request_defaults") or base_url:
+                errors.append(f"provider '{provider}' requires endpoint configuration without chat defaults")
+            if any(m != PINNED_MODEL for m in models):
+                errors.append(f"provider '{provider}' requires pinned model {PINNED_MODEL}")
         if key_required and not key_env:
             errors.append(f"provider '{provider}' requires api_key_env")
         elif key_required and require_secrets and not key_present:

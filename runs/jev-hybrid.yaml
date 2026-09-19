@@ -1,0 +1,21 @@
+# A missing or low Jev confidence invokes one separately accounted selector.
+# The threshold is provisional; calibrate it before making adoption claims.
+extends: jev-live.yaml
+budget:
+  cap_usd: 25.0
+llm:
+  providers:
+    openrouter_chat:
+      kind: openai_compat
+      base_url: https://openrouter.ai/api/v1
+      api_key_env: OPENROUTER_API_KEY
+      timeout_s: 20
+      concurrency: 3
+      request_defaults:
+        provider: {only: [OpenAI], allow_fallbacks: false}
+  pricing:
+    openai/gpt-4.1-mini: {in: 0.40, out: 1.60, cache: 0.10}
+  decision_policy:
+    minimum_confidence: 0.70
+    on_abstain: escalate
+    escalation: {provider: openrouter_chat, model: openai/gpt-4.1-mini, timeout_s: 20}
