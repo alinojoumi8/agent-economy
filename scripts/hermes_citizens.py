@@ -147,9 +147,23 @@ class CohortOperator:
 
     def api(self, path, *, body=None, token=None):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        response = self.client.request("POST" if body is not None else "GET", path, json=body, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        method = "POST" if body is not None else "GET"
+        for attempt in range(1, 4):
+            try:
+                response = self.client.request(method, path, json=body, headers=headers)
+            except (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError) as error:
+                # A lost write response may follow a successful clock step or
+                # registration. Only repeat reads; leave ambiguous writes for
+                # boundary/receipt recovery instead of applying them twice.
+                if method != "GET" or attempt == 3:
+                    raise
+                with (self.root / "api-read-retries.jsonl").open("a", encoding="utf-8") as journal:
+                    journal.write(json.dumps({"time": time.time(), "path": httpx.URL(path).path,
+                        "attempt": attempt, "error": type(error).__name__}) + "\n")
+                time.sleep(.25 * attempt)
+                continue
+            response.raise_for_status()
+            return response.json()
 
     def check_world(self):
         state = self.api("/api/run/status")

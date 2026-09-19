@@ -5,12 +5,94 @@ import sqlite3
 import subprocess
 import sys
 
+import httpx
 import psutil
 
 import pytest
 
 from scripts.hermes_citizens import (CohortOperator, COHORT, MissingQueuedAction,
     HermesCallTimeout, run_hermes_process, write_json)
+
+
+@pytest.fixture
+def api_operator(monkeypatch, tmp_path):
+    monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
+    operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
+        hermes_python='unused', profiles_root=str(tmp_path), days=1))
+    operator.client.close()
+    yield operator
+    operator.client.close()
+
+
+@pytest.mark.parametrize('error_type', [
+    httpx.ReadError, httpx.ConnectError, httpx.ReadTimeout, httpx.RemoteProtocolError,
+])
+def test_operator_retries_transient_reads_without_logging_secrets(api_operator, monkeypatch, error_type):
+    requests, sleeps = [], []
+    def handle(request):
+        requests.append(request)
+        if len(requests) == 1:
+            raise error_type('private-error-detail', request=request)
+        return httpx.Response(200, json={'actor': {'id': 34}})
+    api_operator.client = httpx.Client(base_url='http://127.0.0.1:8000', transport=httpx.MockTransport(handle))
+    monkeypatch.setattr('scripts.hermes_citizens.time.sleep', sleeps.append)
+
+    assert api_operator.api('/api/v2/agent/me?secret=private-query', token='private-token') == {'actor': {'id': 34}}
+    assert len(requests) == 2 and all(r.method == 'GET' for r in requests)
+    assert all(r.headers['Authorization'] == 'Bearer private-token' for r in requests)
+    assert sleeps == [.25]
+    journal = (api_operator.root / 'api-read-retries.jsonl').read_text()
+    event = json.loads(journal)
+    assert event['path'] == '/api/v2/agent/me'
+    assert event['error'] == error_type.__name__ and event['attempt'] == 1
+    assert 'private-' not in journal
+
+
+def test_operator_stops_after_three_failed_reads(api_operator, monkeypatch):
+    requests, sleeps = [], []
+    def handle(request):
+        requests.append(request)
+        raise httpx.ReadError('connection aborted', request=request)
+    api_operator.client = httpx.Client(base_url='http://127.0.0.1:8000', transport=httpx.MockTransport(handle))
+    monkeypatch.setattr('scripts.hermes_citizens.time.sleep', sleeps.append)
+
+    with pytest.raises(httpx.ReadError):
+        api_operator.api('/api/run/status')
+    assert len(requests) == 3 and all(r.method == 'GET' for r in requests)
+    assert sleeps == [.25, .5]
+    assert len((api_operator.root / 'api-read-retries.jsonl').read_text().splitlines()) == 2
+
+
+@pytest.mark.parametrize('path,body', [
+    ('/api/run/control', {'action': 'step'}),
+    ('/api/v2/agent/turn/renew', {'target_tick': 41}),
+])
+def test_operator_never_repeats_a_write_with_a_lost_response(api_operator, path, body):
+    applied = []
+    def handle(request):
+        assert request.method == 'POST'
+        applied.append(json.loads(request.content))
+        raise httpx.ReadError('response lost after applying request', request=request)
+    api_operator.client = httpx.Client(base_url='http://127.0.0.1:8000', transport=httpx.MockTransport(handle))
+
+    with pytest.raises(httpx.ReadError):
+        api_operator.api(path, body=body)
+    assert applied == [body]
+    assert not (api_operator.root / 'api-read-retries.jsonl').exists()
+
+
+@pytest.mark.parametrize('status', [401, 429, 503, 200])
+def test_operator_does_not_retry_http_or_json_failures(api_operator, status):
+    requests = []
+    def handle(request):
+        requests.append(request)
+        return httpx.Response(status, text='not JSON')
+    api_operator.client = httpx.Client(base_url='http://127.0.0.1:8000', transport=httpx.MockTransport(handle))
+
+    with pytest.raises(ValueError if status == 200 else httpx.HTTPStatusError):
+        api_operator.api('/api/run/status')
+    assert len(requests) == 1
+    assert not (api_operator.root / 'api-read-retries.jsonl').exists()
 
 
 @pytest.mark.parametrize('missing_attempts,timeout,exit_code', [

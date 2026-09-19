@@ -2,8 +2,8 @@
 
 The requested target is a fresh 100-tick world. Run `e911d9c2a8` is now running
 under the ten-citizen Hermes supervisor. The latest audited boundary in this
-record is **tick 30 of 100**; this is not a completed 100-tick result. All ten
-citizens submitted decisions on ticks 2–30. The original launch was blocked by
+record is **tick 40 of 100**; this is not a completed 100-tick result. All ten
+citizens submitted decisions on ticks 2–40. The original launch was blocked by
 automatic approval review. The user requested another attempt, and the current
 supervised continuation was accepted.
 
@@ -93,7 +93,7 @@ five accepted choices without publishing candidate payloads or private prompts.
 ## Supervised continuation
 
 The server is available at `http://127.0.0.1:18774`, run `e911d9c2a8`. The
-supervisor started the current continuation from tick 8 with `--days 92`, five
+supervisor started the current continuation from tick 40 with `--days 60`, five
 concurrent Hermes workers, and a target of tick 100. Do not also press the app's
 Run or Step controls while the cohort operator owns the clock. Progress and
 failures remain in `data/control-plane/hermes-cohort/e911d9c2a8/`.
@@ -117,13 +117,27 @@ normal process completion when a fresh creation-time lookup is no longer possibl
 This hardens cleanup; it does not establish that this race caused the observed
 exit code 15. The live continuation retains the same profiles, models and world.
 
-Through tick 30, Jev selected 128 menus: 101 purchases and 27 combined
-purchase/job-application choices. Every selected action passed engine validation.
-Twenty-two specialized turns stayed outside Jev's bounded menu. Native inference cost
-USD 0.298431880, including USD 0.016019430 for Jev, with no provider failures,
-repairs, or malformed-output no-ops. Jev's median latency was 452.5 ms and its
-95th percentile was 611 ms. All 290 post-admission Hermes turns were submitted.
-All 37 agents were alive; ten were employed.
+At the tick-40 boundary, a local identity GET failed with `httpx.ReadError`
+and Windows error 10053 before Aisha's next decision. The other nine tick-41
+actions remained queued. The operator now retries transient GET transport
+failures at most twice with bounded backoff and a journal containing only the
+path, attempt and error class. POST requests, HTTP errors and invalid JSON are
+not retried: a lost write response could follow a successful clock advance.
+After confirming the old controller and citizen processes had exited, recovery
+retained all nine action IDs and payload fingerprints, completed Aisha's turn,
+and saved tick 41 with all ten attendance records submitted. Six applications
+were rejected because another citizen filled their target job earlier in that
+execution phase; none was lost to the interruption or an expired turn.
+
+Through tick 40, Jev selected 170 menus: 132 purchases, 36 combined
+purchase/job-application choices and two waits. All 168 purchases succeeded.
+One application was correctly rejected at tick 38 after another citizen filled
+the job earlier in the same execution phase. Thirty specialized turns stayed
+outside Jev's bounded menu. Native inference cost USD 0.393664916, including
+USD 0.021376236 for Jev, with no provider failures, repairs, or malformed-output
+no-ops. Jev's median latency was 456.5 ms and its 95th percentile was 615 ms.
+All 390 post-admission Hermes turns were submitted.
+All 37 agents were alive; eleven were employed.
 The ledger reconciled with no account mismatches. Live aggregate snapshots use
 `progress-audit.json`; admission evidence is reconstructed only from its frozen
 tick-1 snapshot. Budget reservations observed during an active tick are not
@@ -153,6 +167,12 @@ also with balanced source/replay ledgers, blocked HTTP, removed provider keys,
 zero live dispatches and unchanged snapshot bytes. Its SHA-256 remained
 `972815f16cdda4a74570b906894c731984f963d48bc2fe91190650cbf7f319ec`.
 
+The tick-40 checkpoint replayed exactly as `replay-e911d9c2a8-9e47bbc388`,
+including the execution-time rejection. Source and replay ledgers balanced,
+provider keys were removed, HTTP was blocked and live dispatches were zero.
+Its unchanged snapshot SHA-256 was
+`b5ca3c451b7c61d188c632abf1bdd89cf86e787604fa46d1809c14cc3b3428d4`.
+
 Accepted actions do not imply new economic effects. Through tick 20, one Jev
 citizen made 17 accepted application attempts for four distinct jobs. The engine
 reused existing pending applications, so 13 attempts created no new application.
@@ -161,8 +181,8 @@ citizen's active applications to already visible jobs and excludes them before
 ranking new application choices. Pending offers can still be accepted. V1/v2
 behavior is preserved, and this ongoing world remains on v2; the 100-tick results
 must not be presented as a live evaluation of v3.
-Through tick 30, there were 27 accepted application attempts, eight new
-applications and 19 accepted attempts that reused an existing application.
+Through tick 40, there were 35 accepted application attempts, ten new
+applications and 25 accepted attempts that reused an existing application.
 
 After tick 100, audit all native and external receipts, rejection causes,
 fallback attendance, model identity, usage and persistent Jev reservations;
@@ -172,7 +192,7 @@ be made from these early ticks.
 
 ## Verification
 
-The final focused suite passed **181 tests** across Jev, external gateway,
+The initial focused suite passed **181 tests** across Jev, external gateway,
 Hermes operator/supervision, response contracts, recorded replay and documentation.
 The broader gateway, property, prompt-cache, observability and population-replay
 suite passed **196 tests**. Regressions cover fresh external admission and mixed
@@ -185,7 +205,7 @@ All 521 Git-visible Python files compile. Pinned dataset verification and
 temporary directory; subsequent tests used fresh directories under `tmp/`.
 The inherited FastAPI/Starlette httpx deprecation warning remains.
 
-The final subprocess changes passed 41 operator/supervision tests and a local
+The subprocess changes passed 41 operator/supervision tests and a local
 stress run of 300 concurrent process-tree lifecycles (five workers, 32.06 seconds,
 all exit codes zero). The external gateway, recorded golden replay, Jev runtime and population Commons
 replay suites passed 68 tests in 253.93 seconds after restoring negative inputs.
@@ -226,3 +246,10 @@ The affected recovery shard passed all ten tests on Linux Python 3.12.13 in
 138.32 seconds. Its first local attempt correctly refused resume because the
 working checkout changed during execution; it was interrupted after one failed
 and two passed tests and rerun from an isolated, stable checkout.
+
+CI for `869de4c` passed all 34 jobs, including the affected recovery shards and
+dashboard. The later transient-read regression failed before its fix; afterward
+all 52 operator/supervision tests passed in 8.98 seconds. The new cases cover
+read recovery and exhaustion, redacted diagnostics, a write applied before its
+response is lost, and non-retryable HTTP/JSON failures. Remote CI for this later
+change is separate and must pass before any merge.
