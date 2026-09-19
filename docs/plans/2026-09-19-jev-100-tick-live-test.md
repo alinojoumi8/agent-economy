@@ -2,8 +2,8 @@
 
 The requested target is a fresh 100-tick world. Run `e911d9c2a8` is now running
 under the ten-citizen Hermes supervisor. The latest audited boundary in this
-record is **tick 6 of 100**; this is not a completed 100-tick result. All ten
-citizens submitted decisions on ticks 2–6. The original launch was blocked by
+record is **tick 20 of 100**; this is not a completed 100-tick result. All ten
+citizens submitted decisions on ticks 2–20. The original launch was blocked by
 automatic approval review. The user requested another attempt, and the current
 supervised continuation was accepted.
 
@@ -117,14 +117,35 @@ normal process completion when a fresh creation-time lookup is no longer possibl
 This hardens cleanup; it does not establish that this race caused the observed
 exit code 15. The live continuation retains the same profiles, models and world.
 
-Through tick 6, Jev selected 26 menus: 22 purchases and four combined
+Through tick 20, Jev selected 85 menus: 68 purchases and 17 combined
 purchase/job-application choices. Every selected action passed engine validation.
-Four specialized turns stayed outside Jev's bounded menu. Native inference cost
-USD 0.058026392, with no provider failures, repairs, or malformed-output no-ops.
+Fifteen specialized turns stayed outside Jev's bounded menu. Native inference cost
+USD 0.191782636, including USD 0.010519866 for Jev, with no provider failures,
+repairs, or malformed-output no-ops. Jev's median latency was 457 ms and its
+95th percentile was 592 ms. All 190 post-admission Hermes turns were submitted.
 The ledger reconciled with no account mismatches. Live aggregate snapshots use
 `progress-audit.json`; admission evidence is reconstructed only from its frozen
 tick-1 snapshot. Budget reservations observed during an active tick are not
 treated as abandoned reservations.
+
+The tick-10 checkpoint exposed missing negative input evidence in legacy replay:
+validation-time rejections and stale submissions were omitted, although economic
+state matched. Replay now restores those receipts and their CONTROL events at
+the recorded boundary without making them executable decisions. A stale request
+can name the wrong target day, so its event tick determines restoration timing.
+The regression covers invalid actions, stale hashes, an outdated target tick,
+the corrected successful submission, missed attendance and unchanged source bytes.
+
+The same frozen checkpoint then replayed exactly as
+`replay-e911d9c2a8-c4f81424e5`, with zero differences, balanced source/replay
+ledgers, removed provider keys, blocked HTTP and zero live dispatches. Its
+SHA-256 remained `ba4c90588adf928e54b87daefb53d712e48b5ca322b0f20a18041c2f4818d518`.
+Both the failed proof and corrected proof remain in the private evidence folder.
+
+The automatic tick-20 checkpoint also replayed exactly as
+`replay-e911d9c2a8-d966ec7cab`, with the same network-disabled checks, balanced
+ledgers and unchanged snapshot. Its SHA-256 remained
+`20d6783f7250f1923afc44c40d9403baca363d42a08a447843b1e516424e1126`.
 
 After tick 100, audit all native and external receipts, rejection causes,
 fallback attendance, model identity, usage and persistent Jev reservations;
@@ -149,8 +170,9 @@ The inherited FastAPI/Starlette httpx deprecation warning remains.
 
 The final subprocess changes passed 41 operator/supervision tests and a local
 stress run of 300 concurrent process-tree lifecycles (five workers, 32.06 seconds,
-all exit codes zero). The
-policy-origin recovery case that crashed in CI passed locally in 220.77 seconds
+all exit codes zero). The external gateway, recorded golden replay, Jev runtime and population Commons
+replay suites passed 68 tests in 253.93 seconds after restoring negative inputs.
+The policy-origin recovery case that crashed in CI passed locally in 220.77 seconds
 using the shorter workspace temporary path `tmp/p11`. Its first local attempt
 hit the Windows path-length limit under a longer temporary directory.
 
@@ -159,3 +181,10 @@ The first attempt's policy-recovery job exited with a Python segmentation fault;
 the same job passed when retried. That transient crash remains disclosed, with
 no demonstrated link to Jev. The PR stays a draft pending the live test; this
 record is not a release or merge claim.
+
+The subsequent dashboard CI run passed 138 of 139 browser tests. Its construction
+evidence navigation test timed out while the 3D viewport remounted. The trace
+retained the correct business in the URL and ultimately displayed the right
+selection. The test now waits for the viewport's existing ready signal before
+asserting the restored selection; five consecutive local repetitions passed in
+38.4 seconds. No application frontend behavior changed in this correction.

@@ -1461,6 +1461,40 @@ class ExternalAgentService:
                                 "agent": dict(agent) if agent else None,
                                 "accounts": accounts})
 
+    def _restore_replay_negative_inputs(self, source) -> None:
+        """Restore rejected boundary inputs as audit evidence, never decisions."""
+        events = source.execute(
+            "SELECT * FROM events WHERE tick=? AND phase='CONTROL' "
+            "AND kind IN ('external_action_rejected','external_action_stale') ORDER BY id",
+            (self.store.tick,)).fetchall()
+        with self.store.savepoint('external_negative_inputs'):
+            for event in events:
+                data = load_json(event['payload_json'], {})
+                row = source.execute('SELECT * FROM external_action_submissions WHERE id=?',
+                                     (data.get('submission_id'),)).fetchone()
+                if (row is None or event['kind'] != f"external_action_{row['status']}"
+                        or row['connection_id'] != data.get('connection_id')
+                        or row['actor_id'] != data.get('actor_id')
+                        or row['actor_id'] != event['subject_id']
+                        or row['target_tick'] != data.get('target_tick')):
+                    raise RuntimeError('recorded negative external input binding is invalid')
+                if self.store.query_one('SELECT 1 FROM external_action_submissions WHERE id=?', (row['id'],)):
+                    continue
+                # A stale request may name an older or future target tick. Its
+                # CONTROL event determines when it occurred, not that bad target.
+                for table, identity in [('external_agent_connections', row['connection_id']),
+                                        ('external_agent_turns', row['turn_id']),
+                                        ('external_action_submissions', row['id'])]:
+                    if identity is None or self.store.query_one(f'SELECT 1 FROM {table} WHERE id=?', (identity,)):
+                        continue
+                    recorded = source.execute(f'SELECT * FROM {table} WHERE id=?', (identity,)).fetchone()
+                    if recorded is None:
+                        raise RuntimeError('recorded negative external input dependency is missing')
+                    self.store.insert(table, **dict(recorded))
+                self.store.log_event(event['tick'], event['kind'], data, phase=event['phase'],
+                    subject_type=event['subject_type'], subject_id=event['subject_id'],
+                    importance=event['importance'])
+
     def _replay_decisions(self, tick: int, *, before_night: bool = False,
                           submission_ids=None, validate_only=False,
                           restore_turns=True) -> list[dict[str, Any]]:
@@ -1574,6 +1608,8 @@ class ExternalAgentService:
                      str(turn_row["envelope_json"]), int(turn_row["event_cursor"]),
                      str(turn_row["deadline_at"]), str(turn_row["status"]),
                      str(turn_row["created_at"]), _iso()))
+            if before_night and self.economy.engine_semantics_version < 21:
+                self._restore_replay_negative_inputs(conn)
             out = []
             for row in rows:
                 actor = self.store.query_one("SELECT alive FROM agents WHERE id=?", (int(row["actor_id"]),))

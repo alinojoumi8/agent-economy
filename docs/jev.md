@@ -208,6 +208,8 @@ transcript path even when the transcript is empty. Unknown process failures
 stop the operator; recovery preserves already queued actions.
 Process cleanup rechecks direct ancestry and creation time, so a stale process
 listing cannot authorize terminating a sibling worker after PID reuse.
+Recorded replay retains stale and validation-rejected Hermes submissions as
+audit evidence. These receipts never become executable replay decisions.
 
 The [September 19 longer-test record](plans/2026-09-19-jev-100-tick-live-test.md)
 separates completed live evidence from the remaining supervised continuation.

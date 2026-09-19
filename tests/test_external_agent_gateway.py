@@ -1025,6 +1025,15 @@ def test_fresh_external_admission_then_mixed_attendance_replays_from_genesis(tmp
         service = world.runtime.external
         auth = service.authenticate(created[0]['credential']['token'], rate_limit=False)
         turn = service.turn(auth)
+        invalid = service.submit_action(auth, {'target_tick': 2, 'action': {'type': 'not_a_legal_action'},
+            'observed_projection_hash': turn['projection_hash'], 'idempotency_key': 'invalid'})
+        assert invalid['status'] == 'rejected'
+        stale = service.submit_action(auth, {'target_tick': 2, 'action': {'type': 'do_nothing'},
+            'observed_projection_hash': '0' * 64, 'idempotency_key': 'stale-hash'})
+        assert stale['status'] == 'stale'
+        stale_tick = service.submit_action(auth, {'target_tick': 1, 'action': {'type': 'do_nothing'},
+            'observed_projection_hash': turn['projection_hash'], 'idempotency_key': 'stale-tick'})
+        assert stale_tick['status'] == 'stale'
         service.submit_action(auth, {'target_tick': 2, 'action': {'type': 'do_nothing'},
             'observed_projection_hash': turn['projection_hash'], 'idempotency_key': 'day-two'})
         asyncio.run(world.step())
@@ -1039,6 +1048,9 @@ def test_fresh_external_admission_then_mixed_attendance_replays_from_genesis(tmp
         proof = verify_replay(source, store.path)
         assert proof['exact'], proof['differences']
         assert store.scalar('SELECT COUNT(*) FROM external_turn_attendance') == 4
+        assert store.scalar("SELECT COUNT(*) FROM external_action_submissions WHERE status='executed'") == 1
+        assert store.scalar("SELECT COUNT(*) FROM external_action_submissions WHERE status='rejected'") == 1
+        assert store.scalar("SELECT COUNT(*) FROM external_action_submissions WHERE status='stale'") == 2
         assert replay.economy.ledger.reconcile()[0]
     finally:
         replay.close()
