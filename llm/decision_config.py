@@ -5,6 +5,8 @@ from .decisions import finite_number
 
 
 POLICY_VERSION = "bounded-economic-choice-v1"
+POLICY_VERSION_V2 = "bounded-economic-choice-v2"
+POLICY_VERSIONS = {POLICY_VERSION, POLICY_VERSION_V2}
 
 
 def decision_policy(config: dict) -> dict | None:
@@ -14,8 +16,8 @@ def decision_policy(config: dict) -> dict | None:
     allowed = {"version", "primary", "escalation", "minimum_confidence", "on_abstain",
                "population_fraction", "eligible_tiers", "activation_tick", "max_goods_offers",
                "max_job_options", "max_quantity", "spending_bps", "max_output_tokens"}
-    if not isinstance(raw, dict) or set(raw) - allowed or raw.get("version") != POLICY_VERSION:
-        raise ValueError("decision_policy requires the bounded-economic-choice-v1 contract and known fields")
+    if not isinstance(raw, dict) or set(raw) - allowed or raw.get("version") not in POLICY_VERSIONS:
+        raise ValueError("decision_policy requires a known bounded-economic-choice contract and known fields")
     if int(config.get("engine_semantics_version", 1)) < 16:
         raise ValueError("typed decision policies require prospective Semantics 16 or later")
     value = {"minimum_confidence": 0.0, "on_abstain": "wait", "population_fraction": 1.0,

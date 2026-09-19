@@ -15,6 +15,7 @@ import sqlite3
 import subprocess
 import sys
 import time
+from urllib.parse import urlsplit
 
 import httpx
 import psutil
@@ -40,7 +41,16 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".new")
     temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    for attempt in range(6):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            # Windows readers/scanners may briefly deny atomic replacement.
+            # Keep the previous complete document and surface persistent errors.
+            if attempt == 5:
+                raise
+            time.sleep(.02 * 2**attempt)
 
 
 def read_json(path):
@@ -181,7 +191,8 @@ class CohortOperator:
             # The exchanged bootstrap token is no longer useful.
             pending_path.unlink()
             print(f"Onboarded {name}", flush=True)
-        write_json(ROOT / "data/control-plane/hermes-city.json", {"run_id": self.args.run_id})
+        if not getattr(self.args, "keep_active_world", False):
+            write_json(ROOT / "data/control-plane/hermes-city.json", {"run_id": self.args.run_id})
 
     def receipts(self, citizen, tick):
         with sqlite3.connect(f"file:{self.database.as_posix()}?mode=ro", uri=True) as connection:
@@ -340,7 +351,7 @@ class CohortOperator:
                     break
                 tick = self.check_world()["tick"] + 1
                 write_json(self.root / "status.json", {"state": "deciding", "tick": tick, "pid": os.getpid()})
-                with ThreadPoolExecutor(max_workers=2) as pool:
+                with ThreadPoolExecutor(max_workers=getattr(self.args, "workers", 2)) as pool:
                     list(pool.map(lambda citizen: self.decide(citizen, tick), citizens))
                 if (self.root / "STOP").exists():
                     break
@@ -364,12 +375,17 @@ def main():
     parser.add_argument("--hermes-python", default=str(Path(os.environ.get("LOCALAPPDATA", "")) / "hermes/hermes-agent/venv/Scripts/python.exe"))
     parser.add_argument("--profiles-root", default=str(Path(os.environ.get("LOCALAPPDATA", "")) / "hermes/profiles"))
     parser.add_argument("--setup", action="store_true")
+    parser.add_argument("--keep-active-world", action="store_true", help="Keep the launcher's existing selected world")
+    parser.add_argument("--workers", type=int, default=2, choices=range(1, 11))
     parser.add_argument("--days", type=int, default=3)
     parser.add_argument("--supervise", action="store_true", help="Record child exits and progress independently")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", args.run_id) or not 1 <= args.days <= 100:
         parser.error("Use a safe run ID and 1-100 days per bounded session")
-    if args.url not in {"http://127.0.0.1:8000", "http://localhost:8000"}:
+    target = urlsplit(args.url)
+    if (target.scheme != "http" or target.hostname not in {"127.0.0.1", "localhost"}
+            or target.username or target.password or target.path or target.query or target.fragment
+            or target.port is None or not 1 <= target.port <= 65535):
         parser.error("This operator supports the local sandbox only")
     if args.supervise:
         from hermes_supervision import supervise

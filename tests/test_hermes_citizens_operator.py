@@ -195,6 +195,46 @@ def test_resume_skips_already_queued_action_without_launching_hermes(monkeypatch
         operator.client.close()
 
 
+@pytest.mark.parametrize('keep_active_world', [False, True])
+def test_setup_can_preserve_the_existing_selected_world(monkeypatch, tmp_path, keep_active_world):
+    monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
+    operator = CohortOperator(Namespace(run_id='new', url='http://127.0.0.1:18774',
+        hermes_python='unused', profiles_root=str(tmp_path), keep_active_world=keep_active_world))
+    active = tmp_path / 'data/control-plane/hermes-city.json'
+    write_json(active, {'run_id': 'existing'})
+    write_json(operator.manifest_path, {'citizens': [{'name': name} for _, name, _, _ in COHORT]})
+    monkeypatch.setattr(operator, 'check_world', lambda: {})
+    try:
+        operator.setup()
+        assert json.loads(active.read_text())['run_id'] == ('existing' if keep_active_world else 'new')
+    finally:
+        operator.client.close()
+
+
+@pytest.mark.parametrize('url,allowed', [
+    ('http://127.0.0.1:18774', True), ('http://localhost:8000', True),
+    ('http://example.com:8000', False), ('http://127.0.0.1:8000/path', False),
+    ('http://user:password@localhost:8000', False), ('https://localhost:8000', False)])
+def test_operator_accepts_only_explicit_loopback_ports(monkeypatch, url, allowed):
+    from scripts.hermes_citizens import main
+    monkeypatch.setattr(sys, 'argv', ['hermes_citizens.py', '--run-id', 'one', '--url', url])
+    called = []
+
+    class Operator:
+        def __init__(self, args):
+            self.client = Namespace(close=lambda: None)
+        def run(self):
+            called.append(True)
+
+    monkeypatch.setattr('scripts.hermes_citizens.CohortOperator', Operator)
+    if allowed:
+        main()
+        assert called
+    else:
+        with pytest.raises(SystemExit): main()
+        assert not called
+
+
 def test_cohort_failure_does_not_advance_world(monkeypatch, tmp_path):
     monkeypatch.setattr("scripts.hermes_citizens.ROOT", tmp_path)
     operator = CohortOperator(Namespace(run_id="one", url="http://127.0.0.1:8000",

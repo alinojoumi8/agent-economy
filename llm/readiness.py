@@ -66,6 +66,15 @@ def validate_llm_config(
 
     route_items = [("default", default_route), *sorted(routes.items())]
     typed_errors = []
+    response_contract = llm.get("response_contract")
+    if response_contract is not None and (response_contract != "required-json-v2"
+            or int(config.get("engine_semantics_version", 1)) < 16):
+        typed_errors.append("response_contract requires required-json-v2 and prospective Semantics 16 or later")
+    for provider in providers.values():
+        if isinstance(provider, dict) and "minimum_output_tokens" in provider:
+            floor = provider["minimum_output_tokens"]
+            if response_contract != "required-json-v2" or type(floor) is not int or not 128 <= floor <= 32768:
+                typed_errors.append("minimum_output_tokens requires required-json-v2 and an integer from 128 to 32768")
     try:
         typed_policy = decision_policy(config)
     except (ValueError, TypeError) as exc:

@@ -4,10 +4,10 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 
-from llm.decision_config import POLICY_VERSION, decision_policy
+from llm.decision_config import POLICY_VERSION_V2, decision_policy
 from llm.decisions import decision_hash
 from llm.gateway import LLMRequest, LLMResponse
-from .decision_candidates import COMPILER_VERSION, DecisionMenu, compile_candidates
+from .decision_candidates import DecisionMenu, compile_candidates
 
 
 @dataclass
@@ -28,12 +28,14 @@ class TypedDecisionPolicy:
         policy = self.policy
         if policy is None or tick < policy["activation_tick"] or context.get("purpose") != "decision":
             return None
+        if policy["version"] == POLICY_VERSION_V2 and context.get("agent", {}).get("role"):
+            return None
         agent_id = context["agent"]["id"]
         plan = context.get("compute_plan") or {}
         tier = str(plan.get("tier", "legacy"))
         if tier not in policy["eligible_tiers"]:
             return None
-        assignment = int(decision_hash({"seed": self.seed, "agent": agent_id, "policy": POLICY_VERSION})[:16], 16)
+        assignment = int(decision_hash({"seed": self.seed, "agent": agent_id, "policy": policy["version"]})[:16], 16)
         if assignment / 2**64 >= policy["population_fraction"]:
             return None
         return compile_candidates(context, tick, policy)
@@ -51,7 +53,7 @@ class TypedDecisionPolicy:
                 "cost_basis": (raw.get("raw") or {}).get("cost_basis", "declared_tariff")}
 
     async def complete(self, request: LLMRequest, menu: DecisionMenu) -> TypedDecision:
-        receipt = {"contract": POLICY_VERSION, "compiler": COMPILER_VERSION,
+        receipt = {"contract": self.policy["version"], "compiler": menu.compiler_version,
                    "agent_id": request.agent_id, "tick": request.tick, "purpose": request.purpose,
                    "observation_hash": menu.observation_hash, "menu_hash": menu.menu_hash,
                    "candidates": menu.candidates, "calls": [], "confidence": None,

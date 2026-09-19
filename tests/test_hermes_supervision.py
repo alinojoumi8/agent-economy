@@ -1,10 +1,36 @@
 import json
 import sqlite3
 import sys
+from pathlib import Path
 
 import pytest
 
-from scripts.hermes_supervision import supervise
+from scripts.hermes_supervision import supervise, save
+from scripts.hermes_citizens import write_json
+
+
+@pytest.mark.parametrize('writer', [save, write_json])
+@pytest.mark.parametrize('failures', [2, 6])
+def test_progress_replace_retries_transient_lock_without_losing_previous_file(tmp_path, monkeypatch, writer, failures):
+    path = tmp_path / 'status.json'
+    path.write_text('{"tick":1}')
+    original = Path.replace
+    attempts = []
+    def replace(source, target):
+        attempts.append(True)
+        if len(attempts) <= failures:
+            assert json.loads(path.read_text()) == {'tick': 1}
+            raise PermissionError('temporary sharing violation')
+        return original(source, target)
+    monkeypatch.setattr(Path, 'replace', replace)
+    if failures == 6:
+        with pytest.raises(PermissionError): writer(path, {'tick': 2})
+        assert json.loads(path.read_text()) == {'tick': 1}
+        assert json.loads(path.with_suffix('.new').read_text()) == {'tick': 2}
+    else:
+        writer(path, {'tick': 2})
+        assert json.loads(path.read_text()) == {'tick': 2}
+    assert len(attempts) == min(6, failures + 1)
 
 
 @pytest.mark.parametrize('outcome', ['complete', 'abrupt_exit', 'early_clean_exit'])

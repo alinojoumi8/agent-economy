@@ -10,7 +10,16 @@ import time
 def save(path, value):
     temporary = path.with_suffix('.new')
     temporary.write_text(json.dumps(value, indent=2), encoding='utf-8')
-    temporary.replace(path)
+    for attempt in range(6):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            # A transient Windows file lock must not kill an otherwise healthy
+            # child. Persistent failures still reach the supervisor's journal.
+            if attempt == 5:
+                raise
+            time.sleep(.02 * 2**attempt)
 
 
 def saved_tick(root, run_id):

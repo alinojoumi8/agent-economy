@@ -1338,6 +1338,14 @@ class Gateway:
         plan = self.route_plan(req)
         selected_target = plan.targets[0]
         provider, model = selected_target.provider, selected_target.model
+        strict_contract = self.config.get("llm", {}).get("response_contract") == "required-json-v2"
+        if strict_contract and req.evaluation is None:
+            floor = max(self.config.get("llm", {}).get("providers", {}).get(
+                target.provider, {}).get("minimum_output_tokens", 0) for target in plan.targets)
+            req = replace(req, max_tokens=max(req.max_tokens, floor))
+            if schema_hint:
+                req = replace(req, system=req.system + "\nReturn only a complete JSON object matching "
+                    "this response contract. Keep prose concise; do not use Markdown fences.\n" + schema_hint)
         adapter = self.adapters.get(provider)
         if adapter is None:
             operational_log(logger, logging.ERROR, "llm.route.unavailable",
@@ -1368,7 +1376,7 @@ class Gateway:
                 operational_log(logger, logging.DEBUG, "llm.replay.hit",
                                 run_id=self.run_id, model=model, role=req.role,
                                 purpose=req.purpose, agent_id=req.agent_id, tick=req.tick)
-                if (plan.tiered or req.evaluation is not None) and not response.ok:
+                if (plan.tiered or req.evaluation is not None or strict_contract) and not response.ok:
                     raise ProviderUnavailable(
                         "replay", response.model, req.purpose,
                         "recorded live response failed its JSON contract", attempts=0)
@@ -1389,7 +1397,7 @@ class Gateway:
             if resumed is not None:
                 break
         if resumed is not None:
-            if (plan.tiered or req.evaluation is not None) and not resumed.ok:
+            if (plan.tiered or req.evaluation is not None or strict_contract) and not resumed.ok:
                 # Mirror the replay branch: a stored live completion that failed
                 # its contract must pause the tiered run again, not resume as a
                 # silent no-op decision.
@@ -1861,7 +1869,7 @@ class Gateway:
                 role=req.role, purpose=req.purpose, agent_id=req.agent_id,
                 tick=req.tick, valid=ok)
         if not ok:
-            if (plan.tiered or req.evaluation is not None
+            if (plan.tiered or req.evaluation is not None or strict_contract
                     or self.config.get("llm", {}).get("research_response_contract") == "required-json-v1"):
                 if cost_override is None:
                     cached, cost = self._price(

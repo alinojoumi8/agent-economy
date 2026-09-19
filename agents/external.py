@@ -613,7 +613,7 @@ class ExternalAgentService:
         return int(earliest) + ((interval - offset) % interval)
 
     def renew_local_turn(self, auth: dict[str, Any], *, target_tick: int) -> dict[str, Any]:
-        """Explicit operational recovery for the paused semantics-11 local cohort.
+        """Explicit operational recovery for an opted-in paused local cohort.
 
         A normal poll must never reopen a closed mailbox. The local operator
         may renew an expired, unconsumed window, with its previous lease audited.
@@ -621,10 +621,13 @@ class ExternalAgentService:
         if not {SCOPE_WORLD_READ, SCOPE_WORLD_ACT}.issubset(set(auth["scopes"])):
             raise ExternalAgentError(403, "world.read and world.act required", "insufficient_scope")
         meta = self.store.get_meta()
-        if (self.economy.engine_semantics_version != 11 or meta["active_tick"] is not None
+        renewal_enabled = (self.economy.engine_semantics_version == 11 or (
+            self.economy.engine_semantics_version >= 16 and self.config.get("external_gateway", {}).get(
+                "local_turn_renewal_contract") == "paused-next-turn-v2"))
+        if (not renewal_enabled or meta["active_tick"] is not None
                 or meta["status"] not in {"created", "paused"}
                 or target_tick != self.store.tick + 1):
-            raise ExternalAgentError(409, "renewal requires the next day of a paused local semantics-11 world", "renewal_boundary")
+            raise ExternalAgentError(409, "renewal requires the next day of an opted-in paused local world", "renewal_boundary")
         current = self.turn(auth)  # validates residency, scope and next wake
         if int(current["target_tick"]) != target_tick:
             raise ExternalAgentError(409, "not this citizen's next wake", "renewal_boundary")
@@ -758,9 +761,9 @@ class ExternalAgentService:
             # exact without contacting the external agent.
             if self._replay_commons_precedes_control(tick):
                 self._restore_replay_commons(tick)
-                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
+                self._replay_decisions(tick, before_night=True)
             else:
-                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
+                self._replay_decisions(tick, before_night=True)
                 self._restore_replay_commons(tick)
             return
         while True:

@@ -68,6 +68,7 @@ world's allowance; retain it when reconciling total test spend.
 | `runs/jev-hybrid.yaml` | Jev; low confidence produces a local wait | Scripted | USD 5 |
 | `runs/jev-hermes-baseline.yaml` | Existing unrestricted DeepSeek/MiniMax policy | Existing DeepSeek/MiniMax M3 Hermes routes | USD 1 |
 | `runs/jev-hermes-live.yaml` | Jev for eligible bounded routine choices | Same DeepSeek/MiniMax M3 Hermes routes | USD 1 |
+| `runs/jev-hermes-100-live.yaml` | Jev v2 policy for ordinary citizens | Direct DeepSeek/MiniMax; ten external Hermes citizens when the operator is started | USD 10 |
 
 OpenRouter is reserved for Jev. Readiness and the physical-dispatch guard reject
 other OpenRouter models and chat routes, including routes in older live profiles.
@@ -148,6 +149,63 @@ exact observation, question IDs, menu, model route and policy. A changed menu
 cannot use the legacy approximate replay lookup. A replay creates its own run;
 the source database remains unchanged. Copying a live run to a new location is
 not permission to replenish or duplicate its spending allowance.
+
+## Longer live test with ten Hermes citizens
+
+The 100-tick profile is a prospective operational test, not a matched comparison
+with the earlier three-day worlds. It starts eight native citizens, a smaller
+institutional population, three unlisted firms, and ten separately admitted
+Hermes citizens. Unlisted firms avoid making every citizen a daily price-discovery
+portfolio reviewer. Specialized decisions still use their original chat routes.
+
+`bounded-economic-choice-v2` retains v1 for exact replay and gives Jev an explicit
+policy objective: suitable employment, modest affordable consumption near one
+unit plus dependents, and a cash reserve. The quantity target is a declared policy
+preference, not a measured hunger state. The v2 compiler includes that intermediate
+quantity and excludes staff personal turns. It preserves wait, escalation,
+currency, stock, eligibility and engine validation. Frozen studies require matching
+policy/compiler versions across snapshots and arms.
+
+The new `llm.response_contract: required-json-v2` includes the response schema on
+the initial chat request and pauses on a failed contract after the existing single
+repair. `providers.minimax.minimum_output_tokens: 8192` gives MiniMax M3 room for
+reasoning and its JSON answer. The gateway applies this floor before recording
+the request, estimating cost and dispatching, including repair. Other profiles retain
+their existing output limits and response behavior.
+
+Start a new paused server, then use its printed run ID:
+
+```powershell
+.\.venv\Scripts\python.exe run.py --config runs/jev-hermes-100-live.yaml --preflight-live --serve --host 127.0.0.1 --port 18774 --ticks 100 --approve-live-inference
+.\.venv\Scripts\python.exe scripts/hermes_citizens.py --run-id RUN_ID --url http://127.0.0.1:18774 --setup --keep-active-world
+```
+
+The setup provisions the same ten named personas in new per-world Hermes
+profiles and leaves the previously selected city intact. Their existing default
+is `openai-codex/gpt-5.6-luna`, using Hermes' existing ChatGPT authentication;
+this does not use OpenRouter. The world uses a separate local passport database.
+The Hermes operator accepts explicit loopback HTTP ports only. Its
+`paused-next-turn-v2` renewal contract lets a semantics-16-or-later local world
+renew an expired, unconsumed next-day window, retaining scope, paused-state,
+receipt and audit checks. Hosted renewal remains unavailable.
+
+Advance the admission tick once, verify tick 1 is paused, then collect 99 more
+days with all ten Hermes citizens:
+
+```powershell
+Invoke-RestMethod -Method Post -Uri http://127.0.0.1:18774/api/run/step -ContentType application/json -Body '{}'
+.\.venv\Scripts\python.exe scripts/hermes_citizens.py --run-id RUN_ID --url http://127.0.0.1:18774 --days 99 --workers 5 --supervise
+```
+
+Do not start a second clock controller while the operator is active. It advances
+only after every citizen has a queued receipt, preserves failed attempts, and
+stops on unresolved failure. Tick 1 is admission; ticks 2–100 allow up to 990
+Hermes decisions. Hermes inference is outside the app's USD ledger and uses its
+own provider account limits. If a session stops early, inspect its retained
+status and launch only the remaining days to tick 100.
+
+The [September 19 longer-test record](plans/2026-09-19-jev-100-tick-live-test.md)
+separates completed live evidence from the pending Hermes continuation.
 
 ## Prospective comparison workflow
 

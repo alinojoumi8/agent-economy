@@ -54,10 +54,15 @@ def typed_handler(request):
 
 
 @pytest.mark.parametrize("profile", ["jev-offline.yaml", "jev-live.yaml"])
-def test_world_reconciles_and_replays_exactly(tmp_path, monkeypatch, profile):
+@pytest.mark.parametrize("version", ["bounded-economic-choice-v1", "bounded-economic-choice-v2"])
+def test_world_reconciles_and_replays_exactly(tmp_path, monkeypatch, profile, version):
     monkeypatch.setenv("OPENROUTER_API_KEY", "private-fixture-value")
     transport(monkeypatch, typed_handler)
     config = load_config(ROOT / "runs" / profile)
+    config["llm"]["decision_policy"]["version"] = version
+    if version.endswith("v2"):
+        config["firms"]["listed"] = 0
+        config["llm"]["response_contract"] = "required-json-v2"
     config.update(checkpoint_dir=str(tmp_path / "checkpoints"), report_dir=str(tmp_path / "reports"))
     store, world, run_id = open_run(config, None, None, data_dir=tmp_path)
     path = Path(store.path)
@@ -128,3 +133,16 @@ def test_cohort_assignment_and_compute_eligibility_are_stable(store, monkeypatch
     assert policy.prepare(context, 4) is None
     context["compute_plan"] = {"tier": "premium"}
     assert policy.prepare(context, 4) is not None
+
+
+def test_v2_leaves_staff_personal_turns_on_the_existing_policy(store, monkeypatch):
+    monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    config, context = configuration(), observation()
+    context["agent"]["role"] = "reporter"
+    original = TypedDecisionPolicy(Gateway(store, config), config)
+    assert original.prepare(context, 4) is not None
+    config["llm"]["decision_policy"]["version"] = "bounded-economic-choice-v2"
+    revised = TypedDecisionPolicy(Gateway(store, config), config)
+    assert revised.prepare(context, 4) is None
+    context["agent"]["role"] = None
+    assert revised.prepare(context, 4) is not None

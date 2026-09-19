@@ -1,0 +1,46 @@
+# Prospective operational soak: 100 total world ticks, all ten Hermes citizens.
+# Tick 1 admits the external cohort; ticks 2-100 collect real Hermes decisions.
+extends: jev-hermes-live.yaml
+seed: 20260919
+
+population:
+  size: 8
+firms:
+  count: 3
+  listed: 0
+  target_headcount: 4
+political_model:
+  house_seats: 2
+  senate_seats: 1
+outlets:
+  - {id: 1, name: The Ledger, slant: pro-market-sensational}
+behavior:
+  act_every: 1
+  portfolio_every: 14
+  career_every: 30
+  institutional_act_every: 7
+conversations:
+  turns: 2
+cognition:
+  memory_rollup_every: 30
+budget:
+  cap_usd: 10.0
+  conversation_pairs: 1
+  oracle_reserve_usd: 0.0
+  report_reserve_usd: 0.0
+llm:
+  response_contract: required-json-v2
+  providers:
+    minimax:
+      minimum_output_tokens: 8192
+  decision_policy:
+    version: bounded-economic-choice-v2
+external_gateway:
+  local_turn_renewal_contract: paused-next-turn-v2
+  decision_seconds: 600
+  public_join:
+    world_name: Jev and Hermes 100-tick live test
+    seat_limit: 10
+    max_passports_per_owner: 10
+    passport_db_path: data/control-plane/jev-hermes-100-passports.db
+checkpoint_every: 10

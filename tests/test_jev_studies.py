@@ -20,10 +20,15 @@ def profiles():
         ("baseline", "jev-offline.yaml"), ("jev", "jev-live.yaml"))}
 
 
-def test_prospective_pair_and_frozen_roundtrip(tmp_path, monkeypatch):
+@pytest.mark.parametrize("version", ["bounded-economic-choice-v1", "bounded-economic-choice-v2"])
+def test_prospective_pair_and_frozen_roundtrip(tmp_path, monkeypatch, version):
     monkeypatch.setenv("OPENROUTER_API_KEY", "private-fixture-key")
     transport(monkeypatch, typed_handler)
     configs = profiles()
+    for config in configs.values():
+        config["llm"]["decision_policy"]["version"] = version
+        if version.endswith("v2"):
+            config["firms"]["listed"] = 0
     root = tmp_path / "study"
     prepare(configs, root, seeds=(7,), ticks=2)
     result = asyncio.run(execute(root, approve_live=True))

@@ -17,11 +17,11 @@ import sqlite3
 import statistics
 import time
 
-from agents.decision_candidates import COMPILER_VERSION, DecisionMenu
+from agents.decision_candidates import COMPILER_VERSIONS, DecisionMenu
 from agents.typed_policy import TypedDecisionPolicy
 from engine.store import Store
 from llm.decision_budget import tariffs_for, typed_targets
-from llm.decision_config import POLICY_VERSION, decision_policy
+from llm.decision_config import decision_policy
 from llm.decisions import canonical_json, decision_hash, validate_evaluation
 from llm.gateway import DEFAULT_PRICING, Gateway, LLMRequest
 from llm.readiness import validate_llm_config
@@ -38,10 +38,12 @@ METRICS = ("unemployment", "gdp_proxy", "cpi", "gini", "sentiment")
 
 
 def frozen_menu(record):
-    if record.get("compiler") != COMPILER_VERSION or record.get("contract") != POLICY_VERSION:
+    compiler = COMPILER_VERSIONS.get(record.get("contract"))
+    if compiler is None or record.get("compiler") != compiler:
         raise ValueError("frozen record uses another compiler or policy")
     menu = DecisionMenu(record["observation_hash"], canonical_json(record["candidates"]),
-        canonical_json(validate_evaluation(record["evaluation"])), record["baseline_choice"])
+        canonical_json(validate_evaluation(record["evaluation"])), record["baseline_choice"],
+        compiler_version=compiler)
     if menu.menu_hash != record["menu_hash"]:
         raise ValueError("frozen candidate menu identity changed")
     criteria = menu.evaluation["questions"]["action"]["criteria"]
@@ -176,7 +178,9 @@ def prepare(configs: dict, output: Path, *, seeds=(1, 2), ticks=3,
         bindings.append(GatewayBinding(key=key, config_sha256=gateway_config_identity(config),
             targets=tuple(GatewayTarget(provider=p, model=m) for p, m in targets)))
     inputs = read_snapshots(snapshots) if snapshots else None
-    manifest = {"protocol": PROTOCOL, "compiler": COMPILER_VERSION, "policy": POLICY_VERSION,
+    if inputs and any(r["contract"] != policy["version"] for r in inputs["records"]):
+        raise ValueError("frozen observations and study policy versions differ")
+    manifest = {"protocol": PROTOCOL, "compiler": COMPILER_VERSIONS[policy["version"]], "policy": policy["version"],
         "source": code_identity(), "configs": prepared, "seeds": list(seeds), "ticks": ticks,
         "wall_seconds": wall_seconds, "snapshots": inputs,
         "metrics": list(METRICS), "limits": {"max_calls": max_calls, "max_usd": max_usd},

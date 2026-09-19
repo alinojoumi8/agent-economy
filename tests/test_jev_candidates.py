@@ -94,3 +94,21 @@ def test_required_civic_work_is_not_replaced_by_routine_choices():
     menu = compile_candidates(context, 4, decision_policy(configuration()))
     assert menu.unsupported_reason == "required_civic_action"
     assert {c["id"] for c in menu.candidates} == {"wait", "escalate"}
+
+
+def test_v2_adds_declared_consumption_target_without_changing_v1():
+    config, context = configuration(), observation()
+    context["agent"]["dependents"] = 1
+    context["prices"][0].update(price=50, inventory=8)
+    original = compile_candidates(context, 4, decision_policy(config))
+    config["llm"]["decision_policy"]["version"] = "bounded-economic-choice-v2"
+    revised = compile_candidates(context, 4, decision_policy(config))
+    quantities = lambda menu: {c["facts"].get("quantity") for c in menu.candidates}
+    assert 2 not in quantities(original) and 2 in quantities(revised)
+    assert original.compiler_version == "shopping-job-bundles-v1"
+    assert revised.compiler_version == "shopping-job-bundles-v2"
+    assert revised.menu_hash != original.menu_hash
+    assert "declared_policy_objective" not in original.evaluation["state"]
+    objective = revised.evaluation["state"]["declared_policy_objective"]
+    assert objective["consumption_target_units"] == 2
+    assert objective["reserve_floor_cents"] == 2400
