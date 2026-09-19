@@ -71,7 +71,7 @@ def test_world_reconciles_and_replays_exactly(tmp_path, monkeypatch, profile, ve
             for _ in range(3):
                 await world.step()
         asyncio.run(run_days())
-        world.economy.ledger.reconcile()
+        assert world.economy.ledger.reconcile()[0]
         receipts = [json.loads(row["payload_json"]) for row in store.query(
             "SELECT payload_json FROM events WHERE kind='typed_decision'")]
         assert receipts
@@ -93,7 +93,7 @@ def test_world_reconciles_and_replays_exactly(tmp_path, monkeypatch, profile, ve
     replay_store, replay_world, _ = open_run({}, None, run_id, data_dir=tmp_path)
     try:
         asyncio.run(replay_headless(replay_world, 3))
-        replay_world.economy.ledger.reconcile()
+        assert replay_world.economy.ledger.reconcile()[0]
         proof = verify_replay(path, replay_store.path)
         assert proof["exact"], proof["differences"]
         assert replay_world.gateway._live_dispatch_count == 0

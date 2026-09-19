@@ -967,7 +967,7 @@ def test_local_expired_turn_renewal_is_audited_and_preserves_receipts(tmp_path, 
         assert queued['status'] == 'queued'
         with pytest.raises(ExternalAgentError, match='already been'):
             service.renew_local_turn(auth, target_tick=turn['target_tick'])
-        assert world.economy.ledger.reconcile()
+        assert world.economy.ledger.reconcile()[0]
     finally:
         world.close()
 
