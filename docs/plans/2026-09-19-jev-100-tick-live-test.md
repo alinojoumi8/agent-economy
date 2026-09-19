@@ -2,8 +2,8 @@
 
 The requested target is a fresh 100-tick world. Run `e911d9c2a8` is now running
 under the ten-citizen Hermes supervisor. The latest audited boundary in this
-record is **tick 40 of 100**; this is not a completed 100-tick result. All ten
-citizens submitted decisions on ticks 2–40. The original launch was blocked by
+record is **tick 82 of 100**; this is not a completed 100-tick result. All ten
+citizens submitted decisions on ticks 2–82. The original launch was blocked by
 automatic approval review. The user requested another attempt, and the current
 supervised continuation was accepted.
 
@@ -190,6 +190,33 @@ reconcile the ledger and replay the completed source with network access
 disabled. No claim about 100-tick reliability or Hermes decision quality can
 be made from these early ticks.
 
+## Browser repair and continued progress
+
+The live browser exposed `THREE.Object3D.add` errors when switching to 3D in a
+world without recorded places. The scenery group was empty, and spreading its
+children called `add()` with no object. The renderer now transfers each existing
+child explicitly. A 37-citizen, zero-place browser regression reproduced the
+error before the fix and passed afterward, including selection and Atlas/3D
+remounts. This changes presentation only; the source world and v2 policy remain
+unchanged. The production frontend was rebuilt and the existing browser reloaded
+without restarting the server or its supervisor. A separate background tab loaded
+the actual world's 3D canvas successfully with no browser console errors.
+
+This profile has no recorded place coordinates and does not enable parcel
+construction. Those notices describe the run's configuration; restarting the
+same world cannot supply missing historical movement or construction records.
+
+Through tick 82, all 810 post-admission Hermes turns were submitted. Native cost
+was USD 0.764671246, with 346 Jev selections, 64 outside-menu turns, balanced
+ledgers and no native provider failures, repairs or malformed-output no-ops.
+The only Jev action rejection remains the unavailable application at tick 38.
+Six Hermes CLI timeouts were recovered at ticks 53, 55, 56, 67, 79 and 82; these
+are separate from native provider errors. At tick 79 the decision was already
+queued when the timeout was handled, with no retry journaled. Ethan's tick-82
+attempts had a missing receipt and then a timeout before the third attempt
+succeeded. All ten citizens have exactly one executed submission on both ticks
+79 and 82. The same supervisor continues toward tick 100.
+
 ## Verification
 
 The initial focused suite passed **181 tests** across Jev, external gateway,
@@ -247,9 +274,18 @@ The affected recovery shard passed all ten tests on Linux Python 3.12.13 in
 working checkout changed during execution; it was interrupted after one failed
 and two passed tests and rerun from an isolated, stable checkout.
 
-CI for `869de4c` passed all 34 jobs, including the affected recovery shards and
-dashboard. The later transient-read regression failed before its fix; afterward
+CI for `869de4c` completed successfully, including the affected recovery shards
+and dashboard. The later transient-read regression failed before its fix; afterward
 all 52 operator/supervision tests passed in 8.98 seconds. The new cases cover
 read recovery and exhaustion, redacted diagnostics, a write applied before its
-response is lost, and non-retryable HTTP/JSON failures. Remote CI for this later
-change is separate and must pass before any merge.
+response is lost, and non-retryable HTTP/JSON failures. CI for `9d55563` completed
+with 32 jobs passed and two conditional jobs skipped: the generic matrix
+placeholder and Hosted PostgreSQL / S3 integration. The newer frontend repair
+requires its own current-head CI before any merge.
+
+The empty-scenery repair passed all 15 city-viewport browser tests in 58.1 seconds,
+all 284 dashboard unit tests, TypeScript checking, license-notice verification,
+and the production build. The existing bundle-size warning remains. The new
+regression first failed with four `Object3D.add(... undefined)` console errors;
+after the fix, the real served 3D world also reported a ready canvas and no
+console errors. This does not complete the pending 100-tick audit.
