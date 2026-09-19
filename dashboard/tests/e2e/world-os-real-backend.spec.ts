@@ -18,7 +18,9 @@ test.describe('provider-free real backend City smoke',()=>{
       await page.getByRole('link',{name:label,exact:true}).click();
       const panel=page.getByRole('dialog',{name:label+' in City'});
       await expect(panel).toBeVisible();
-      await expect(panel.getByRole('status')).toHaveCount(0,{timeout:15000});
+      // The causal graph exposes its current zoom as a live status readout.
+      // Wait for actual workspace and nested loaders, not every status region.
+      await expect(panel.locator('.world-os-loading')).toHaveCount(0,{timeout:15000});
       await expect(panel.getByRole('alert')).toHaveCount(0);
       await page.getByRole('button',{name:'Back to City · Esc'}).click();
       await expect(page.getByLabel('Keyboard explorer')).toBeEnabled();
