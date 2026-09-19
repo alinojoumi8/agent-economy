@@ -363,8 +363,11 @@ jobs:
         run: python -m pip install --require-hashes -r requirements.lock
       - name: Verify original allowances, saved policies, pauses and recorded replay
         # Controlled loopback HTTP only; no provider keys or paid completions.
+        # CPython 3.12's timed traceback dump can race with live frames and crash:
+        # https://github.com/python/cpython/issues/140815
+        # Keep pytest's fatal-signal handler and the ten-minute job limit.
         run: >
-          python -m pytest -v --durations=10 -o faulthandler_timeout=90
+          python -m pytest -v --durations=10 -o faulthandler_timeout=0
           -p scripts.pytest_shard --ci-shard-index ${{ matrix.shard }} --ci-shard-count 4
           tests/test_policy_recovery.py tests/test_policy_origins.py
 
@@ -429,8 +432,9 @@ jobs:
       - name: Verify saved origins, both market continuations and operator recovery
         # Separate these actual world/replay executions from the broader
         # research job, which already took eight minutes before operator cases.
+        # Avoid the same CPython 3.12 timed-traceback race described above.
         run: >
-          python -m pytest -v --durations=10 -o faulthandler_timeout=90
+          python -m pytest -v --durations=10 -o faulthandler_timeout=0
           -p scripts.pytest_shard --ci-shard-index ${{ matrix.shard }} --ci-shard-count 4
           tests/test_checkpoint_origins.py
           tests/test_checkpoint_studies.py

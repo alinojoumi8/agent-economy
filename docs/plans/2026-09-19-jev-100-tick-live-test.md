@@ -2,8 +2,8 @@
 
 The requested target is a fresh 100-tick world. Run `e911d9c2a8` is now running
 under the ten-citizen Hermes supervisor. The latest audited boundary in this
-record is **tick 20 of 100**; this is not a completed 100-tick result. All ten
-citizens submitted decisions on ticks 2–20. The original launch was blocked by
+record is **tick 30 of 100**; this is not a completed 100-tick result. All ten
+citizens submitted decisions on ticks 2–30. The original launch was blocked by
 automatic approval review. The user requested another attempt, and the current
 supervised continuation was accepted.
 
@@ -117,12 +117,13 @@ normal process completion when a fresh creation-time lookup is no longer possibl
 This hardens cleanup; it does not establish that this race caused the observed
 exit code 15. The live continuation retains the same profiles, models and world.
 
-Through tick 20, Jev selected 85 menus: 68 purchases and 17 combined
+Through tick 30, Jev selected 128 menus: 101 purchases and 27 combined
 purchase/job-application choices. Every selected action passed engine validation.
-Fifteen specialized turns stayed outside Jev's bounded menu. Native inference cost
-USD 0.191782636, including USD 0.010519866 for Jev, with no provider failures,
-repairs, or malformed-output no-ops. Jev's median latency was 457 ms and its
-95th percentile was 592 ms. All 190 post-admission Hermes turns were submitted.
+Twenty-two specialized turns stayed outside Jev's bounded menu. Native inference cost
+USD 0.298431880, including USD 0.016019430 for Jev, with no provider failures,
+repairs, or malformed-output no-ops. Jev's median latency was 452.5 ms and its
+95th percentile was 611 ms. All 290 post-admission Hermes turns were submitted.
+All 37 agents were alive; ten were employed.
 The ledger reconciled with no account mismatches. Live aggregate snapshots use
 `progress-audit.json`; admission evidence is reconstructed only from its frozen
 tick-1 snapshot. Budget reservations observed during an active tick are not
@@ -147,6 +148,11 @@ The automatic tick-20 checkpoint also replayed exactly as
 ledgers and unchanged snapshot. Its SHA-256 remained
 `20d6783f7250f1923afc44c40d9403baca363d42a08a447843b1e516424e1126`.
 
+The tick-30 checkpoint replayed exactly as `replay-e911d9c2a8-efc4a11832`,
+also with balanced source/replay ledgers, blocked HTTP, removed provider keys,
+zero live dispatches and unchanged snapshot bytes. Its SHA-256 remained
+`972815f16cdda4a74570b906894c731984f963d48bc2fe91190650cbf7f319ec`.
+
 Accepted actions do not imply new economic effects. Through tick 20, one Jev
 citizen made 17 accepted application attempts for four distinct jobs. The engine
 reused existing pending applications, so 13 attempts created no new application.
@@ -155,6 +161,8 @@ citizen's active applications to already visible jobs and excludes them before
 ranking new application choices. Pending offers can still be accepted. V1/v2
 behavior is preserved, and this ongoing world remains on v2; the 100-tick results
 must not be presented as a live evaluation of v3.
+Through tick 30, there were 27 accepted application attempts, eight new
+applications and 19 accepted attempts that reused an existing application.
 
 After tick 100, audit all native and external receipts, rejection causes,
 fallback attendance, model identity, usage and persistent Jev reservations;
@@ -202,6 +210,19 @@ The prospective v3 change passed 100 tests across candidate compilation, typed
 contracts, gateway, integration, resilience, runtime, frozen studies and labor.
 They include v1/v2/v3 whole-world replay and prospective/frozen study roundtrips,
 actor-owned pending applications, filtering before ranking, offer acceptance and
-malformed-history rejection. The initial v3 test pass found a mistaken fixture
-expectation for wait (`do_nothing`, not an empty action list); the assertion was
-corrected before the successful final run.
+malformed-history rejection. Documentation checks passed another 22 tests.
+
+Two Linux Python 3.12.14 CI jobs crashed immediately during their timed traceback
+dump. A bounded standard-library-only probe reproduced a crash on local Linux
+Python 3.12.13 at its first timed dump. Without that timer it completed 452,870
+JSON cycles in 12 seconds; Python 3.14.4 completed 469,302 cycles with the timer.
+[CPython issue 140815](https://github.com/python/cpython/issues/140815) documents
+the matching invalid/freed-frame traceback race. This supports the diagnosis;
+the CI failures did not produce a C-level backtrace proving the identical cause.
+
+The two affected CI jobs now disable timed traceback dumps while retaining
+pytest's fatal-signal handler, all assertions and their ten-minute job limits.
+The affected recovery shard passed all ten tests on Linux Python 3.12.13 in
+138.32 seconds. Its first local attempt correctly refused resume because the
+working checkout changed during execution; it was interrupted after one failed
+and two passed tests and rerun from an isolated, stable checkout.
