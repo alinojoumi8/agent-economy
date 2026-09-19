@@ -166,6 +166,16 @@ quantity and excludes staff personal turns. It preserves wait, escalation,
 currency, stock, eligibility and engine validation. Frozen studies require matching
 policy/compiler versions across snapshots and arms.
 
+`bounded-economic-choice-v3` adds the actor's own pending or negotiating
+applications, bounded to the jobs already visible in their observation. Its
+`shopping-job-bundles-v3` compiler excludes those jobs before ranking fresh
+applications, while preserving incoming offers for acceptance. It refuses an
+observation that omits the application history. This fixes a v2 pattern where
+repeated accepted application actions returned an existing application and
+created no new opportunity. Select v3 explicitly for a new run or matched study;
+the ongoing 100-tick v2 world retains its recorded policy. V1 and v2 observations
+and candidate behavior remain unchanged.
+
 The new `llm.response_contract: required-json-v2` includes the response schema on
 the initial chat request and pauses on a failed contract after the existing single
 repair. `providers.minimax.minimum_output_tokens: 8192` gives MiniMax M3 room for

@@ -54,13 +54,13 @@ def typed_handler(request):
 
 
 @pytest.mark.parametrize("profile", ["jev-offline.yaml", "jev-live.yaml"])
-@pytest.mark.parametrize("version", ["bounded-economic-choice-v1", "bounded-economic-choice-v2"])
+@pytest.mark.parametrize("version", ["bounded-economic-choice-v1", "bounded-economic-choice-v2", "bounded-economic-choice-v3"])
 def test_world_reconciles_and_replays_exactly(tmp_path, monkeypatch, profile, version):
     monkeypatch.setenv("OPENROUTER_API_KEY", "private-fixture-value")
     transport(monkeypatch, typed_handler)
     config = load_config(ROOT / "runs" / profile)
     config["llm"]["decision_policy"]["version"] = version
-    if version.endswith("v2"):
+    if version != "bounded-economic-choice-v1":
         config["firms"]["listed"] = 0
         config["llm"]["response_contract"] = "required-json-v2"
     config.update(checkpoint_dir=str(tmp_path / "checkpoints"), report_dir=str(tmp_path / "reports"))
@@ -135,14 +135,49 @@ def test_cohort_assignment_and_compute_eligibility_are_stable(store, monkeypatch
     assert policy.prepare(context, 4) is not None
 
 
-def test_v2_leaves_staff_personal_turns_on_the_existing_policy(store, monkeypatch):
+@pytest.mark.parametrize("version", ["bounded-economic-choice-v2", "bounded-economic-choice-v3"])
+def test_v2_leaves_staff_personal_turns_on_the_existing_policy(store, monkeypatch, version):
     monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
     config, context = configuration(), observation()
     context["agent"]["role"] = "reporter"
     original = TypedDecisionPolicy(Gateway(store, config), config)
     assert original.prepare(context, 4) is not None
-    config["llm"]["decision_policy"]["version"] = "bounded-economic-choice-v2"
+    config["llm"]["decision_policy"]["version"] = version
+    context["pending_job_ids"] = []
     revised = TypedDecisionPolicy(Gateway(store, config), config)
     assert revised.prepare(context, 4) is None
     context["agent"]["role"] = None
     assert revised.prepare(context, 4) is not None
+
+
+@pytest.mark.parametrize("version", ["bounded-economic-choice-v1", "bounded-economic-choice-v2", "bounded-economic-choice-v3"])
+def test_pending_job_projection_is_owned_bounded_and_prospective(tmp_path, version):
+    config = load_config(ROOT / "runs/jev-offline.yaml")
+    config["llm"]["decision_policy"]["version"] = version
+    store, world, _ = open_run(config, None, None, data_dir=tmp_path)
+    try:
+        actors = store.query("SELECT * FROM agents WHERE kind='citizen' AND age>=18 AND health='healthy' "
+                             "AND retired=0 AND id NOT IN (SELECT founder_agent_id FROM firms "
+                             "WHERE founder_agent_id IS NOT NULL) ORDER BY id LIMIT 2")
+        actor, other = actors
+        firm = store.scalar("SELECT id FROM firms ORDER BY id LIMIT 1")
+        labor = world.economy.labor
+        jobs = [labor.post_job(0, firm, f"Opening {i}", 1_000_000 + i) for i in range(4)]
+        pending = labor.apply_job(0, actor["id"], jobs[0])
+        negotiating = labor.apply_job(0, actor["id"], jobs[1])
+        rejected = labor.apply_job(0, actor["id"], jobs[2])
+        assert pending and negotiating and rejected
+        store.update("applications", negotiating, state="negotiating")
+        store.update("applications", rejected, state="rejected")
+        assert labor.apply_job(0, other["id"], jobs[3])
+        before = store.scalar("SELECT COUNT(*) FROM applications")
+        context = world.runtime.ctx._citizen_context(actor, 4, retrieve_memories=False)
+        if version.endswith("v3"):
+            assert context["pending_job_ids"] == sorted(jobs[:2])
+            assert set(jobs).issubset({j["job_id"] for j in context["jobs"]})
+        else:
+            assert "pending_job_ids" not in context
+        assert store.scalar("SELECT COUNT(*) FROM applications") == before
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        world.close()

@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 
-from llm.decision_config import POLICY_VERSION_V2, decision_policy
+from llm.decision_config import POLICY_VERSION_V2, POLICY_VERSION_V3, decision_policy
 from llm.decisions import decision_hash
 from llm.gateway import LLMRequest, LLMResponse
 from .decision_candidates import DecisionMenu, compile_candidates
@@ -28,7 +28,7 @@ class TypedDecisionPolicy:
         policy = self.policy
         if policy is None or tick < policy["activation_tick"] or context.get("purpose") != "decision":
             return None
-        if policy["version"] == POLICY_VERSION_V2 and context.get("agent", {}).get("role"):
+        if policy["version"] in {POLICY_VERSION_V2, POLICY_VERSION_V3} and context.get("agent", {}).get("role"):
             return None
         agent_id = context["agent"]["id"]
         plan = context.get("compute_plan") or {}

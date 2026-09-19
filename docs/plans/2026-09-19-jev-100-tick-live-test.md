@@ -147,6 +147,15 @@ The automatic tick-20 checkpoint also replayed exactly as
 ledgers and unchanged snapshot. Its SHA-256 remained
 `20d6783f7250f1923afc44c40d9403baca363d42a08a447843b1e516424e1126`.
 
+Accepted actions do not imply new economic effects. Through tick 20, one Jev
+citizen made 17 accepted application attempts for four distinct jobs. The engine
+reused existing pending applications, so 13 attempts created no new application.
+The prospective `bounded-economic-choice-v3` policy now observes only that
+citizen's active applications to already visible jobs and excludes them before
+ranking new application choices. Pending offers can still be accepted. V1/v2
+behavior is preserved, and this ongoing world remains on v2; the 100-tick results
+must not be presented as a live evaluation of v3.
+
 After tick 100, audit all native and external receipts, rejection causes,
 fallback attendance, model identity, usage and persistent Jev reservations;
 reconcile the ledger and replay the completed source with network access
@@ -188,3 +197,11 @@ retained the correct business in the URL and ultimately displayed the right
 selection. The test now waits for the viewport's existing ready signal before
 asserting the restored selection; five consecutive local repetitions passed in
 38.4 seconds. No application frontend behavior changed in this correction.
+
+The prospective v3 change passed 100 tests across candidate compilation, typed
+contracts, gateway, integration, resilience, runtime, frozen studies and labor.
+They include v1/v2/v3 whole-world replay and prospective/frozen study roundtrips,
+actor-owned pending applications, filtering before ranking, offer acceptance and
+malformed-history rejection. The initial v3 test pass found a mistaken fixture
+expectation for wait (`do_nothing`, not an empty action list); the assertion was
+corrected before the successful final run.

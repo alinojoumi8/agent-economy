@@ -112,3 +112,46 @@ def test_v2_adds_declared_consumption_target_without_changing_v1():
     objective = revised.evaluation["state"]["declared_policy_objective"]
     assert objective["consumption_target_units"] == 2
     assert objective["reserve_floor_cents"] == 2400
+
+
+def test_v3_excludes_pending_applications_before_ranking_but_preserves_offers():
+    config, context = configuration(), observation()
+    config["llm"]["decision_policy"].update(version="bounded-economic-choice-v2", max_job_options=1)
+    context["pending_job_ids"] = [1]
+    context["jobs"].append({"job_id": 2, "title": "Another job", "wage": 900, "currency_code": "CAD"})
+    legacy = compile_candidates(context, 4, decision_policy(config))
+    assert {a["job_id"] for c in legacy.candidates for a in c["actions"] if a["type"] == "apply_job"} == {1}
+    config["llm"]["decision_policy"]["version"] = "bounded-economic-choice-v3"
+    untouched = copy.deepcopy(context)
+    menu = compile_candidates(context, 4, decision_policy(config))
+    job_actions = [a for c in menu.candidates for a in c["actions"] if a["type"] == "apply_job"]
+    assert job_actions and {a["job_id"] for a in job_actions} == {2}
+    assert context == untouched
+    assert menu.compiler_version == "shopping-job-bundles-v3"
+    assert menu.evaluation["state"]["declared_policy_objective"]["consumption_target_units"] == 1
+
+    context["incoming_job_offers"] = [{"offer_id": 9, "job_id": 1, "offered_wage": 1000, "currency_code": "CAD"}]
+    offers = compile_candidates(context, 4, decision_policy(config))
+    actions = [a for c in offers.candidates for a in c["actions"]]
+    assert {a["offer_id"] for a in actions if a["type"] == "accept_job_offer"} == {9}
+    assert not any(a["type"] == "apply_job" for a in actions)
+
+
+def test_v3_all_jobs_pending_keeps_shopping_and_wait_without_new_applications():
+    config, context = configuration(), observation()
+    config["llm"]["decision_policy"]["version"] = "bounded-economic-choice-v3"
+    context["pending_job_ids"] = [1]
+    menu = compile_candidates(context, 4, decision_policy(config))
+    actions = [a for c in menu.candidates for a in c["actions"]]
+    assert any(a["type"] == "buy_goods" for a in actions)
+    assert not any(a["type"] == "apply_job" for a in actions)
+    assert menu.actions_for("wait") == [{"type": "do_nothing"}]
+
+
+@pytest.mark.parametrize("pending", [None, "1", [True], [0], [1, 1]])
+def test_v3_refuses_missing_or_malformed_pending_job_history(pending):
+    config, context = configuration(), observation()
+    config["llm"]["decision_policy"]["version"] = "bounded-economic-choice-v3"
+    context["pending_job_ids"] = pending
+    with pytest.raises(ValueError, match="pending job"):
+        compile_candidates(context, 4, decision_policy(config))
