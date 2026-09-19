@@ -182,3 +182,41 @@ def test_opt_in_does_not_change_legacy_world(tmp_path):
         assert not store.scalar('SELECT COUNT(*) FROM regions')
     finally:
         world.close()
+
+
+@pytest.mark.parametrize("tamper", ["frontier_sites", "frontier_history", "regions"])
+def test_pre_frontier_storage_compares_without_hiding_new_state(tmp_path, monkeypatch, tamper):
+    import hashlib
+    import shutil
+    from pathlib import Path
+    from engine.migrations import registry
+    from engine.store import Store
+
+    migrations = registry._MIGRATIONS
+    monkeypatch.setattr(registry, "_MIGRATIONS", tuple(m for m in migrations if m.version < 28))
+    cfg = config()
+    cfg.pop("frontier")
+    source, world, _ = open_run(cfg, None, None, data_dir=tmp_path / "old")
+    source.insert("regions", region_key="legacy", name="Legacy", currency_code="USD",
+                  population_target=100, specialization_json="[]", x=0.5, y=0.5,
+                  legal_ruleset="legacy")
+    path = Path(source.path)
+    world.close()
+    before = hashlib.sha256(path.read_bytes()).hexdigest()
+    replay_path = tmp_path / "upgraded.db"
+    shutil.copy2(path, replay_path)
+    monkeypatch.setattr(registry, "_MIGRATIONS", migrations)
+    replay = Store(str(replay_path))
+    try:
+        assert verify_replay(path, replay_path)["exact"]
+        if tamper == "frontier_sites":
+            replay.execute("INSERT INTO frontier_sites(x,y,terrain,resource,capacity) VALUES(0,0,'plain','wood',1)")
+        elif tamper == "frontier_history":
+            replay.execute("INSERT INTO frontier_history(tick,data_json) VALUES(1,'{}')")
+        else:
+            # A changed date must remain visible even with frontier disabled.
+            replay.execute("UPDATE regions SET created_tick=1")
+        assert tamper in verify_replay(path, replay_path)["differences"]
+    finally:
+        replay.close()
+    assert hashlib.sha256(path.read_bytes()).hexdigest() == before

@@ -188,6 +188,14 @@ SEMANTIC_EXTENSIONS = ((17, 22, HOUSEHOLD_DECISION_TABLES), (18, 23, DAILY_TIME_
                        (19, 24, ESTATE_CASH_TABLES), (20, 25, ASSET_SUCCESSION_TABLES),
                        (21, 26, POPULATION_TABLES))
 URBAN_TABLES = {"urban_parcels", "urban_construction_projects", "urban_construction_receipts", "urban_projection_history"}
+FRONTIER_TABLES = {"frontier_sites", "frontier_settlements", "frontier_residences",
+                   "frontier_tasks", "frontier_votes", "frontier_history"}
+
+
+def _frontier_enabled(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
+    config = json.loads(row[0]) if row else {}
+    return config.get("frontier", {}).get("version") == 1
 
 
 def _urban_enabled(conn: sqlite3.Connection) -> bool:
@@ -210,6 +218,9 @@ def _tables(conn: sqlite3.Connection) -> list[str]:
     names = [str(row[0]) for row in rows if str(row[0]) not in EXCLUDED_TABLES]
     if not _urban_enabled(conn):
         names = [name for name in names if name not in URBAN_TABLES
+                 or conn.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone() is not None]
+    if not _frontier_enabled(conn):
+        names = [name for name in names if name not in FRONTIER_TABLES
                  or conn.execute(f'SELECT 1 FROM "{name}" LIMIT 1').fetchone() is not None]
     for semantics, _, tables in SEMANTIC_EXTENSIONS:
         if _engine_semantics(conn) >= semantics:
@@ -758,6 +769,12 @@ def _table_digest(
     all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
     ignored = (IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
                | TABLE_IGNORED_COLUMNS.get(table, set()))
+    # Migration 28 gives historical regions a zero default. Omit only that
+    # unused extension; nonzero dates and enabled frontier worlds remain exact.
+    if (table == "regions" and "created_tick" in all_columns
+            and not _frontier_enabled(conn)
+            and conn.execute("SELECT 1 FROM regions WHERE created_tick<>0 LIMIT 1").fetchone() is None):
+        ignored = ignored | {"created_tick"}
     columns = [column for column in all_columns if column not in ignored]
     where = ""
     params: tuple[Any, ...] = ()
@@ -777,6 +794,8 @@ def _table_digest(
         omitted = [str(version) for semantics, version, _ in SEMANTIC_EXTENSIONS if _engine_semantics(conn) < semantics]
         if not _urban_enabled(conn):
             omitted.append("27")
+        if not _frontier_enabled(conn):
+            omitted.append("28")
         where = " WHERE version NOT IN (" + ",".join(omitted) + ")" if omitted else ""
     order = " ORDER BY id" if "id" in all_columns else ""
     selected = ",".join(f'"{column}"' for column in columns)
