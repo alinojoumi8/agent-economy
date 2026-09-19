@@ -1,4 +1,5 @@
-import { Link, useSearchParams } from "react-router";
+import { useRef } from "react";
+import { Link, useLocation, useSearchParams } from "react-router";
 import { cityWorkspaceHref } from "../app/cityNavigation.js";
 import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { priceLabFrameMatches, priceLabSelection, priceNumber } from "./priceLabModel.js";
@@ -64,6 +65,13 @@ function ExecutionChart({ points, domain, currency }: { points: Point[]; domain:
 
 export function PriceLab() {
   const [params, setParams] = useSearchParams();
+  const location = useLocation();
+  const pendingParams = useRef(params);
+  const renderedLocation = useRef(location);
+  if (renderedLocation.current !== location) {
+    renderedLocation.current = location;
+    pendingParams.current = params;
+  }
   const selection = priceLabSelection(params);
   const query = new URLSearchParams({ window: String(selection.window) });
   if (selection.firmId !== undefined) query.set("firm_id", String(selection.firmId));
@@ -75,14 +83,17 @@ export function PriceLab() {
   const observation = data?.observation;
   const error = selection.invalid ? new Error("Invalid price selection. Clear it to choose a business.")
     : projection.error || (projection.envelope && !matches ? new Error("Price data does not match the selected run, fork, tick or instrument.") : null);
-  const patch = (name: string, value: string) => setParams(previous => {
-    const next = new URLSearchParams(previous);
+  const updateParams = (change: (next: URLSearchParams) => void) => {
+    const next = new URLSearchParams(pendingParams.current);
+    change(next);
+    pendingParams.current = next;
+    setParams(next);
+  };
+  const patch = (name: string, value: string) => updateParams(next => {
     if (value) next.set(name, value); else next.delete(name);
-    return next;
   });
-  const clear = () => setParams(previous => {
-    const next = new URLSearchParams(previous);
-    next.delete("price_firm"); next.delete("price_window"); return next;
+  const clear = () => updateParams(next => {
+    next.delete("price_firm"); next.delete("price_window");
   });
   const evidence = observation?.goods.executed_price.evidence || [];
 

@@ -24,6 +24,7 @@ export type ObserverViewState = {
   household: number | null;
   institution: string | null;
   camera: { x: number; y: number; zoom: number } | null;
+  camera3d: string | null;
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters";
@@ -45,6 +46,7 @@ export type ObserverViewPatch = Partial<{
   household: number | null;
   institution: string | null;
   camera: { x: number; y: number; zoom: number } | null;
+  camera3d: string | null;
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters" | null;

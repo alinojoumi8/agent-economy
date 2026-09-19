@@ -1,5 +1,6 @@
 import { CITY_LAYERS } from "../lib/civicCity.js";
 import { parseCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
+import { normalizeCityCamera3d } from "../lib/cityCamera3d.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
@@ -61,6 +62,7 @@ export function parseObserverViewState(params) {
     household,
     institution,
     camera: parseCityCamera(params.get("camera")),
+    camera3d: normalizeCityCamera3d(params.get("camera3d")),
     place: society || project || firm || agent ? null : place,
     project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
@@ -103,6 +105,7 @@ export function patchObserverViewState(params, patch) {
   }
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
   if ("camera" in patch) setOrDelete("camera", serializeCityCamera(patch.camera));
+  if ("camera3d" in patch) setOrDelete("camera3d", normalizeCityCamera3d(patch.camera3d));
   for (const key of ["household", "institution"]) {
     if (!(key in patch)) continue;
     const selected = key === "institution" ? institutionIdentifier(patch[key])

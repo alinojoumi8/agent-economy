@@ -444,6 +444,8 @@ jobs:
           agent-connections.spec.ts
           world-os-routes.spec.ts
           live-city-context.spec.ts
+          city-unified.spec.ts
+          city-viewport.spec.ts
         working-directory: dashboard
       - name: Build React dashboard
         run: npm run build

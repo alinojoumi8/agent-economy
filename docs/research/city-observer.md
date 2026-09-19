@@ -34,7 +34,10 @@ are collapsed below the primary map/activity area. One simulation clock in the
 header controls the live local run; historical views are read-only.
 
 Experimental 3D uses the common keyboard explorer and evidence lens, with focus,
-pan, rotation and zoom. Missing recorded locations are labelled display slots.
+pan, rotation and zoom. Its camera position, target and zoom persist in the
+observer URL and saved observations. Atlas and 3D keep separate camera poses
+when switching views. Manual 3D camera changes stop following a person.
+Missing recorded locations are labelled display slots.
 A run without presence cannot acquire recorded journeys by changing renderer.
 Recorded day is offered only when presence exists. Construction capability is
 explicit: use a fresh `runs/simcity.yaml` world to exercise permitted company

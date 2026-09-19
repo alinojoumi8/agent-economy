@@ -5,6 +5,7 @@ import { activityForCity, projectCity, type CityInstance } from './cityProjectio
 import { UrbanDevelopment, type CityProposal } from './UrbanDevelopment';
 import { CityControls } from './CityControls';
 import './city.css';
+import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
 
 type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal};
 export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal}:Props){
@@ -15,6 +16,13 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   const preview=useCallback((proposal:CityProposal)=>scene.current?.preview(proposal),[]);
   const [stats,setStats]=useState<SceneStats|null>(null);
   const pickRef=useRef<(key:string)=>void>(()=>{});
+  const cameraChangeRef=useRef<(value:string)=>void>(()=>{});
+  const cameraBookmark=normalizeCityCamera3d(params.get('camera3d'));
+  cameraChangeRef.current=(value:string)=>{
+    if(value===cameraBookmark&&!params.has('follow'))return;
+    if(embedded&&onSelect){onSelect({camera3d:value,follow:null});return;}
+    const next=new URLSearchParams(params);next.set('camera3d',value);next.delete('follow');setParams(next);
+  };
   const parsed=useMemo(()=>{try{return {city:envelope?projectCity(envelope):null,error:''};}catch(e){return {city:null,error:e instanceof Error?e.message:'Invalid city data.'};}},[envelope]);
   const city=parsed.city;
   const selectedType=embedded?(params.has('firm')?'firm':params.has('place')?'place':params.get('institution')?.startsWith('bank:')?'bank':'agent'):params.get('cityType')||'agent';
@@ -39,12 +47,13 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
     try{
       instance=new CityScene(host.current,key=>pickRef.current(key),()=>setReady(true),setGraphicsError,value=>{
         setStats(previous=>previous&&previous.calls===value.calls&&previous.triangles===value.triangles&&previous.geometries===value.geometries&&previous.textures===value.textures?previous:value);
-      });
+      },value=>cameraChangeRef.current(value));
       scene.current=instance;
     }catch(e){setGraphicsError('3D graphics are unavailable on this device. The 2D atlas remains available.');}
     return()=>{instance?.dispose();scene.current=null;};
   },[]);
   useEffect(()=>{if(city)scene.current?.update(city,visible,selected?.key||null,events,running);else scene.current?.clear();},[city,visible,selected?.key,events,running]);
+  useEffect(()=>{scene.current?.restoreCamera(cameraBookmark);},[cameraBookmark,ready]);
   useEffect(()=>{if(followId&&selected?.entityType==='agent'&&selected.entityId===followId)scene.current?.focus(selected.key);},[city,selected?.key,followId,ready]);
   useEffect(()=>{if(embedded)scene.current?.preview(proposal||null);},[embedded,proposal,ready]);
   const evidenceUrl=(item:CityInstance)=>{
@@ -55,7 +64,9 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   };
   const eventUrl=(id:number)=>{const q=new URLSearchParams();q.set('event',String(id));if(historical)q.set('tick',tick);if(params.get('fork'))q.set('fork',params.get('fork')!);return `/runs/${encodeURIComponent(runId)}/investigations?${q}`;};
   const failure=error||parsed.error||graphicsError;
-  const camera=(action:Parameters<CityScene['cameraAction']>[0])=>scene.current?.cameraAction(action);
+  const persistCamera=()=>{const value=scene.current?.cameraState();if(value)cameraChangeRef.current(value);};
+  const camera=(action:Parameters<CityScene['cameraAction']>[0])=>{scene.current?.cameraAction(action);persistCamera();};
+  const focusSelection=()=>{if(selected){scene.current?.focus(selected.key);persistCamera();}};
   return <section className={'city3d'+(embedded?' city3d--embedded':'')} aria-label="Agent Economy 3D city">
     {!embedded&&<header className="city3d-heading"><div><p>AGENT ECONOMY / CITY 3D</p><h2>A city with an economy.</h2></div>
       <div className="city3d-state"><strong>{historical?'Historical':stale?'Stale':status||'Connecting'}</strong><span>Tick {city?.envelope.tick??'—'} · {city?.instances.filter(i=>i.entityType==='agent').length??0} visible agents</span></div></header>}
@@ -66,7 +77,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
       <button onClick={()=>{setSearch('');setRegion('all');setLayer('all');camera('reset');}}>Reset view</button>
       {city?.instances.some(i=>i.provenance==='derived')&&<button onClick={()=>scene.current?.fitVisible(true)}>Find unlocated entities</button>}
     </div>}
-    {embedded&&<div className="city3d-focus"><button disabled={!selected} onClick={()=>selected&&scene.current?.focus(selected.key)}>Focus {selected?.name||'selection'}</button><button onClick={()=>camera('reset')}>Show all</button>
+    {embedded&&<div className="city3d-focus"><button disabled={!selected} onClick={focusSelection}>Focus {selected?.name||'selection'}</button><button onClick={()=>camera('reset')}>Show all</button>
       {!city?.instances.some(i=>i.provenance==='observed')&&<p className="city-capability-note">This run has no recorded place coordinates. Positions below are display slots. Use the activity feed to follow what agents did.</p>}
     </div>}
     <div className="city3d-layout">
@@ -93,7 +104,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
           {selected.capacity!==null&&<div><dt>Place capacity</dt><dd>{selected.capacity}</dd></div>}
           <div><dt>Committed tick</dt><dd>{city?.envelope.tick}</dd></div></dl>
           {historical&&<p className="city3d-note">Name, category and region metadata may reflect current records; this is not a complete historical reconstruction.</p>}
-          <button onClick={()=>scene.current?.focus(selected.key)}>Focus camera</button>
+          <button onClick={focusSelection}>Focus camera</button>
           <Link className="city3d-evidence" to={evidenceUrl(selected)}>Open {selected.entityType==='agent'?'agent':selected.entityType==='firm'?'business':selected.entityType==='bank'?'bank':'place'} evidence ↗</Link>
           {!!events.filter(e=>e.targets.includes(selected.key)).length&&<div className="city3d-outcomes"><h4>Committed outcomes at this tick</h4>{events.filter(e=>e.targets.includes(selected.key)).map(e=><Link key={e.id} to={eventUrl(e.id)}>{e.kind.replaceAll('_',' ')} · #{e.id}</Link>)}</div>}
         </>:<><h3>Follow a citizen.<br/>Inspect a business.</h3><p>Select a building or choose an entity below. Every selection leads back to the simulation’s records.</p></>}

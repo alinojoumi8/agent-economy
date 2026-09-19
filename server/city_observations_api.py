@@ -36,16 +36,16 @@ class CityObservationsBody(BaseModel):
 def validate_observations(entries: list[str], context: dict, current_tick: int) -> list[str]:
     """Admit bounded observer URL fields, never evidence payloads or credentials."""
     allowed = {"tick", "fork", "event", "agent", "firm", "place", "project", "household",
-               "institution", "camera", "follow", "layer", "q", "population", "activeOnly", "view", "activity", "actor"}
+               "institution", "camera", "camera3d", "follow", "layer", "q", "population", "activeOnly", "view", "activity", "actor"}
     if len(entries) > 20 or len(set(entries)) != len(entries):
         raise ValueError("at most 20 distinct observations are allowed")
     normalized = []
-    order = ("fork", "tick", "event", "layer", "q", "activeOnly", "camera", "household", "institution",
+    order = ("fork", "tick", "event", "layer", "q", "activeOnly", "camera", "camera3d", "household", "institution",
              "firm", "agent", "place", "project", "population", "view", "activity", "actor", "follow")
     for entry in entries:
         if not isinstance(entry, str) or len(entry) > 2048:
             raise ValueError("observation is too long")
-        pairs = parse_qsl(entry, keep_blank_values=True, strict_parsing=True, max_num_fields=19)
+        pairs = parse_qsl(entry, keep_blank_values=True, strict_parsing=True, max_num_fields=20)
         values = dict(pairs)
         if len(pairs) != len(values) or not values.keys() <= allowed:
             raise ValueError("unsupported observation fields")
@@ -85,6 +85,18 @@ def validate_observations(entries: list[str], context: dict, current_tick: int) 
                                         for value in (x, y, zoom))
             if values["camera"] == "50,50,3.05":
                 del values["camera"]
+        if "camera3d" in values:
+            camera3d = values["camera3d"]
+            if len(camera3d) > 160 or not re.fullmatch(r"-?\d+(?:\.\d+)?(?:,-?\d+(?:\.\d+)?){6}", camera3d):
+                raise ValueError("invalid 3D observation camera")
+            coordinates = list(map(float, camera3d.split(",")))
+            if (not all(math.isfinite(value) for value in coordinates)
+                    or any(abs(value) > 10000 for value in coordinates[:6])
+                    or not .35 <= coordinates[6] <= 12
+                    or math.dist(coordinates[:3], coordinates[3:6]) < .01):
+                raise ValueError("invalid 3D observation camera")
+            values["camera3d"] = ",".join(f"{math.floor(value * 1000 + .5) / 1000:.3f}".rstrip("0").rstrip(".")
+                                           for value in coordinates)
         # URLSearchParams encoding and the observer parser's canonical field order.
         normalized.append(urlencode([(key, values[key]) for key in order if values.get(key)], safe="*").replace("~", "%7E"))
     if len(set(normalized)) != len(normalized):

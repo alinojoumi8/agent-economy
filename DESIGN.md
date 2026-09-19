@@ -268,7 +268,9 @@ and current-only balance summaries.
 ### Civic City
 
 Atlas, List, experimental 3D and capability-gated Recorded day share selection,
-filters, observation tick and the evidence lens. Legacy 2.5D links remain readable
+filters, observation tick and the evidence lens. Atlas and 3D retain their own
+bounded camera positions in the same observer bookmark, including evidence-panel
+round trips, browser history and reload. Legacy 2.5D links remain readable
 but the redundant toggle is removed. The complete-day feed pages forty cards at
 a stable event high-water mark; totals and marker sets do not depend on that page.
 Pending requests, completed outcomes, rejections, cancellations and neutral

@@ -29,6 +29,7 @@ test("observer URL state restores valid city and common selections", () => {
     household: null,
     institution: null,
     camera: null,
+    camera3d: null,
     place: null,
     project: null,
     population: "all",
@@ -64,6 +65,7 @@ test("observer patches omit defaults and retain unrelated route state", () => {
     agent: null,
     firm: null,
     camera: null,
+    camera3d: null,
     population: "core",
     view: "atlas",
   });
@@ -94,6 +96,7 @@ test("agent and place selections remain mutually exclusive", () => {
     household: null,
     institution: null,
     camera: null,
+    camera3d: null,
     project: null,
     population: "core",
     view: "diorama",

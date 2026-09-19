@@ -34,6 +34,31 @@ test('mount/unmount releases canvas and supports repeated 2D fallback',async({pa
   }
 });
 
+test('3D camera bookmarks restore the rendered view across modes, evidence, history and reload',async({page})=>{
+  await openCity(page);
+  await page.getByLabel('Keyboard explorer').selectOption('agent:125');
+  await page.getByRole('button',{name:'Focus Citizen 125',exact:true}).click();
+  const focused=new URL(page.url()).searchParams.get('camera3d');
+  expect(focused).toBeTruthy();
+  await page.getByRole('button',{name:'Pan east',exact:true}).click();
+  const moved=new URL(page.url()).searchParams.get('camera3d');
+  expect(moved).not.toBe(focused);
+  const canvas=page.getByTestId('city-canvas');
+  await expect(canvas).toHaveAttribute('data-camera3d',moved!);
+  await page.goBack();await expect(canvas).toHaveAttribute('data-camera3d',focused!);
+  await page.goForward();await expect(canvas).toHaveAttribute('data-camera3d',moved!);
+  await page.getByRole('button',{name:'Atlas',exact:true}).click();
+  await page.getByRole('button',{name:'3D · experimental',exact:true}).click();
+  await expect(canvas).toHaveAttribute('data-camera3d',moved!);
+  await page.getByRole('link',{name:'Open citizen dossier'}).click();
+  await expect(page.getByRole('dialog',{name:'People in City'})).toBeVisible();
+  await page.getByRole('button',{name:'Back to City · Esc'}).click();
+  await expect(canvas).toHaveAttribute('data-camera3d',moved!);
+  await page.reload();await expect(canvas).toHaveAttribute('data-ready','true');
+  await expect(canvas).toHaveAttribute('data-camera3d',moved!);
+  await expect(page.getByLabel('Keyboard explorer')).toHaveValue('agent:125');
+});
+
 test('streets and housing keep rendering resources bounded when layers change',async({page})=>{
   await openCity(page);
   await page.getByText('Projection and rendering evidence',{exact:true}).click();

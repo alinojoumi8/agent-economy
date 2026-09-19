@@ -650,6 +650,7 @@ test("price lab gives goods and equities the same historical scope and preserves
   await expect(page.getByText("Historical order-book state is unavailable. Current quotes are not shown here.")).toBeVisible();
   await page.getByLabel("Measurement window").selectOption("7");
   await page.getByLabel("Business", { exact: true }).selectOption("2");
+  await expect(page.getByLabel("Measurement window")).toHaveValue("7");
   await expect(page.getByLabel("Business", { exact: true })).toHaveValue("2");
   await expect(page.getByRole("link", { name: "Inspect business" })).toHaveAttribute("href", "/runs/run-demo/organizations/firm/2?fork=fork-1&tick=3");
   const last = priceRequests.at(-1)!;

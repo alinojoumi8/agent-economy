@@ -22,9 +22,9 @@ export function observationRecord(data, scope) {
 }
 
 function displayPatch(state) {
-  const { tick, fork, event, agent, firm, place, project, household, institution, camera,
+  const { tick, fork, event, agent, firm, place, project, household, institution, camera, camera3d,
     follow, layer, q, population, activeOnly, view, activity, actor } = state;
-  return { tick, fork, event, agent, firm, place, project, household, institution, camera,
+  return { tick, fork, event, agent, firm, place, project, household, institution, camera, camera3d,
     follow, layer, q, population, activeOnly, view, activity, actor };
 }
 

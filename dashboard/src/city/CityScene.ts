@@ -4,6 +4,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { disposeKit, loadCityAssets, type AssetKit } from './assetLoader';
 import type { CityActivity, CityInstance, CityProjection } from './cityProjection';
 import { buildCityScenery, disposeCityScenery } from './CityScenery';
+import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
 export type SceneStats={calls:number;triangles:number;geometries:number;textures:number;frames:number};
 export class CityScene {
   private renderer:WebGLRenderer;
@@ -29,6 +30,8 @@ export class CityScene {
   private frame=0;
   private frameCount=0;
   private initiallyFramed=false;
+  private initialCamera:string|null=null;
+  private gestureCamera:string|null=null;
   private running=false;
   private reduced=window.matchMedia('(prefers-reduced-motion: reduce)');
   private pointer=new Vector2();
@@ -41,7 +44,8 @@ export class CityScene {
   private pendingMaterial=new MeshLambertMaterial({color:'#df9b25',side:2});
   private recordedMaterial=new MeshLambertMaterial({color:'#657888',side:2});
   constructor(private host:HTMLElement,private onPick:(key:string)=>void,private onReady:()=>void,
-    private onError:(message:string)=>void,private onStats:(stats:SceneStats)=>void){
+    private onError:(message:string)=>void,private onStats:(stats:SceneStats)=>void,
+    private onCameraChange?:(state:string)=>void){
     this.renderer=new WebGLRenderer({antialias:false,alpha:false,powerPreference:'low-power'});
     // Canvas contains geometry only; HTML labels stay at native resolution.
     // A bounded render scale keeps the 300-citizen view usable on software GPUs.
@@ -60,6 +64,8 @@ export class CityScene {
     this.controls.minPolarAngle=.25;
     this.controls.minZoom=.35;this.controls.maxZoom=12;
     this.controls.addEventListener('change',this.requestRender);
+    this.controls.addEventListener('start',this.cameraGestureStart);
+    this.controls.addEventListener('end',this.cameraGestureEnd);
     this.controls.update();
     this.scene.add(new AmbientLight('#dce8f1',1.15));
     const sun=new DirectionalLight('#ffe9c6',2.0);sun.position.set(-35,80,50);this.scene.add(sun);
@@ -93,6 +99,18 @@ export class CityScene {
     this.camera.updateProjectionMatrix();this.requestRender();
   }
   private requestRender=()=>{if(this.alive&&!this.failed&&!this.frame)this.frame=requestAnimationFrame(this.render);};
+  private cameraGestureStart=()=>{this.gestureCamera=this.cameraState();};
+  private cameraGestureEnd=()=>{const state=this.cameraState();if(state&&state!==this.gestureCamera)this.onCameraChange?.(state);};
+  cameraState(){
+    return normalizeCityCamera3d([...this.camera.position.toArray(),...this.controls.target.toArray(),this.camera.zoom].join(','));
+  }
+  restoreCamera(value:string|null){
+    const saved=normalizeCityCamera3d(value)||this.initialCamera;
+    if(!saved)return;
+    const [x,y,z,tx,ty,tz,zoom]=saved.split(',').map(Number);
+    this.camera.position.set(x,y,z);this.controls.target.set(tx,ty,tz);this.camera.zoom=zoom;
+    this.initiallyFramed=true;this.camera.updateProjectionMatrix();this.controls.update();this.requestRender();
+  }
   private render=(time:number)=>{
     this.frame=0;if(!this.alive||this.failed)return;
     this.markers.scale.setScalar(1); // Rings animate individually, never scale entity positions.
@@ -101,6 +119,7 @@ export class CityScene {
     }
     this.renderer.render(this.scene,this.camera);this.frameCount++;
     this.host.dataset.renderFrames=String(this.frameCount);
+    this.host.dataset.camera3d=this.cameraState()||'';
     const info=this.renderer.info;
     this.onStats({calls:info.render.calls,triangles:info.render.triangles,geometries:info.memory.geometries,textures:info.memory.textures,frames:this.frameCount});
     if(this.running&&!this.reduced.matches&&this.events.some(e=>(this.effects.get(e.id)||0)>time))this.requestRender();
@@ -149,9 +168,12 @@ export class CityScene {
     const scenery=buildCityScenery(this.projection.instances);
     this.scenery.add(...[...scenery.children]);
     this.updateMarkers();
-    if(!this.initiallyFramed){
+    if(!this.initialCamera){
+      const bookmark=this.initiallyFramed?this.cameraState():null;
       this.initiallyFramed=true;
       if(this.projection.regions.length&&this.filtered.some(i=>i.provenance==='observed'))this.focusRegion(this.projection.regions[0].id);else this.fitVisible();
+      this.initialCamera=this.cameraState();
+      if(bookmark)this.restoreCamera(bookmark);
     }
     this.requestRender();
   }
@@ -232,7 +254,10 @@ export class CityScene {
   }
   dispose(){
     this.alive=false;this.preview(null);this.abort.abort();cancelAnimationFrame(this.frame);this.observer.disconnect();
-    this.controls.removeEventListener('change',this.requestRender);this.controls.dispose();
+    this.controls.removeEventListener('change',this.requestRender);
+    this.controls.removeEventListener('start',this.cameraGestureStart);
+    this.controls.removeEventListener('end',this.cameraGestureEnd);
+    this.controls.dispose();
     this.reduced.removeEventListener('change',this.requestRender);
     this.renderer.domElement.removeEventListener('pointerdown',this.pointerDown);this.renderer.domElement.removeEventListener('pointerup',this.pointerUp);
     this.renderer.domElement.removeEventListener('webglcontextlost',this.contextLost);
