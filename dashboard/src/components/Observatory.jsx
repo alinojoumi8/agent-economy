@@ -31,6 +31,7 @@ export function Observatory({ hostedSession = null }) {
     : data.participant;
 
   return <div className="civic-observatory min-h-screen">
+    <a href="#main-content" className="skip-link">Skip to content</a>
     <RunHeader status={status} participant={participant} connected={connected} loading={loading}
       statusFresh={statusFresh} act={act}
       hosted={hosted} canControl={canControl}

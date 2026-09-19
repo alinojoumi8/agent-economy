@@ -6,28 +6,29 @@ import { UrbanDevelopment, type CityProposal } from './UrbanDevelopment';
 import { CityControls } from './CityControls';
 import './city.css';
 
-type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void};
-export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback}:Props){
+type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal};
+export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal}:Props){
   const host=useRef<HTMLDivElement>(null),scene=useRef<CityScene|null>(null);
   const [params,setParams]=useSearchParams();
   const [graphicsError,setGraphicsError]=useState(''),[ready,setReady]=useState(false);
   const [layer,setLayer]=useState('all'),[region,setRegion]=useState('all'),[search,setSearch]=useState('');
   const preview=useCallback((proposal:CityProposal)=>scene.current?.preview(proposal),[]);
   const [stats,setStats]=useState<SceneStats|null>(null);
-  const statsTime=useRef(0);
   const pickRef=useRef<(key:string)=>void>(()=>{});
   const parsed=useMemo(()=>{try{return {city:envelope?projectCity(envelope):null,error:''};}catch(e){return {city:null,error:e instanceof Error?e.message:'Invalid city data.'};}},[envelope]);
   const city=parsed.city;
-  const selectedType=params.get('cityType')||'agent';
-  const selectedId=Number(params.get('cityEntity')||params.get('agent'));
+  const selectedType=embedded?(params.has('firm')?'firm':params.has('place')?'place':params.get('institution')?.startsWith('bank:')?'bank':'agent'):params.get('cityType')||'agent';
+  const selectedId=embedded?Number(params.get('firm')||params.get('place')||params.get('institution')?.split(':')[1]||selectedAgentId):Number(params.get('cityEntity')||params.get('agent'));
   const selected=city?.instances.find(i=>i.entityType===selectedType&&i.entityId===selectedId)||null;
   const visible=useMemo(()=>city?.instances.filter(i=>(layer==='all'||i.entityType===layer)&&(region==='all'||String(i.regionId)===region)
-    &&(!search||`${i.name} ${i.entityType} ${i.entityId}`.toLowerCase().includes(search.toLowerCase())))||[],[city,layer,region,search]);
+    &&(!embedded||i.entityType!=='agent'||!visibleAgentIds||visibleAgentIds.includes(i.entityId))
+    &&(!search||`${i.name} ${i.entityType} ${i.entityId}`.toLowerCase().includes(search.toLowerCase())))||[],[city,layer,region,search,embedded,visibleAgentIds]);
   const events=useMemo(()=>city?activityForCity(city,snapshot):[],[city,snapshot]);
   const historical=tick!=='live';
   const running=!historical&&!stale&&status==='running';
   pickRef.current=(key:string)=>{
     const item=city?.instances.find(i=>i.key===key);if(!item)return;
+    if(embedded&&onSelect){onSelect(item.entityType==='bank'?{institution:`bank:${item.entityId}`}:{[item.entityType]:item.entityId});return;}
     const next=new URLSearchParams(params);next.set('cityType',item.entityType);next.set('cityEntity',String(item.entityId));
     if(item.entityType==='agent')next.set('agent',String(item.entityId));else next.delete('agent');
     setParams(next,{replace:true});
@@ -37,13 +38,15 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
     let instance:CityScene|undefined;
     try{
       instance=new CityScene(host.current,key=>pickRef.current(key),()=>setReady(true),setGraphicsError,value=>{
-        if(performance.now()-statsTime.current>1000){statsTime.current=performance.now();setStats(value);}
+        setStats(previous=>previous&&previous.calls===value.calls&&previous.triangles===value.triangles&&previous.geometries===value.geometries&&previous.textures===value.textures?previous:value);
       });
       scene.current=instance;
     }catch(e){setGraphicsError('3D graphics are unavailable on this device. The 2D atlas remains available.');}
     return()=>{instance?.dispose();scene.current=null;};
   },[]);
   useEffect(()=>{if(city)scene.current?.update(city,visible,selected?.key||null,events,running);else scene.current?.clear();},[city,visible,selected?.key,events,running]);
+  useEffect(()=>{if(followId&&selected?.entityType==='agent'&&selected.entityId===followId)scene.current?.focus(selected.key);},[city,selected?.key,followId,ready]);
+  useEffect(()=>{if(embedded)scene.current?.preview(proposal||null);},[embedded,proposal,ready]);
   const evidenceUrl=(item:CityInstance)=>{
     const scope=new URLSearchParams();if(params.get('fork'))scope.set('fork',params.get('fork')!);if(historical)scope.set('tick',tick);
     let path=item.entityType==='agent'?`people/${item.entityId}`:item.entityType==='firm'?`organizations/firm/${item.entityId}`:item.entityType==='bank'?`organizations/bank/${item.entityId}`:'world';
@@ -53,16 +56,19 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   const eventUrl=(id:number)=>{const q=new URLSearchParams();q.set('event',String(id));if(historical)q.set('tick',tick);if(params.get('fork'))q.set('fork',params.get('fork')!);return `/runs/${encodeURIComponent(runId)}/investigations?${q}`;};
   const failure=error||parsed.error||graphicsError;
   const camera=(action:Parameters<CityScene['cameraAction']>[0])=>scene.current?.cameraAction(action);
-  return <section className="city3d" aria-label="Agent Economy 3D city">
-    <header className="city3d-heading"><div><p>AGENT ECONOMY / CITY 3D</p><h2>A city with an economy.</h2></div>
-      <div className="city3d-state"><strong>{historical?'Historical':stale?'Stale':status||'Connecting'}</strong><span>Tick {city?.envelope.tick??'—'} · {city?.instances.filter(i=>i.entityType==='agent').length??0} visible agents</span></div></header>
-    <div className="city3d-toolbar" role="group" aria-label="City layers">
+  return <section className={'city3d'+(embedded?' city3d--embedded':'')} aria-label="Agent Economy 3D city">
+    {!embedded&&<header className="city3d-heading"><div><p>AGENT ECONOMY / CITY 3D</p><h2>A city with an economy.</h2></div>
+      <div className="city3d-state"><strong>{historical?'Historical':stale?'Stale':status||'Connecting'}</strong><span>Tick {city?.envelope.tick??'—'} · {city?.instances.filter(i=>i.entityType==='agent').length??0} visible agents</span></div></header>}
+    {!embedded&&<div className="city3d-toolbar" role="group" aria-label="City layers">
       <label>Show<select value={layer} onChange={e=>setLayer(e.target.value)}><option value="all">Everything</option><option value="place">Places</option><option value="firm">Businesses</option><option value="agent">Citizens</option><option value="bank">Banks</option></select></label>
       <label>District<select value={region} onChange={e=>{setRegion(e.target.value);if(e.target.value!=="all")scene.current?.focusRegion(Number(e.target.value));else camera("reset");}}><option value="all">All regions</option>{city?.regions.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></label>
       <label className="city3d-search">Find an entity<input aria-label="Search city" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Name or ID" maxLength={100}/></label>
       <button onClick={()=>{setSearch('');setRegion('all');setLayer('all');camera('reset');}}>Reset view</button>
       {city?.instances.some(i=>i.provenance==='derived')&&<button onClick={()=>scene.current?.fitVisible(true)}>Find unlocated entities</button>}
-    </div>
+    </div>}
+    {embedded&&<div className="city3d-focus"><button disabled={!selected} onClick={()=>selected&&scene.current?.focus(selected.key)}>Focus {selected?.name||'selection'}</button><button onClick={()=>camera('reset')}>Show all</button>
+      {!city?.instances.some(i=>i.provenance==='observed')&&<p className="city-capability-note">This run has no recorded place coordinates. Positions below are display slots. Use the activity feed to follow what agents did.</p>}
+    </div>}
     <div className="city3d-layout">
       <div className="city3d-field">
         <p className="city3d-gesture-help">Drag to move · Right-drag to rotate · Scroll or pinch to zoom</p>
@@ -76,9 +82,9 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
           <button onClick={()=>camera('north')} aria-label="Pan north">↑</button><button onClick={()=>camera('south')} aria-label="Pan south">↓</button>
           <button onClick={()=>camera('west')} aria-label="Pan west">←</button><button onClick={()=>camera('east')} aria-label="Pan east">→</button>
         </div>
-        <div className="city3d-legend"><span><i className="city3d-blue"/>Selected</span><span><i className="city3d-green"/>Committed outcome</span><span><i className="city3d-red"/>Rejected / cancelled</span></div>
+        <div className="city3d-legend"><span><i className="city3d-blue"/>Selected</span><span><i className="city3d-green"/>Completed</span><span><i className="city3d-red"/>Rejected / cancelled</span><span>Amber: pending · Gray: recorded</span></div>
       </div>
-      <aside className="city3d-inspector" aria-label="City entity inspector">
+      {!embedded&&<aside className="city3d-inspector" aria-label="City entity inspector">
         <p className="city3d-kicker">SELECT & EXPLORE</p>
         {selected?<><h3>{selected.name}</h3><p>{selected.entityType} #{selected.entityId} · {selected.kind.replaceAll('_',' ')}</p>
           <dl><div><dt>Location</dt><dd>{selected.provenance==='observed'?'Recorded place coordinates':'Derived display slot'}</dd></div>
@@ -96,12 +102,12 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
           {visible.map(i=><option key={i.key} value={i.key}>{i.entityType==='agent'?'●':i.entityType==='firm'?'▣':'⌂'} {i.name} · {i.entityType} {i.entityId}</option>)}
         </select>
         {!!city?.clusters.length&&<p className="city3d-note">Aggregated residents: {city.clusters.map(c=>`${c.name}: ${c.count}`).join(' · ')}. Individual locations are not exposed.</p>}
-      </aside>
+      </aside>}
     </div>
     <div className="city3d-notes">{city?.warnings.filter((_,index)=>historical||index<city.warnings.length-1).map(text=><p key={text}>{text}</p>)}
       <details><summary>Projection and rendering evidence</summary><code>{city?.envelope.snapshot_version||'No snapshot'} · layout {city?.city_layout_version} · {stats?`${stats.calls} draw calls / ${stats.triangles.toLocaleString()} triangles / ${stats.geometries} geometries / ${stats.textures} textures`: 'Renderer initializing'}</code></details>
     </div>
-    <UrbanDevelopment runId={runId} tick={tick} fork={params.get('fork')} stale={stale} onPreview={preview}/>
-    {!historical&&<CityControls runId={runId} selectedAgentId={selected?.entityType==='agent'?selected.entityId:null} stale={stale}/>}
+    {!embedded&&<UrbanDevelopment runId={runId} tick={tick} fork={params.get('fork')} stale={stale} onPreview={preview}/>}
+    {!embedded&&!historical&&<CityControls runId={runId} selectedAgentId={selected?.entityType==='agent'?selected.entityId:null} stale={stale}/>}
   </section>;
 }

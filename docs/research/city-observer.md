@@ -1,11 +1,52 @@
 # City observation and price inspection
 
-The City workspace connects Atlas, 2.5D Diorama and recorded-day playback to
+The City workspace connects Atlas, List, experimental 3D and recorded-day playback to
 one evidence inspector and the Price Discovery Lab. It observes simulation state
 without changing it; saved navigation belongs to the separate operator workspace.
 City now opens `/runs/:runId/world`; existing `/live-city` links redirect to its
 recorded-day view while preserving the observation context. Progress and
 remaining work are tracked in the [execution log](../plans/2026-09-06-research-city-execution.md).
+
+## City is the local home
+
+Local `/`, `/observatory` and `/runs/:runId/overview` resolve to City. Pulse
+and the workspace rail have been removed from local navigation. Existing dossier
+URLs still work: People, Businesses & banks, Markets, Law & civic life,
+Conversations & news, Economy and Evidence open as contextual City panels.
+**Back to City** or Escape restores selection, renderer, filters, camera and day.
+Tools contains research, reports, replay, forecasts, diagnostics and public Commons;
+agent onboarding remains under Connections. Hosted account/run screens retain
+their existing workflow.
+
+**What agents did** reads the whole selected committed day, with 40-event pages,
+agent/category filters and totals independent of the visible page. Atlas, List
+and 3D use the same selected day and activity markers. Proposed, queued and
+scheduled events are pending; a request is not a completed economic outcome.
+Unknown events remain neutral recorded headers without raw payloads.
+**Inspect this day** freezes the observation while the simulation advances.
+Native scripted activity is visible even with zero external-agent or LLM calls.
+
+Economy preserves current balance sheets and economic charts. These current-only
+operator summaries are explicitly unavailable at historical ticks. News and
+public conversations use their recorded day; authorized communication threads
+remain a separate disclosure. Provider diagnostics and Regions & settlements
+are collapsed below the primary map/activity area. One simulation clock in the
+header controls the live local run; historical views are read-only.
+
+Experimental 3D uses the common keyboard explorer and evidence lens, with focus,
+pan, rotation and zoom. Missing recorded locations are labelled display slots.
+A run without presence cannot acquire recorded journeys by changing renderer.
+Recorded day is offered only when presence exists. Construction capability is
+explicit: use a fresh `runs/simcity.yaml` world to exercise permitted company
+construction, escrow and completion; old profiles are not silently upgraded.
+2.5D Diorama bookmarks remain readable for compatibility, but that duplicate
+renderer is no longer in the main view selector.
+
+Production-bundle captures from the disposable scripted SimCity run (day 1):
+
+![City home with full-day agent activity](assets/city-unified-atlas.png)
+![Experimental 3D with the shared evidence inspector](assets/city-unified-3d.png)
+[Phone-width City view](assets/city-unified-mobile.png).
 
 ![Historical city and selected business, using the disposable 300-resident smoke world](assets/city-price-inspector.png)
 

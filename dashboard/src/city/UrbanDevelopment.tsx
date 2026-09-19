@@ -42,7 +42,9 @@ export function UrbanDevelopment({runId,tick,fork,stale,onPreview}:{runId:string
   }
   function allowed(type:string,id:number){const d=participant.data?.action_catalog?.find(d=>d.type===type);return d?.enabled!==false&&d?.fields.some(f=>f.name==='project_id'&&f.options?.some(o=>Number(o.value)===id));}
   const scope=new URLSearchParams();if(historical)scope.set('tick',tick);if(fork)scope.set('fork',fork);
-  if(!data?.enabled)return null;
+  if(query.isPending)return <p role="status">Reading construction capability…</p>;
+  if(query.isError)return <p role="alert">Construction evidence is unavailable. {query.error.message}</p>;
+  if(!data?.enabled)return <p className="city-capability-note">Parcel construction is not enabled in this run. The city displays the places and activity this run actually records; it cannot reconstruct missing movement or building history. Use a fresh SimCity profile to exercise those mechanics.</p>;
   return <section className="city3d-build" aria-label="City construction">
     <header><div><p className="city3d-kicker">BUILD THE CITY</p><h3>From a permit to a workplace</h3></div><span>{data.projects.filter(p=>p.status==='building').length} under construction · {data.projects.filter(p=>p.status==='completed').length} completed</span></header>
     {query.isError&&<p role="alert">Construction state is stale. Reconnecting; actions are disabled.</p>}
@@ -53,7 +55,7 @@ export function UrbanDevelopment({runId,tick,fork,stale,onPreview}:{runId:string
       <div className="city3d-quote"><strong>{template?.name}</strong><span>{template?.cost_cents.toLocaleString()} local currency cents · {template?.duration_ticks} ticks · capacity {template?.capacity}</span></div>
       <button disabled={disabled||!parcel||!chosenFirm||!permittedParcels.has(parcel.id)||descriptor?.enabled===false||!template}
         onClick={()=>queue('construct_building',{firm_id:Number(chosenFirm),parcel_id:parcel!.id,template_key:template!.template_key})}>Propose construction</button>
-      {parcel&&<p className="city3d-note">Outline is a proposal preview. It confers no ownership or building; the server checks the company’s region, zoning, permit and funds.</p>}
+      {parcel&&<p className="city3d-note">Selected parcel is a proposal preview; 3D shows its outline. It confers no ownership or building. The server checks the company’s region, zoning, permit and funds.</p>}
       {!firms.length&&<p className="city3d-note">Control an eligible citizen, apply for a business permit, attend the appointment, and found a company using the civic actions below. Construction becomes available to its founder.</p>}
     </div>}
     {error&&<p role="alert">{error}</p>}{notice&&<p role="status">{notice}</p>}

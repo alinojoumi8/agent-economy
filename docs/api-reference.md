@@ -5,6 +5,29 @@ tools. Local mode has no account authentication; keep the server on localhost.
 Local operator actions additionally require the operator session's CSRF token. FastAPI exposes
 interactive OpenAPI documentation at `/docs` while the app is running.
 
+## Committed City activity
+
+`GET /api/v2/city/activity` returns an ordinary observer envelope for one committed
+day. Parameters are `tick=live|N`, optional `fork_id`, `offset` (default 0),
+`limit` (1–200, default 40), optional positive `actor_id`, `category`, and optional
+`through_id` to keep pagination at one event high-water mark. Categories are
+all, work, markets, learning, business, construction, travel, communications,
+external, civic and other. Invalid category, cursor and future ticks are rejected.
+
+`total`, `counts`, `changed_agents`, `actor_activity` and `marker_events` cover
+the complete filtered day; `items` and `next_offset` page its cards. `day_total`
+retains the unfiltered count. Cards expose vetted actor/firm identities, explicit
+outcome labels and bounded public scalar details. They do not expose arbitrary
+event payloads, private reasoning or external request bodies. Unknown event kinds
+have neutral recorded headers. These read-only routes do not mutate economic
+state or contact a model provider.
+
+`GET /api/v2/city/news` and `GET /api/v2/city/conversations` read exactly the chosen
+day, support `limit` and descending positive `before_id`, and return
+`next_before_id` for pagination. News retains the existing grounded-number
+redaction. Public conversations are separate from authorization-scoped
+communication threads. All reads retain the selected fork/tick boundaries.
+
 ## Local research operator
 
 `/api/v2/operator/research` provides the local study library, reviewed drafts,

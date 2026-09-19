@@ -28,11 +28,12 @@ function CitizenMenuContent({
   pathname = "/",
   routerReady = false,
 }) {
-  const items = buildProductNavigation({ runId, navigation });
+  const items = buildProductNavigation({ runId, navigation }).filter(item => variant !== "connections" || ["join", "my_agents"].includes(item.key));
+  if (!items.length && variant === "connections") return null;
 
-  if (variant === "dropdown") {
+  if (variant === "dropdown" || variant === "connections") {
     return <details className="citizen-menu-dropdown">
-      <summary>Citizen menu <span aria-hidden="true">⌄</span></summary>
+      <summary>{variant === "connections" ? "Agent connections" : "Citizen menu"} <span aria-hidden="true">⌄</span></summary>
       <nav className="citizen-menu citizen-menu--panel" aria-label="Agent Economy sections">
         <MenuLinks items={items} pathname={pathname} routerReady={routerReady} />
       </nav>

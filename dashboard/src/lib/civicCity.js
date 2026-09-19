@@ -224,6 +224,7 @@ export function classifyEventLayer(event) {
 }
 
 export function eventActorIds(event) {
+  if (Array.isArray(event?.actor_ids)) return event.actor_ids.filter(id => Number.isSafeInteger(id) && id > 0);
   const ids = new Set();
   const visit = (value, key = "", depth = 0) => {
     if (depth > 3 || value === null || value === undefined) return;
@@ -316,7 +317,7 @@ export function deriveCityModel({
     group.forEach((agent, index) => {
       const observedX = normalizedCoordinate(agent.x);
       const observedY = normalizedCoordinate(agent.y);
-      const observed = observedX !== null && observedY !== null;
+      const observed = observedX !== null && observedY !== null && (!map || agent.place_id != null || agent.presence_source != null);
       if (observed) observedCount += 1;
       const point = observed
         ? { x: observedX, y: observedY }
@@ -324,8 +325,9 @@ export function deriveCityModel({
       const event = latestByAgent.get(String(agent.id)) || null;
       const runtimeActivity = runtimeByAgent.get(String(agent.id)) || null;
       const transitionEvent = event && Number(event.tick) === selectedTick ? event : null;
-      const transitionState = transitionEvent
-        ? String(transitionEvent.kind || "").toLowerCase() === "action_rejected"
+       const transitionState = transitionEvent
+         ? transitionEvent.outcome ? ({ completed: "settled", pending: "pending", rejected: "rejected", cancelled: "cancelled", recorded: "recorded" }[transitionEvent.outcome] || "recorded")
+         : String(transitionEvent.kind || "").toLowerCase() === "action_rejected"
           ? "rejected"
           : "settled"
         : null;

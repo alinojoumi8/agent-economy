@@ -8,7 +8,7 @@ test("selected-day map membership wins over current agents, runtime and stale pr
     agents: [{ id: 1, name: "Returned today", x: .9, y: .9, modeled_residence: { state: "resident" } },
       { id: 2, name: "Outside today", modeled_residence: { state: "outside" } }],
     map: {
-      agents: [{ id: 2, name: "Resident then", x: .2, y: .3, modeled_residence: { state: "resident" } }],
+      agents: [{ id: 2, name: "Resident then", place_id: 1, x: .2, y: .3, modeled_residence: { state: "resident" } }],
       core_agents: [{ id: 1, name: "Stale marker" }],
       presence: [{ agent_id: 1, tick: 1, slot: "business", x: .8, y: .8 }],
       population_summary: { total: 1, resident_population: 1, known_living_outside: 1 },

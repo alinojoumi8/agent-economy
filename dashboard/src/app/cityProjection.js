@@ -26,11 +26,12 @@ export async function loadCityProjection(scope, read) {
   requireFrame(map, scope, "world.map");
   const resolved = { ...scope, tick: String(map.tick), fork: map.fork_id ?? null };
   const pinned = projectionScopeParams(resolved);
-  const [civic, overview] = await Promise.all([
+  const [civic, overview, activity] = await Promise.all([
     read(`/api/v2/civic/summary?${pinned}`),
-    read(`/api/v2/snapshot?${pinned}&domains=summary,events`),
+    read(`/api/v2/snapshot?${pinned}&domains=summary`),
+    read(`/api/v2/city/activity?${pinned}&limit=40`),
   ]);
-  for (const [frame, projection] of [[civic, "civic.summary"], [overview, "world.snapshot"]]) {
+  for (const [frame, projection] of [[civic, "civic.summary"], [overview, "world.snapshot"], [activity, "city.activity"]]) {
     requireFrame(frame, resolved, projection);
     if ((frame.fork_id ?? null) !== resolved.fork || ["view_key", "policy_version", "semantics_version"]
       .some(key => frame[key] !== map[key])) {
@@ -40,8 +41,29 @@ export async function loadCityProjection(scope, read) {
   if (civic.data.tick !== undefined && civic.data.tick !== map.tick) {
     throw new Error("Civic evidence does not belong to the map's recorded tick.");
   }
-  return { envelope: map, map: map.data, civic: { ...civic.data, tick: map.tick }, overview,
+  validateActivity(activity, map);
+  return { envelope: map, map: map.data, civic: { ...civic.data, tick: map.tick }, overview, activity,
     agents: map.data.agents || [], firms: map.data.organizations || [] };
+}
+
+/** Validate every page against the same committed day and visibility policy. */
+export function validateActivity(frame, map) {
+  requireFrame(frame, { runId: map.run_id, fork: map.fork_id, tick: String(map.tick) }, "city.activity");
+  if (["view_key", "policy_version", "semantics_version"].some(key => frame[key] !== map[key])
+    || frame.fork_id !== map.fork_id || frame.data.tick !== map.tick
+    || frame.data.source !== "committed" || !Array.isArray(frame.data.items)
+    || frame.data.items.some(item => item.tick !== map.tick)) {
+    throw new Error("Activity does not belong to this city's selected day and visibility context.");
+  }
+  return frame;
+}
+
+/** Complete latest-event markers, independent of the paginated feed. */
+export function cityActivityMarkers(activity) {
+  if (Array.isArray(activity?.data?.marker_events)) return activity.data.marker_events;
+  const byId = new Map();
+  for (const item of activity?.data?.actor_activity || []) byId.set(item.event.id, item.event);
+  return [...byId.values()];
 }
 
 /** Load optional transcripts only after the shared map has resolved its day.

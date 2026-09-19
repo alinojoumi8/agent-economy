@@ -96,6 +96,17 @@ const EVENT_STATES = {
   construction_completed:'settled', construction_cancelled:'rejected', construction_demolished:'rejected',
 };
 export function activityForCity(city, snapshot) {
+  if (record(snapshot) && snapshot.projection === 'city.activity' && cityCoherence(snapshot) === cityCoherence(city.envelope)) {
+    const byId = new Map();
+    for (const event of snapshot.data?.marker_events || (snapshot.data?.actor_activity || []).map(row=>row.event)) {
+      if (!record(event) || !integer(event.id) || event.tick !== snapshot.tick || !Array.isArray(event.actor_ids)) continue;
+      const targets = city.instances.filter(i => i.entityType === 'agent' ? event.actor_ids.includes(i.entityId)
+        : i.entityType === 'firm' && event.firm_id === i.entityId).map(i=>i.key);
+      const state = {completed:'settled',rejected:'rejected',cancelled:'rejected',pending:'pending',recorded:'recorded'}[event.outcome] || 'recorded';
+      if(targets.length) byId.set(event.id,{id:event.id,tick:event.tick,kind:event.kind,state,targets});
+    }
+    return [...byId.values()].sort((a,b)=>b.id-a.id);
+  }
   if (!record(snapshot) || snapshot.projection!=='world.snapshot' || cityCoherence(snapshot)!==cityCoherence(city.envelope) || !Array.isArray(snapshot.data?.events?.items)) return [];
   const result=new Map();
   for (const event of snapshot.data?.events?.items || []) {

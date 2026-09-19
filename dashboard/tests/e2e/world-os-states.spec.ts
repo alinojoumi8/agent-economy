@@ -1,3 +1,4 @@
+import {activityFrame} from "./fixtures/activity";
 import { expect, test, type Page } from "@playwright/test";
 
 const baseEnvelope = {
@@ -45,6 +46,7 @@ async function mockCommonApis(page: Page, options: {
   mapAgents?: Array<Record<string, unknown>>;
   agentsError?: boolean;
 } = {}) {
+  await page.route("**/api/participant",route=>route.fulfill({json:{enabled:false,active:false}}));
   const status = options.status ?? "running";
   const cityAgents = options.agents ?? agents;
   const mapAgents = options.mapAgents ?? cityAgents.map(agent => ({
@@ -57,6 +59,7 @@ async function mockCommonApis(page: Page, options: {
     const requestedTick = requestUrl.searchParams.get("tick");
     const frame = { ...baseEnvelope, fork_id: requestUrl.searchParams.get("fork_id"),
       tick: requestedTick && requestedTick !== "live" ? Number(requestedTick) : 6 };
+    if (path === "/api/v2/city/activity") return route.fulfill({json:activityFrame(frame,[{id:9,tick:frame.tick,kind:'goods_sale'}])});
     if (path === "/api/v2/snapshot") {
       return route.fulfill({ json: {
         ...frame, projection: "world.snapshot", data: {
@@ -120,6 +123,8 @@ async function mockCommonApis(page: Page, options: {
     if (path === "/api/v2/operator/investigations") {
       return route.fulfill({ json: { items: [] } });
     }
+    if(path==='/api/v2/urban-development')return route.fulfill({json:{...baseEnvelope,projection:'urban.development',data:{enabled:false}}});
+    if(path==='/api/v2/city/news'||path==='/api/v2/city/conversations')return route.fulfill({json:{...baseEnvelope,projection:path.endsWith('news')?'city.news':'city.conversations',data:{tick:baseEnvelope.tick,items:[],next_before_id:null}}});
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
 
@@ -156,7 +161,8 @@ test("live city failed status is truthful", async ({ page }) => {
   await mockCommonApis(page, { status: "failed" });
   await page.goto("/runs/run-demo/world");
   await expect(page.getByText("Run failed", { exact: true })).toBeVisible();
-  await expect(page.getByText("Final inference fabric", { exact: true })).toBeVisible();
+  await page.getByText("Provider diagnostics",{exact:true}).click();
+  await expect(page.getByText("This run has ended. Current provider activity is unavailable.")).toBeVisible();
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
   await expect(page.locator(".civic-city__instruments > div").filter({ hasText: "World time" }).locator(".civic-city__instrument-value")).toHaveText("Current");
 });
@@ -168,8 +174,9 @@ test("historical tick preserves run identity and label", async ({ page }) => {
   page.on("request", request => { if (request.url().includes("/api/llm/runtime")) runtimeRequests.push(request.url()); });
   await page.goto("/runs/run-demo/world?tick=4");
   await expect(page.getByText("Historical tick 4", { exact: true })).toBeVisible();
+  await page.getByText("Provider diagnostics",{exact:true}).click();
   await expect(page.getByText(
-    "Current provider activity is unavailable in historical city views.",
+    "Current provider activity is unavailable in historical views.",
     { exact: true },
   )).toBeVisible();
   await expect(page.locator(".civic-city__weather-sweep")).toHaveCount(0);
@@ -201,11 +208,11 @@ test("live city pins supporting evidence to the map tick", async ({ page }) => {
   page.on("request", request => {
     const url = new URL(request.url());
     if (url.pathname === "/api/v2/civic/summary" || (url.pathname === "/api/v2/snapshot"
-      && url.searchParams.get("domains") === "summary,events")) cityRequests.push(url);
+      && url.searchParams.get("domains") === "summary")) cityRequests.push(url);
   });
   await page.route("**/api/v2/world-map?*", route => route.fulfill({ json: {
     ...baseEnvelope, tick: 12, projection: "world.map", data: {
-      agents: [{ ...agents[0], x: 0.2, y: 0.3 }], organizations: [], places: [], presence: [],
+      agents: [{ ...agents[0], place_id:1,x: 0.2, y: 0.3 }], organizations: [], places: [], presence: [],
     },
   } }));
   await page.goto("/runs/run-demo/world");
@@ -224,7 +231,7 @@ for (const mismatch of ["map run", "civic tick"] as const) {
       ...baseEnvelope, run_id: mismatch === "map run" ? "foreign-run" : "run-demo",
       tick: mismatch === "civic tick" ? 9 : 6,
       projection: mismatch === "map run" ? "world.map" : "civic.summary",
-      data: { tick: 9, agents: [{ id: 999, name: "Foreign city canary", x: 0.2, y: 0.3 }] },
+      data: { tick: 9, agents: [{ id: 999, name: "Foreign city canary", place_id:1,x: 0.2, y: 0.3 }] },
     } }));
     await page.goto("/runs/run-demo/world");
     await expect(page.getByText("City evidence is temporarily unavailable.")).toBeVisible();
@@ -251,6 +258,7 @@ test("foreign runtime is withheld and terminal state removes cached activity", a
     },
   } }));
   await page.goto("/runs/run-demo/world");
+  await page.getByText("Provider diagnostics",{exact:true}).click();
   await expect(page.getByText("Runtime telemetry does not match this city's run and fork context.")).toBeVisible();
   await expect(page.locator(".civic-city__agent.is-thinking")).toHaveCount(0);
   foreign = false;
@@ -265,7 +273,7 @@ test("mixed provenance, search clear, and navigation preserve selection", async 
   await installSocket(page, "running");
   await mockCommonApis(page, {
     mapAgents: [
-      { id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", x: 0.2, y: 0.3 },
+      { id: 1, name: "Supplier Officer", role: "supplier_officer", occupation: "trader", place_id:1,x: 0.2, y: 0.3 },
       { id: 2, name: "Editor Northstar", role: "editor", occupation: "editor", x: null, y: null },
       { id: 3, name: "Dr. Amara Osei", role: null, occupation: "doctor", x: 0.8, y: 0.7 },
     ],
@@ -299,7 +307,7 @@ test("Diorama shares place and agent evidence through browser history", async ({
     projection: "world.map",
     data: {
       regions: [
-        { id: 1, name: "North", x: 0.2, y: 0.3 },
+        { id: 1, name: "North", place_id:1,x: 0.2, y: 0.3 },
         { id: 2, name: "South", x: 0.8, y: 0.7 },
       ],
       agents: [

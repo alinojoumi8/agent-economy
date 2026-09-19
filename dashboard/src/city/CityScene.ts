@@ -38,6 +38,8 @@ export class CityScene {
   private selectionMaterial=new MeshLambertMaterial({color:'#2457D6',emissive:'#2457D6',emissiveIntensity:.3,side:2});
   private settledMaterial=new MeshLambertMaterial({color:'#B7D64A',emissive:'#B7D64A',emissiveIntensity:.25,side:2});
   private rejectedMaterial=new MeshLambertMaterial({color:'#E44732',emissive:'#E44732',emissiveIntensity:.25,side:2});
+  private pendingMaterial=new MeshLambertMaterial({color:'#df9b25',side:2});
+  private recordedMaterial=new MeshLambertMaterial({color:'#657888',side:2});
   constructor(private host:HTMLElement,private onPick:(key:string)=>void,private onReady:()=>void,
     private onError:(message:string)=>void,private onStats:(stats:SceneStats)=>void){
     this.renderer=new WebGLRenderer({antialias:false,alpha:false,powerPreference:'low-power'});
@@ -95,8 +97,7 @@ export class CityScene {
     this.frame=0;if(!this.alive||this.failed)return;
     this.markers.scale.setScalar(1); // Rings animate individually, never scale entity positions.
     for(const child of this.markers.children){
-      const pulse=this.running&&!this.reduced.matches&&child.userData.activityUntil>time?1+.08*Math.sin(time*.004):1;
-      child.scale.setScalar(pulse);
+      if(child instanceof InstancedMesh)this.positionMarkers(child,time);
     }
     this.renderer.render(this.scene,this.camera);this.frameCount++;
     this.host.dataset.renderFrames=String(this.frameCount);
@@ -155,14 +156,26 @@ export class CityScene {
     this.requestRender();
   }
   private updateMarkers(){
-    this.markers.clear();
+    this.clearMarkers();
+    const batches=new Map<MeshLambertMaterial,Array<{position:readonly number[];until:number}>>();
     for(const item of this.filtered){
       const selected=item.key===this.selected||item.renderKey===this.projection?.instances.find(i=>i.key===this.selected)?.renderKey;
       const activity=this.events.find(e=>e.targets.includes(item.key));
       if(!selected&&!activity)continue;
-      const ring=new Mesh(this.markerGeometry,selected?this.selectionMaterial:activity?.state==='rejected'?this.rejectedMaterial:this.settledMaterial);
-      ring.rotation.x=-Math.PI/2;ring.position.set(item.position[0],.05,item.position[2]);ring.userData.activityUntil=activity?(this.effects.get(activity.id)||0):0;this.markers.add(ring);
+      const material=selected?this.selectionMaterial:activity?.state==='rejected'?this.rejectedMaterial:activity?.state==='pending'?this.pendingMaterial:activity?.state==='settled'?this.settledMaterial:this.recordedMaterial;
+      const items=batches.get(material)||[];items.push({position:item.position,until:activity?(this.effects.get(activity.id)||0):0});batches.set(material,items);
     }
+    for(const [material,items] of batches){const mesh=new InstancedMesh(this.markerGeometry,material,items.length);mesh.userData.markerItems=items;mesh.frustumCulled=false;this.positionMarkers(mesh,performance.now());this.markers.add(mesh);}
+  }
+  private positionMarkers(mesh:InstancedMesh,time:number){
+    const matrix=new Matrix4(),scale=new Vector3();
+    mesh.userData.markerItems.forEach((item:{position:number[];until:number},index:number)=>{
+      const pulse=this.running&&!this.reduced.matches&&item.until>time?1+.08*Math.sin(time*.004):1;
+      matrix.makeRotationX(-Math.PI/2);matrix.scale(scale.set(pulse,pulse,1));matrix.setPosition(item.position[0],.05,item.position[2]);mesh.setMatrixAt(index,matrix);
+    });mesh.instanceMatrix.needsUpdate=true;
+  }
+  private clearMarkers(){
+    for(const child of this.markers.children)if(child instanceof InstancedMesh)child.dispose();this.markers.clear();
   }
   cameraAction(action:'reset'|'left'|'right'|'in'|'out'|'north'|'south'|'east'|'west'){
     if(action==='reset'){this.fitVisible();return;}
@@ -178,7 +191,7 @@ export class CityScene {
   }
   clear(){
     this.running=false;this.projection=null;this.filtered=[];this.events=[];
-    this.clearInstances();this.clearGround();this.markers.clear();this.preview(null);this.requestRender();
+    this.clearInstances();this.clearGround();this.clearMarkers();this.preview(null);this.requestRender();
   }
   fitVisible(derivedOnly=false){
     const items=this.filtered.filter(i=>!derivedOnly||i.provenance==='derived');if(!items.length)return;
@@ -223,8 +236,9 @@ export class CityScene {
     this.reduced.removeEventListener('change',this.requestRender);
     this.renderer.domElement.removeEventListener('pointerdown',this.pointerDown);this.renderer.domElement.removeEventListener('pointerup',this.pointerUp);
     this.renderer.domElement.removeEventListener('webglcontextlost',this.contextLost);
-    this.clearInstances();this.clearGround();this.markers.clear();this.markerGeometry.dispose();
+    this.clearInstances();this.clearGround();this.clearMarkers();this.markerGeometry.dispose();
     this.selectionMaterial.dispose();this.settledMaterial.dispose();this.rejectedMaterial.dispose();
+    this.pendingMaterial.dispose();this.recordedMaterial.dispose();
     if(this.kit)disposeKit(this.kit);
     this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
   }

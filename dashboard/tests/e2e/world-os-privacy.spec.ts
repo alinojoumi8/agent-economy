@@ -1,3 +1,4 @@
+import {activityFrame} from "./fixtures/activity";
 import { expect, test, type Page } from "@playwright/test";
 
 const CANARY = "PRIVACY-CANARY-9f3c-private-body";
@@ -38,6 +39,7 @@ async function mockPrivacyApis(page: Page) {
   await page.route("**/api/v2/**", async route => {
     const url = new URL(route.request().url());
     const path = url.pathname;
+    if (path === "/api/v2/city/activity") return route.fulfill({json:activityFrame(baseEnvelope)});
     if (path === "/api/v2/snapshot") {
       return route.fulfill({ json: {
         ...baseEnvelope, projection: "world.snapshot", data: {
@@ -166,6 +168,8 @@ async function mockPrivacyApis(page: Page) {
         markdown: "# Public evidence\n\nNo private bodies copied.\n",
       } });
     }
+    if(path==='/api/v2/urban-development')return route.fulfill({json:{...baseEnvelope,projection:'urban.development',data:{enabled:false}}});
+    if(path==='/api/v2/city/news'||path==='/api/v2/city/conversations')return route.fulfill({json:{...baseEnvelope,projection:path.endsWith('news')?'city.news':'city.conversations',data:{tick:baseEnvelope.tick,items:[],next_before_id:null}}});
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
   await page.route("**/api/run/status", route => route.fulfill({ json: {
@@ -248,7 +252,7 @@ test("unauthorized private message requests stay 404 and never leak canaries", a
   }
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const responsePromise = page.waitForResponse(response => (

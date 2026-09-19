@@ -1,3 +1,4 @@
+import {activityFrame} from "./fixtures/activity";
 import { expect, test, type Page } from "@playwright/test";
 
 const baseEnvelope = {
@@ -82,6 +83,7 @@ async function mockApi(page: Page) {
         join: "/join/test-world", my_agents: "/my-agents",
       },
     } });
+    if (path === "/api/v2/city/activity") return route.fulfill({json:activityFrame(frame,[{id:9,tick:frame.tick,kind:'goods_sale'}])});
     if (path === "/api/v2/snapshot") return route.fulfill({ json: {
       ...frame, projection: "world.snapshot", data: {
         summary: { status: "paused", phase: "FINALIZE", active_tick: null, agents_alive: 3, active_firms: 1, ledger_balance: 0 },
@@ -439,11 +441,16 @@ async function mockApi(page: Page) {
     } });
     if (path === "/api/v2/operator/session") return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
     if (path === "/api/v2/operator/investigations") return route.fulfill({ json: { items: [] } });
+    if(path==='/api/v2/urban-development')return route.fulfill({json:{...baseEnvelope,projection:'urban.development',data:{enabled:false}}});
+    if(path==='/api/v2/city/news'||path==='/api/v2/city/conversations')return route.fulfill({json:{...baseEnvelope,projection:path.endsWith('news')?'city.news':'city.conversations',data:{tick:baseEnvelope.tick,items:[],next_before_id:null}}});
+    if(path==='/api/v2/city/activity')return route.fulfill({json:activityFrame(baseEnvelope,[{id:9,tick:6,kind:'goods_sale'}])});
+    if(path==='/api/v2/operator/city-observations')return route.fulfill({json:{context:JSON.parse(new URL(route.request().url()).searchParams.get('context')!),version:0,entries:[]}});
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
+  await page.route("**/api/participant",route=>route.fulfill({json:{enabled:false,active:false}}));
   /* Run controls are current-only and mocked separately from observer projections. */
   await page.route("**/api/run/status", route => route.fulfill({ json: {
-    status: "paused", running: false,
+    run_id:"run-demo",tick:6,status: "paused", running: false,
   } }));
   /* The evidence link is rendered per row, so the fixture keeps one event. */
   await page.route("**/api/events*", route => route.fulfill({ json: [
@@ -547,7 +554,7 @@ test("missing daily resident rate is unavailable instead of carrying the previou
   for (const path of ['legal', 'politics', 'information', 'startups', 'markets', 'datasets']) {
     await page.route(`**/api/v2/${path}`, route => route.fulfill({ json: { enabled: false } }));
   }
-  await page.goto("/");
+  await page.goto("/runs/run-demo/economy");
   await expect(page.getByRole('article', { name: 'Unemployment', exact: true })).toContainText('Unavailable at t4.');
   await expect(page.getByText("No eligible resident workers on this day.", { exact: false })).toBeVisible();
   await expect(page.getByRole('article', { name: 'Unemployment', exact: true })).not.toContainText('60.0%');
@@ -563,7 +570,7 @@ test("initial projection handshake does not refetch stale backfill", async ({ pa
     await route.fallback();
   });
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await page.waitForTimeout(200);
   expect(snapshotRequests).toBeLessThanOrEqual(2);
 });
@@ -659,6 +666,10 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
     if (path === "/api/v2/operator/investigations") {
       return route.fulfill({ json: { items: [] } });
     }
+    if(path==='/api/v2/urban-development')return route.fulfill({json:{...baseEnvelope,projection:'urban.development',data:{enabled:false}}});
+    if(path==='/api/v2/city/news'||path==='/api/v2/city/conversations')return route.fulfill({json:{...baseEnvelope,projection:path.endsWith('news')?'city.news':'city.conversations',data:{tick:baseEnvelope.tick,items:[],next_before_id:null}}});
+    if(path==='/api/v2/city/activity')return route.fulfill({json:activityFrame(baseEnvelope,[{id:9,tick:6,kind:'goods_sale'}])});
+    if(path==='/api/v2/operator/city-observations')return route.fulfill({json:{context:JSON.parse(new URL(route.request().url()).searchParams.get('context')!),version:0,entries:[]}});
     return route.fulfill({ status: 404, json: { detail: "not mocked" } });
   });
   /* Overview's event stream is the REST roster endpoint, not the v2 projection,
@@ -679,7 +690,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   } }));
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   const beforeRecovery = snapshotRequests;
 
   await page.evaluate(() => {
@@ -688,7 +699,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
       type: "error", code: "cursor_ahead", event_cursor: 4,
     });
   });
-  await expect(page.getByRole("alert")).toContainText("cursor_ahead");
+  await expect(page.locator(".world-os-alert")).toContainText("cursor_ahead");
 
   await page.evaluate(() => {
     const recovery = (window as any).__recoverySocket;
@@ -703,7 +714,7 @@ test("cursor_ahead recovery resets and resumes without looping", async ({ page }
   await page.waitForTimeout(300);
   // Recovery invalidates once; it must not enter a tight refetch loop.
   expect(snapshotRequests - beforeRecovery).toBeLessThanOrEqual(3);
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
 });
 
 test("cursor gaps request contiguous backfill and return live", async ({ page }) => {
@@ -739,7 +750,7 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
   });
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   /* The server hello is authoritative on a first connection. The client sends
      no hello of its own (a hello at cursor 0 asked for the whole commit log and
      began every fresh load stale). Under React StrictMode the dev build mounts
@@ -763,7 +774,7 @@ test("cursor gaps request contiguous backfill and return live", async ({ page })
     });
   });
 
-  await expect(page.getByRole("alert")).toContainText("cursor_gap");
+  await expect(page.locator(".world-os-alert")).toContainText("cursor_gap");
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__gapSocket.sent
   ))).toContainEqual({ type: "hello", event_cursor: 0 });
@@ -826,7 +837,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
   });
 
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await expect(page.locator(".world-os-freshness--global summary")).toContainText("cursor 4");
   const initialConnections = await page.evaluate(() => (
     (window as any).__lineageSockets.length
@@ -843,7 +854,7 @@ test("lineage changes reconcile from the authoritative server hello", async ({ p
     });
   });
 
-  await expect(page.getByRole("alert")).toContainText("lineage_mismatch");
+  await expect(page.locator(".world-os-alert")).toContainText("lineage_mismatch");
   await expect(page.getByText("should-not-render")).toHaveCount(0);
   await expect.poll(async () => page.evaluate(() => (
     (window as any).__lineageSockets.length
@@ -914,8 +925,8 @@ test("live AI activity coordinates map markers, dock, filters, and evidence", as
 
   await page.goto("/runs/run-demo/world");
   await expect(page.locator(".civic-city__agent.is-thinking")).toHaveCount(1);
-  await expect(page.getByText("1 live · 1 changed this tick")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Select Editor Northstar, Thinking" })).toBeVisible();
+  await expect(page.getByLabel("Day activity totals")).toContainText("1 events");
+  await expect(page.locator(".civic-city__activity-dock")).toHaveCount(0);
 
   await page.getByRole("button", { name: /Editor Northstar, Editor, Thinking/ }).click();
   await expect(page.getByRole("heading", { name: "Editor Northstar" })).toBeVisible();
@@ -1034,14 +1045,11 @@ test("Civic City scales from core agents to clusters and all 300 residents", asy
 
 test("citizen menu unifies app and onboarding links in the same tab", async ({ page }) => {
   await page.goto("/runs/run-demo/overview");
-  await page.locator("summary", { hasText: "Citizen menu" }).click();
+  await page.locator("summary", { hasText: "Agent connections" }).click();
   const menu = page.getByRole("navigation", { name: "Agent Economy sections" });
   await expect(menu).toBeVisible();
 
   const expected = {
-    Observatory: "/",
-    "World OS": "/runs/run-demo/overview",
-    Commons: "/runs/run-demo/commons",
     Join: "/join/test-world",
     "My Agents": "/my-agents",
   };
@@ -1057,21 +1065,21 @@ test("overview enters the exact causal chain", async ({ page }) => {
     await page.setViewportSize({ width: 1536, height: 960 });
   }
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
-  await expect(page.getByText("Balanced")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
+  await expect(page.getByLabel("Day activity totals")).toContainText("1 events");
   if (process.env.CAPTURE_CIVIC_ATLAS_SCREENSHOT === "1") {
     await page.screenshot({
       path: "../docs/images/civic-atlas-world-pulse.png",
       fullPage: true,
     });
   }
-  await page.getByRole("link", { name: "Investigate event 9" }).click();
-  await expect(page).toHaveURL(/investigations\?event=9/);
+  await page.getByRole("region",{name:"City activity",exact:true}).getByRole("link",{name:/Evidence/}).click();
+  await expect(page).toHaveURL(/investigations\?.*event=9/);
   await expect(page.getByRole("heading", { name: "Causal graph" })).toBeVisible();
   await expect(page.locator(".world-os-causal-graph [role=button]")).toHaveCount(6);
 });
 
-test("World Pulse controls fail closed without authoritative run status", async ({ page }) => {
+test("City controls fail closed without authoritative run status", async ({ page }) => {
   await page.route("**/api/run/status", route => route.fulfill({
     status: 503,
     json: { detail: "status unavailable" },
@@ -1079,14 +1087,14 @@ test("World Pulse controls fail closed without authoritative run status", async 
 
   await page.goto("/runs/run-demo/overview");
 
-  await expect(page.getByText("Run controls unavailable until authoritative status arrives.")).toBeVisible();
-  const controls = page.getByRole("group", { name: "Run controls" });
+  await expect(page.getByText("Run status unavailable.")).toBeVisible();
+  const controls = page.getByRole("group", { name: "Simulation clock" });
   await expect(controls.getByRole("button", { name: "Run" })).toBeDisabled();
   await expect(controls.getByRole("button", { name: "Pause" })).toBeDisabled();
-  await expect(controls.getByRole("button", { name: "Step" })).toBeDisabled();
+  await expect(controls.getByRole("button", { name: "Advance one tick" })).toBeDisabled();
 });
 
-test("World Pulse keeps historical evidence separate from current controls", async ({ page }) => {
+test("City keeps historical evidence separate from current controls", async ({ page }) => {
   let runStatusRequests = 0;
   page.on("request", request => {
     if (new URL(request.url()).pathname === "/api/run/status") runStatusRequests += 1;
@@ -1095,22 +1103,16 @@ test("World Pulse keeps historical evidence separate from current controls", asy
   await page.setViewportSize({ width: 1536, height: 960 });
   await page.goto("/runs/run-demo/overview?tick=4");
 
-  await expect(page.getByRole("heading", { name: "World Pulse", exact: true })).toBeVisible();
-  await expect(page.getByText(/Historical context · read-only/)).toBeVisible();
-  await expect(page.locator(".world-pulse-run-controls")).toHaveCount(0);
-  await expect(page.getByRole("link", { name: "Return to live" })).toHaveAttribute("href", "/runs/run-demo/overview");
-
-  const main = await page.locator(".world-pulse-main").boundingBox();
-  const inspector = await page.locator(".world-pulse-inspector").boundingBox();
-  if (!main || !inspector) throw new Error("World Pulse review columns did not render");
-  expect(main.x + main.width).toBeLessThanOrEqual(inspector.x + 1);
-  expect(Math.abs(main.y - inspector.y)).toBeLessThan(4);
-  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)).toBe(true);
+  await expect(page.getByRole('heading',{name:'City',exact:true})).toBeVisible();
+  await expect(page.getByRole('group',{name:'Simulation clock'})).toHaveCount(0);
+  await expect(page.locator('.world-os-freshness--global summary')).toContainText('Historical');
+  expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
   expect(runStatusRequests).toBe(0);
 });
 
 test("truth inspection renders authorized fields without browser persistence", async ({ page }) => {
   await page.goto("/runs/run-demo/news-communications");
+  await page.getByText("Authorized communication threads",{exact:true}).click();
   await page.getByRole("button", { name: "Truth inspector" }).click();
   await page.getByRole("button", { name: /Shipment notice/ }).click();
   await expect(page.getByText("Batch 2026-07 may be contaminated", { exact: false })).toBeVisible();
@@ -1121,6 +1123,7 @@ test("truth inspection renders authorized fields without browser persistence", a
 
 test("communication access menu survives deep links, reload, and history", async ({ page }) => {
   await page.goto("/runs/run-demo/news-communications?fork=fork-a&tick=6");
+  await page.getByText("Authorized communication threads",{exact:true}).click();
   const accessMenu = page.getByRole("group", { name: "Communication access view" });
   const ordinary = accessMenu.getByRole("button", { name: "Ordinary", exact: true });
   const agent = accessMenu.getByRole("button", { name: "Agent view", exact: true });
@@ -1174,14 +1177,15 @@ test("graph and semantic table share keyboard selection with reduced motion", as
   await expect(page.locator(".world-os-semantic-panel tr.selected")).toContainText("buy_goods");
   await page.getByRole("button", { name: "Zoom in" }).click();
   await expect(page.locator(".world-os-graph-controls output")).toHaveText("120%");
-  const duration = await page.locator(".world-os-nav a").first().evaluate(element => getComputedStyle(element).transitionDuration);
+  const duration = await page.locator(".city-panel-heading button").first().evaluate(element => getComputedStyle(element).transitionDuration);
   expect(duration).toBe("0s");
 });
 
 test("390 pixel workflow keeps navigation, chronology, and evidence usable", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto("/runs/run-demo/news-communications");
-  await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" })).toBeVisible();
+  await page.getByText("Authorized communication threads",{exact:true}).click();
+  await expect(page.locator(".world-os-rail")).toHaveCount(0);
   await page.getByRole("button", { name: "Truth inspector" }).click();
   await page.getByRole("button", { name: /Shipment notice/ }).click();
   await expect(page.getByText("Untrusted simulated communication")).toBeVisible();
@@ -1193,14 +1197,14 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   const pageErrors: string[] = [];
   page.on("pageerror", error => pageErrors.push(error.message));
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
 
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   await expect(command).toBeVisible();
   await expect(command.getByRole("group", { name: "Routes" })).toBeVisible();
   /* Ten destinations: the city renderers now share one workspace. */
-  await expect(command.getByRole("option")).toHaveCount(10);
+  await expect(command.getByRole("option")).toHaveCount(9);
   const commandSearch = command.getByPlaceholder("Search routes, people, firms, events…");
   await commandSearch.fill("communications");
   await commandSearch.press("Enter");
@@ -1276,9 +1280,8 @@ test("command navigation, tick travel, and rail controls stay interactive", asyn
   await page.keyboard.press("Escape");
   await expect(trigger).toBeFocused();
 
-  await page.getByRole("button", { name: "Collapse workspace rail" }).click();
-  await expect(page.locator(".world-os-shell")).toHaveClass(/world-os-shell--collapsed/);
-  await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" })).toBeVisible();
+  await expect(page.locator(".world-os-rail")).toHaveCount(0);
+  await expect(page.locator(".world-os-rail")).toHaveCount(0);
   expect(pageErrors).toEqual([]);
 });
 
@@ -1534,7 +1537,7 @@ test("authorized entity search preserves fork and historical tick", async ({ pag
     await route.fallback();
   });
   await page.goto("/runs/run-demo/overview?fork=fork-a&tick=4");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
@@ -1542,7 +1545,8 @@ test("authorized entity search preserves fork and historical tick", async ({ pag
   await expect(command.getByRole("option", { name: /Atlas Researcher/ })).toBeVisible();
   await input.press("Enter");
 
-  await expect(page).toHaveURL(/\/people\/12\?fork=fork-a&tick=4$/);
+  await expect(page).toHaveURL(/\/people\/12\?fork=fork-a&tick=4&city=/);
+  expect(new URL(page.url()).searchParams.get("city")).toContain("agent=1");
   expect(searchUrl).toContain("tick=4");
   expect(searchUrl).toContain("fork_id=fork-a");
 });
@@ -1814,8 +1818,8 @@ test("superseded entity searches never replace the newest result", async ({ page
     } });
   });
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
-  await page.keyboard.press("Control+K");
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Open command menu' }).click();
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
   const atlasRequest = page.waitForRequest(
@@ -1836,7 +1840,7 @@ test("entity-search failure leaves matching routes operable", async ({ page }) =
     json: { detail: "search unavailable" },
   }));
   await page.goto("/runs/run-demo/overview");
-  await expect(page.getByRole("heading", { name: "Pulse", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await page.keyboard.press("Control+K");
   const command = page.getByRole("dialog", { name: "Navigate and inspect" });
   const input = command.getByPlaceholder("Search routes, people, firms, events…");
@@ -1844,7 +1848,8 @@ test("entity-search failure leaves matching routes operable", async ({ page }) =
   await expect(command.getByText("Entity search is unavailable. Route navigation remains available.")).toBeVisible();
   await expect(command.getByRole("option", { name: /People Living Agents, projects, and evidence/ })).toBeVisible();
   await input.press("Enter");
-  await expect(page).toHaveURL(/\/people$/);
+  await expect(page).toHaveURL(/\/people\?city=/);
+  expect(new URL(page.url()).searchParams.get("city")).toContain("agent=1");
 });
 
 test("socket closure is visibly reconnecting before the next hello", async ({ page }) => {

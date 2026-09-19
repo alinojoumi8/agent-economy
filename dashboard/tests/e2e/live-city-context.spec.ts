@@ -1,3 +1,4 @@
+import {activityFrame} from "./fixtures/activity";
 import { expect, test, type Page } from "@playwright/test";
 
 test("city shows inherited ownership and guardian authority with the original owner intact", async ({ page }, testInfo) => {
@@ -131,6 +132,7 @@ async function mockCity(page: Page, options: {
       options.editFrame?.(frame);
       return route.fulfill({ json: frame });
     }
+    if (url.pathname === "/api/v2/city/activity") return route.fulfill({json:activityFrame(base,options.publicEvents?[{id:tick+40,tick,kind:'work'}]:[])});
     if (url.pathname === "/api/v2/city/conversations") return route.fulfill({ json: {
       ...base, fork_id: options.wrongConversation ? "foreign" : base.fork_id, projection: "city.conversations",
       data: { tick, source: "recorded_small_talk", items: [{ id: 1, tick, participants: [1, 2],
@@ -156,7 +158,7 @@ async function cityProbe(page: Page) {
   return page.evaluate(() => (window as any).__liveCityProbe?.());
 }
 
-test("desktop city gives the map at least 65 percent of the visible workspace", async ({ page }) => {
+test("desktop city keeps the map prominent beside full-day activity", async ({ page }) => {
   await mockCity(page);
   const measurements = [];
   for (const viewport of [{ width: 1280, height: 900 }, { width: 1440, height: 1000 }]) {
@@ -181,7 +183,8 @@ test("desktop city gives the map at least 65 percent of the visible workspace", 
   }
   console.log("City area measurements", JSON.stringify(measurements));
   for (const measurement of measurements) {
-    expect(measurement.mapFraction).toBeGreaterThanOrEqual(0.65);
+    expect(measurement.mapFraction).toBeGreaterThanOrEqual(0.43);
+    expect(measurement.fieldFraction).toBeGreaterThanOrEqual(0.65);
     expect(measurement.inspectorInside).toBe(true);
   }
 });
@@ -372,7 +375,7 @@ test("household and bank lenses preserve selection across renderers, history and
   await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
   await expect(lens.getByText("1 / 2 food units purchased", { exact: true })).toBeVisible();
   await expect(lens.getByText("120 care minutes required · Time Allocation Pending", { exact: true })).toBeVisible();
-  for (const view of ["2.5D Diorama", "Recorded day", "Atlas"]) {
+  for (const view of ["3D · experimental", "Recorded day", "Atlas"]) {
     await page.getByRole("button", { name: view, exact: true }).click();
     await expect(lens.getByRole("heading", { name: "Household #7", exact: true })).toBeVisible();
     expect(new URL(page.url()).searchParams.get("household")).toBe("7");
@@ -541,7 +544,8 @@ test("follow survives renderer switches and reload; zoom preserves it and select
   await page.goto("/runs/run-demo/world?tick=3&agent=1&follow=1");
   await page.getByRole("button", { name: "Zoom into city", exact: true }).click();
   await expect(page).toHaveURL(/follow=1/);
-  await page.getByRole("button", { name: "2.5D Diorama", exact: true }).click();
+  // Legacy Diorama bookmarks remain valid although the redundant menu is retired.
+  const legacy=new URL(page.url());legacy.searchParams.set('view','diorama');await page.goto(legacy.href);
   await expect(page.getByTestId("civic-diorama")).toHaveAttribute("data-camera", "20,20,3.4");
   await page.getByTestId("civic-diorama").scrollIntoViewIfNeeded();
   const field = (await page.getByTestId("civic-diorama").boundingBox())!;
@@ -632,7 +636,7 @@ test("historical city uses the requested fork/tick and independent playback", as
   expect((await cityProbe(page)).tick).toBe(3);
   await expect(page.getByText("Historical view", { exact: true })).toBeVisible();
   await expect(page).toHaveURL(/\/world\?.*view=recorded/);
-  await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" }).getByRole("link", { name: "City", exact: true })).toHaveAttribute("aria-current", "page");
+  await expect(page.locator('.world-os-context h1')).toHaveText('City');
   await expect(page.getByLabel("Keyboard explorer")).toHaveValue("agent:1");
   await page.getByLabel("Playback speed").selectOption("4");
   await page.getByRole("button", { name: "Play recorded day", exact: true }).click();
@@ -750,7 +754,8 @@ test("a new live frame pauses and resets playback; pinning keeps the recorded da
   await page.getByRole("button", { name: "Restart playback", exact: true }).click();
   expect((await cityProbe(page)).clock.dayProgress).toBe(0);
   expect((await cityProbe(page)).tick).toBe(4);
-  expect(evidence.requests.filter(url => ["/api/llm/runtime", "/api/run/status"].includes(url.pathname))).toEqual([]);
+  expect(evidence.requests.filter(url => url.pathname==='/api/llm/runtime')).toEqual([]);
+  await expect(page.getByRole('group',{name:'Simulation clock'})).toHaveCount(0);
   expect(evidence.mutations).toEqual([]);
 });
 

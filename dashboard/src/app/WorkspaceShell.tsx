@@ -1,7 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import { NavLink, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { Link, Outlet, useLocation, useNavigate, useParams, useSearchParams } from "react-router";
 import worldOsEmblem from "../assets/world-os-emblem.png";
+import { CityRunControls } from "../city/CityRunControls";
+import { cityEvidenceParams } from "./cityNavigation.js";
 import { CitizenMenu } from "../components/CitizenMenu";
 import { FreshnessBadge, type ProjectionTransport } from "../components/FreshnessBadge";
 import { useModalFocus } from "../components/useModalFocus";
@@ -63,7 +65,6 @@ type CommandGroup = {
 
 const routeGroups: Array<{ label: string; items: RouteItem[] }> = [
   { label: "Civic Atlas", items: [
-    { path: "overview", label: "Pulse", caption: "What changed and why it matters", icon: "overview" },
     { path: "world", label: "City", caption: "Explore places, recorded days, and evidence", icon: "street" },
     { path: "people", label: "People", caption: "Living Agents, projects, and evidence", icon: "people" },
     { path: "commons", label: "Commons", caption: "The public information economy", icon: "commons" },
@@ -135,7 +136,6 @@ export function WorkspaceShell() {
     ?? modeQuery.data?.navigation?.run_id
     ?? transport.runId
     ?? null;
-  const [railCollapsed, setRailCollapsed] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
   const [commandQuery, setCommandQuery] = useState("");
   const [debouncedCommandQuery, setDebouncedCommandQuery] = useState("");
@@ -245,9 +245,9 @@ export function WorkspaceShell() {
   });
 
   useEffect(() => setDraftTick(tick === "live" ? "" : tick), [tick]);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+      if ((activeSegment === "world" || activeSegment === "overview") && (event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
         event.preventDefault();
         if (commandOpen) closeCommand();
         else openCommand();
@@ -255,12 +255,12 @@ export function WorkspaceShell() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [closeCommand, commandOpen, openCommand]);
+  }, [activeSegment, closeCommand, commandOpen, openCommand]);
   useEffect(() => {
     setActiveCommandIndex(commandChoices.length ? 0 : -1);
   }, [commandChoices]);
 
-  const workspaceUrl = (path: string) => (runId === null ? null : workspacePath(runId, path, search));
+  const workspaceUrl = (path: string) => (runId === null ? null : workspacePath(runId, path, activeSegment === "world" ? cityEvidenceParams(observerState) : search));
   const setTick = (value: string | null) => {
     const next = new URLSearchParams(search);
     if (value) next.set("tick", value); else next.delete("tick");
@@ -275,7 +275,7 @@ export function WorkspaceShell() {
     const destination = choice.route
       ? workspaceUrl(choice.route.path)
       : choice.result && runId !== null
-        ? searchResultPath(runId, choice.result, search)
+        ? searchResultPath(runId, choice.result, activeSegment === "world" ? cityEvidenceParams(observerState) : search)
         : null;
     if (!destination) return;
     closeCommand();
@@ -288,66 +288,23 @@ export function WorkspaceShell() {
     ));
   };
 
-  return <div className={"world-os-shell min-h-screen text-slate-200" + (railCollapsed ? " world-os-shell--collapsed" : "")}>
+  return <div className="world-os-shell city-shell min-h-screen text-slate-200">
     <a href="#workspace-main" className="world-os-skip">Skip to workspace</a>
-    <aside className="world-os-rail">
-      <div className="world-os-brand">
-        <img src={worldOsEmblem} alt="" />
-        <div className="world-os-brand-copy"><strong>CIVIC ATLAS</strong><span>Agent Economy</span></div>
-        <button className="world-os-rail-toggle" type="button" onClick={() => setRailCollapsed(value => !value)} aria-label={railCollapsed ? "Expand workspace rail" : "Collapse workspace rail"} aria-pressed={railCollapsed}>
-          <Glyph name="panel" />
-        </button>
-      </div>
-      <nav className="world-os-nav" aria-label="Civic Atlas workspaces">
-        {routeGroups.map(group => <div className="world-os-nav-group" key={group.label}>
-          <p className="world-os-nav-group-title">{group.label}</p>
-          <div className="world-os-nav-group-items">
-            {group.items.map(route => {
-              const destination = workspaceUrl(route.path);
-              const body = <>
-                <span className="world-os-nav-icon"><Glyph name={route.icon} /></span>
-                <span className="world-os-nav-copy"><strong>{route.label}</strong><small>{route.caption}</small></span>
-                <span className="world-os-nav-indicator" aria-hidden="true" />
-              </>;
-              /* No run id yet: an inert placeholder anchor (no href, so not in the
-                 tab order), never a link to a run that does not exist. */
-              if (destination === null) {
-                return <a
-                  key={route.path}
-                  className={"world-os-nav-link" + (route.path === activeRoute.path ? " active" : "")}
-                  aria-disabled="true"
-                  aria-label={route.label}
-                  title="Waiting for the run to be identified"
-                >{body}</a>;
-              }
-              return <NavLink
-                key={route.path}
-                to={destination}
-                aria-label={route.label}
-                title={railCollapsed ? route.label : undefined}
-                className={({ isActive }) => "world-os-nav-link" + (isActive ? " active" : "")}
-              >{body}</NavLink>;
-            })}
-          </div>
-        </div>)}
-      </nav>
-      <div className="world-os-rail-footer">
-        <a href="/"><span className="world-os-rail-orbit" aria-hidden="true" /><span className="world-os-rail-footer-copy"><strong>Classic Observatory</strong><small>Open full legacy surface</small></span></a>
-      </div>
-    </aside>
+
 
     <section className="world-os-workbench">
-      <header className="world-os-topbar">
-        <div className="world-os-context">
-          <p className="world-os-kicker">{activeRoute.group} workspace</p>
-          <div><h1>{activeRoute.label}</h1>{runId === null
-            ? <span className="world-os-run-pill">{modeQuery.isPending ? "Identifying run…" : "Run not identified"}</span>
-            : <span className="world-os-run-pill" title={runId}>Run {runId}</span>}</div>
+      <header className="world-os-topbar" inert={activeSegment && activeSegment !== "world" ? true : undefined}>
+        <div className="world-os-context city-brand">
+          <img src={worldOsEmblem} alt="" />
+          <div><p className="world-os-kicker">Agent Economy</p><h1>City</h1><small>{runId ? 'Run '+runId : 'Identifying run…'}</small></div>
         </div>
+        <details className="city-tools-menu"><summary>Tools</summary><nav aria-label="City tools">
+          {['operations','experiments','commons','investigations'].map(path => {const to=workspaceUrl(path);return to?<Link key={path} to={to} onClick={e=>e.currentTarget.closest('details')?.removeAttribute('open')}>{path==='operations'?'Oracle & diagnostics':path==='experiments'?'Research & experiments':path==='commons'?'Public commons':'Evidence search'}</Link>:null;})}
+        </nav></details>
         <CitizenMenu
           runId={runId ?? ""}
           navigation={modeQuery.data?.navigation ?? null}
-          variant="dropdown"
+          variant="connections"
         />
         <div className="world-os-top-actions">
           <form className="world-os-tick-control" onSubmit={submitTick} aria-label="Simulation tick travel">
@@ -356,7 +313,7 @@ export function WorkspaceShell() {
             <button type="submit" aria-label="Go to tick">Go</button>
           </form>
           <button ref={commandTrigger} className="world-os-command-button" type="button" onClick={event => openCommand(event.currentTarget)} aria-label="Open command menu" aria-haspopup="dialog">
-            <Glyph name="search" /><span>Navigate</span><kbd>Ctrl K</kbd>
+            <Glyph name="search" /><span>Search</span><kbd>Ctrl K</kbd>
           </button>
           {/*
             * One condition, one place. The shell used to say "stale" three times in
@@ -387,6 +344,7 @@ export function WorkspaceShell() {
             placement="global"
           />
         </div>
+        {runId && tick === "live" && <CityRunControls runId={runId} stale={transport.status !== "live"} />}
       </header>
       {/*
         * The one thing the disclosure above cannot do: interrupt.

@@ -1,9 +1,9 @@
 import { BootShell } from "./components/BootShell";
 import { HostedShell } from "./components/HostedShell";
-import { Observatory } from "./components/Observatory";
 import { useHostedMode } from "./hooks/useHostedMode";
 import { Route, Routes } from "react-router";
 import { WorldOSApp } from "./app/WorldOSApp";
+import { LocalCityHome } from "./app/LocalCityHome";
 
 export default function App() {
   const mode = useHostedMode();
@@ -20,7 +20,8 @@ export default function App() {
   if (mode.error && mode.presumed !== "local") return <BootShell error={mode.error} />;
   return <Routes>
     <Route path="/runs/:runId/*" element={<WorldOSApp />} />
-    <Route path="/commons/*" element={<WorldOSApp />} />
-    <Route path="*" element={<Observatory />} />
+    <Route path="/commons/*" element={<LocalCityHome destination="commons" />} />
+    <Route path="/observatory" element={<LocalCityHome />} />
+    <Route path="*" element={<LocalCityHome />} />
   </Routes>;
 }

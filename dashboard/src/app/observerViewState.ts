@@ -16,6 +16,8 @@ export type ObserverViewState = {
   layer: string;
   q: string;
   activeOnly: boolean;
+  activity: string;
+  actor: number | null;
   agent: number | null;
   follow: number | null;
   firm: number | null;
@@ -25,7 +27,7 @@ export type ObserverViewState = {
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters";
-  view: "atlas" | "diorama" | "recorded" | "list";
+  view: "atlas" | "diorama" | "recorded" | "list" | "3d";
 };
 
 export type ObserverViewPatch = Partial<{
@@ -35,6 +37,8 @@ export type ObserverViewPatch = Partial<{
   layer: string | null;
   q: string | null;
   activeOnly: boolean;
+  activity: string | null;
+  actor: number | null;
   agent: number | null;
   follow: number | null;
   firm: number | null;
@@ -44,7 +48,7 @@ export type ObserverViewPatch = Partial<{
   place: number | null;
   project: string | null;
   population: "core" | "all" | "clusters" | null;
-  view: "atlas" | "diorama" | "recorded" | "list" | null;
+  view: "atlas" | "diorama" | "recorded" | "list" | "3d" | null;
 }>;
 
 export function parseObserverViewState(params: URLSearchParams): ObserverViewState {

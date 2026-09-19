@@ -5,37 +5,32 @@ async function openCity(page:import('@playwright/test').Page){
   await installCityFixture(page);await page.goto('/runs/city-fixture/world?cityView=3d');
   await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
 }
-test('300 agents / 100 places render; keyboard selection, camera, evidence and history work',async({page})=>{
+test('300 agents / 100 places share selection, camera, evidence and history',async({page})=>{
   const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));await openCity(page);
-  await expect(page.locator('#city-entity-select option')).toHaveCount(402);
-  await page.locator('#city-entity-select').selectOption({label:'● Citizen 1 · agent 1'});
-  await expect(page.getByRole('heading',{name:'Citizen 1',exact:true})).toBeVisible();
-  await expect(page.getByRole('link',{name:'Open agent evidence'})).toHaveAttribute('href','/runs/city-fixture/people/1');
-  await page.getByRole('button',{name:'Focus camera',exact:true}).click();
+  const explorer=page.getByLabel('Keyboard explorer');
+  await expect(explorer.locator('option')).toHaveCount(403);
+  await explorer.selectOption('agent:125');
+  await expect(page.getByRole('heading',{name:'Citizen 125',exact:true})).toBeVisible();
+  await expect(page.getByRole('link',{name:'Open citizen dossier'})).toHaveAttribute('href',/people\/125\?city=/);
+  await page.getByRole('button',{name:'Focus Citizen 125',exact:true}).click();
   for(const name of ['Zoom in','Zoom out','Rotate left','Rotate right','Pan north','Pan south','Pan east','Pan west'])await page.getByRole('button',{name,exact:true}).click();
-  await page.getByLabel('Search city').fill('Workshop One');
-  await expect(page.locator('#city-entity-select option')).toHaveCount(1);
-  await page.locator('#city-entity-select').selectOption({index:0});
-  await expect(page.getByRole('link',{name:'Open business evidence'})).toHaveAttribute('href','/runs/city-fixture/organizations/firm/1');
-  await page.getByLabel('Search city').fill('Civic Bank');
-  await page.locator('#city-entity-select').selectOption({index:0});
-  await expect(page.getByRole('link',{name:'Open bank evidence'})).toHaveAttribute('href','/runs/city-fixture/organizations/bank/1');
-  await expect(page.locator('.city3d-inspector dd').filter({hasText:/^failed$/})).toBeVisible();
-  await page.goto('/runs/city-fixture/world?cityView=3d&tick=1&cityType=bank&cityEntity=1');
-  await expect(page.locator('.city3d-inspector dd').filter({hasText:/^open$/})).toBeVisible();
-  await expect(page.getByRole('link',{name:'Open bank evidence'})).toHaveAttribute('href','/runs/city-fixture/organizations/bank/1?tick=1');
-  await page.goto('/runs/city-fixture/world?cityView=3d&tick=1&cityType=place&cityEntity=2');
-  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
-  await expect(page.getByRole('link',{name:'Open place evidence'})).toHaveAttribute('href','/runs/city-fixture/world?tick=1&place=2');
-  await expect(page.getByText('Name, category and region metadata may reflect current records; this is not a complete historical reconstruction.')).toBeVisible();
+  await explorer.selectOption('firm:1');
+  await expect(page.getByRole('link',{name:'Open business dossier'})).toHaveAttribute('href',/organizations\/firm\/1\?city=/);
+  await explorer.selectOption('institution:bank:1');
+  await expect(page.getByLabel('Selected city evidence')).toContainText('Failed');
+  await page.goto('/runs/city-fixture/world?view=3d&tick=1&institution=bank:1');
+  await expect(page.getByLabel('Selected city evidence')).toContainText('Open');
+  await explorer.selectOption('place:2');
+  await expect(page.getByRole('heading',{name:'Place 2',exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Advance one tick'})).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
 test('mount/unmount releases canvas and supports repeated 2D fallback',async({page})=>{
   await openCity(page);
   for(let n=0;n<5;n++){
-    await page.getByRole('button',{name:'2D atlas',exact:true}).click();await expect(page.locator('canvas')).toHaveCount(0);
-    await page.getByRole('button',{name:'3D city',exact:true}).click();await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');await expect(page.locator('canvas')).toHaveCount(1);
+    await page.getByRole('button',{name:'Atlas',exact:true}).click();await expect(page.locator('canvas')).toHaveCount(0);
+    await page.getByRole('button',{name:'3D · experimental',exact:true}).click();await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');await expect(page.locator('canvas')).toHaveCount(1);
   }
 });
 
@@ -45,13 +40,14 @@ test('streets and housing keep rendering resources bounded when layers change',a
   const evidence=page.locator('.city3d-notes code');
   await expect(evidence).toContainText('geometries');
   const geometries=async()=>Number((await evidence.innerText()).match(/(\d+) geometries/)![1]);
+  await expect.poll(geometries).toBeGreaterThan(0);
   const baseline=await geometries();
   for(let i=0;i<4;i++){
-    await page.locator('.city3d-toolbar select').first().selectOption('place');
-    await page.locator('.city3d-toolbar select').first().selectOption('all');
+    await page.getByLabel('Keyboard explorer').selectOption('place:2');
+    await page.getByLabel('Keyboard explorer').selectOption('agent:2');
   }
   await expect.poll(geometries).toBeLessThanOrEqual(baseline+1);
-  await expect(page.locator('#city-entity-select option')).toHaveCount(402);
+  await expect(page.getByLabel('Keyboard explorer').locator('option')).toHaveCount(403);
   expect(Number((await evidence.innerText()).match(/(\d+) draw calls/)![1])).toBeLessThan(100);
 });
 test('asset failure shows usable fallback and mobile remains navigable',async({page})=>{
@@ -82,8 +78,9 @@ test('construction preview queues a server-priced proposal and preserves request
     parcels:[{id:1,parcel_key:'Central parcel',region_id:1,x:.55,y:.55,zone_key:'commercial',blocked:0,owner_firm_id:null}],projects:[]}}}));
   await page.route('**/api/participant/action',route=>{commands.push(route.request().postDataJSON());attempts++;return route.fulfill({status:attempts===1?503:200,json:attempts===1?{detail:'Temporary queue failure'}:{ok:true}});});
   await page.goto('/runs/city-fixture/world?cityView=3d');await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
+  await page.getByText('Construction & citizen actions',{exact:true}).click();
   await page.getByLabel('Parcel preview').selectOption('1');
-  await expect(page.getByText('Outline is a proposal preview.',{exact:false})).toBeVisible();
+  await expect(page.getByText('Selected parcel is a proposal preview;',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'Propose construction',exact:true}).click();
   await expect(page.getByRole('alert').filter({hasText:'Temporary queue failure'})).toBeVisible();
   await page.getByRole('button',{name:'Propose construction',exact:true}).click();
@@ -93,31 +90,34 @@ test('construction preview queues a server-priced proposal and preserves request
   expect(commands[0].action.request_key).toMatch(/^[a-f0-9-]{36}$/);
   expect(commands[0].action).not.toHaveProperty('cost_cents');
   await expect(page.getByText('No construction projects at this tick.')).toBeVisible();
-  await expect(page.locator('#city-entity-select option')).toHaveCount(402);
+  await expect(page.getByLabel('Keyboard explorer').locator('option')).toHaveCount(403);
 });
 test('graphics context loss remains failed while projections refresh',async({page})=>{
   await openCity(page);
   await page.evaluate(()=>{const gl=document.querySelector('canvas')!.getContext('webgl2')!;gl.getExtension('WEBGL_lose_context')!.loseContext();});
   await expect(page.getByText('3D graphics context was lost.',{exact:false})).toBeVisible();
-  await page.getByLabel('Search city').fill('Citizen 1');await page.getByLabel('Search city').fill('');
+  await page.getByText('Layers and agent filters',{exact:true}).click();
+  await page.getByLabel('Find an agent').fill('Citizen 1');await page.getByLabel('Find an agent').fill('');
   await expect(page.getByText('3D graphics context was lost.',{exact:false})).toBeVisible();
   await page.getByRole('button',{name:'Use 2D atlas',exact:true}).click();await expect(page.locator('canvas')).toHaveCount(0);
 });
 test('backend disconnect disables actions and reconnect restores the committed view',async({page})=>{
   await openCity(page);
   await page.route('**/api/v2/world-map*',route=>route.fulfill({status:503,json:{detail:'City temporarily offline'}}));
-  await expect(page.locator('.city3d-state strong')).toHaveText('Stale',{timeout:25000});
+  await expect(page.getByRole('alert').filter({hasText:'City temporarily offline'})).toBeVisible({timeout:25000});
+  await page.route('**/api/run/status',route=>route.fulfill({status:503,json:{detail:'Status offline'}}));
   await expect(page.getByRole('button',{name:'Advance one tick',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Use 2D atlas',exact:true})).toBeVisible();
   await page.unroute('**/api/v2/world-map*');
-  await expect(page.locator('.city3d-state strong')).toHaveText('paused',{timeout:15000});
-  await expect(page.locator('#city-entity-select option')).toHaveCount(402);
+  await page.unroute('**/api/run/status');
+  await expect(page.getByRole('alert').filter({hasText:'City temporarily offline'})).toHaveCount(0,{timeout:15000});
+  await expect(page.getByLabel('Keyboard explorer').locator('option')).toHaveCount(403);
 });
 test('invalid refreshed projection clears entities instead of retaining a false live city',async({page})=>{
   await openCity(page);
   await page.route('**/api/v2/world-map*',route=>route.fulfill({json:{run_id:'city-fixture',fork_id:null,tick:2,semantics_version:12,projection_version:999,policy_version:1,view_key:'public',snapshot_version:'bad',event_cursor:9,projection:'world.map',data:{}}}));
   await expect(page.getByText('Unsupported or malformed city projection.',{exact:false})).toBeVisible({timeout:15000});
-  await expect(page.locator('#city-entity-select option')).toHaveCount(0);
+  await expect(page.getByLabel('Keyboard explorer').locator('optgroup option')).toHaveCount(0);
 });
 test('participant clock requires an explicit action and disables continuous Run',async({page})=>{
   await installCityFixture(page);let queued=false;
@@ -126,6 +126,7 @@ test('participant clock requires an explicit action and disables continuous Run'
   await page.goto('/runs/city-fixture/world?cityView=3d');await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
   await expect(page.getByRole('button',{name:'Advance one tick',exact:true})).toBeDisabled();
   await expect(page.getByRole('button',{name:'Run',exact:true})).toBeDisabled();
+  await page.getByText('Construction & citizen actions',{exact:true}).click();
   await page.getByRole('button',{name:'Queue action for next day',exact:true}).click();
   await expect(page.getByRole('button',{name:'Advance one tick',exact:true})).toBeEnabled();
   await expect(page.getByRole('button',{name:'Run',exact:true})).toBeDisabled();
@@ -134,7 +135,7 @@ test('participant clock requires an explicit action and disables continuous Run'
 test('local Stop finishes a running city and a rejected stop stays retryable',async({page})=>{
   await installCityFixture(page);
   let status='paused',stops=0;
-  await page.route('**/api/run/status',route=>route.fulfill({json:{status,tick:2,running:status==='running'}}));
+  await page.route('**/api/run/status',route=>route.fulfill({json:{run_id:'city-fixture',status,tick:2,running:status==='running'}}));
   await page.route('**/api/run/start',route=>{status='running';return route.fulfill({json:{status}});});
   await page.route('**/api/run/stop',route=>{
     stops++;

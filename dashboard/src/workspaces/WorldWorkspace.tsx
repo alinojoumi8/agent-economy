@@ -1,415 +1,114 @@
-import { lazy, Suspense, useEffect } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link, useSearchParams } from "react-router";
-import { projectionApi, workspaceApi } from "../app/api";
-import { patchObserverViewState } from "../app/observerViewState";
-import { cityRuntimeMatches, loadCityConversations, loadCityProjection } from "../app/cityProjection.js";
-import { CivicCity } from "../components/CivicCity";
-import { titleCase } from "../ui";
-import { normalizeWorldWorkspace } from "./worldWorkspaceModel.js";
-import {
-  validatedSelectedId,
-  WorkspaceHeader,
-  WorkspaceState,
-  workspaceUrl,
-  useWorkspaceProjection,
-} from "./workspaceShared";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { Link, useNavigate, useSearchParams } from 'react-router';
+import { projectionApi, workspaceApi } from '../app/api';
+import { cityActivityMarkers, cityRuntimeMatches, loadCityConversations, loadCityProjection } from '../app/cityProjection.js';
+import { cityEvidenceParams, cityWorkspaceHref } from '../app/cityNavigation.js';
+import { CivicCity } from '../components/CivicCity';
+import { useModalFocus } from '../components/useModalFocus';
+import { CityActivityPanel, useCityActivity } from '../city/CityActivityPanel';
+import { UrbanDevelopment, type CityProposal } from '../city/UrbanDevelopment';
+import { CityControls } from '../city/CityControls';
+import { FrontierPanel, type FrontierState } from './FrontierPanel';
+import { useWorkspaceProjection } from './workspaceShared';
+import '../city/city-workspace.css';
 
-import { FrontierPanel, type FrontierState } from "./FrontierPanel";
+const CityViewport = lazy(() => import('../city/CityViewport'));
+const TERMINAL = new Set(['completed','failed','finished','halted','stopped']);
+const PANELS = [
+  ['economy','Economy'],
+  ['people','People'],['organizations','Businesses & banks'],['markets','Markets'],
+  ['politics-law','Law & civic life'],['news-communications','Conversations & news'],
+  ['investigations','Evidence'],
+];
 
-const CityViewport = lazy(() => import("../city/CityViewport"));
-
-type WorldRow = {
-  id: number;
-  name?: string;
-  region_id?: number | null;
-  region_name?: string | null;
-  currency_code?: string | null;
-  kind?: string | null;
-  capacity?: number | null;
-  active?: boolean;
-  x?: number;
-  y?: number;
-  [key: string]: unknown;
-};
-
-type WorldFlow = WorldRow & {
-  kind: "migration" | "trade" | string;
-  origin_region_id: number;
-  destination_region_id: number;
-};
-
-type WorldProjection = {
-  frontier?: FrontierState;
-  enabled?: boolean;
-  regions?: WorldRow[];
-  agents?: WorldRow[];
-  organizations?: WorldRow[];
-  places?: WorldRow[];
-  construction_projects?: Array<{
-    project_id: number | string;
-    name: string;
-    target_place_type: string;
-    status: string;
-    stage: string | null;
-    region?: { id: number; name: string } | null;
-    site?: { x: number; y: number } | null;
-    requirements?: { funding_cents: number; work_units: number };
-    contributed?: { funding_cents: number; work_units: number };
-    milestone_count?: number;
-    updated_tick?: number;
-    privacy?: string;
-    aggregate_count?: number;
-    place_id?: number | null;
-  }>;
-  presence?: WorldRow[];
-  flows?: WorldFlow[];
-};
-
-/* A run in one of these states emits nothing further, so polling it is waste. */
-const TERMINAL_RUN_STATUSES = new Set(
-  ["completed", "failed", "finished", "halted", "stopped"]);
-
-type ProviderLane = {
-  provider: string;
-  capacity: number;
-  in_flight: number;
-  queue_depth: number;
-  cooldown_remaining_s: number;
-  p50_queue_ms: number | null;
-  p95_response_ms: number | null;
-  failures: number;
-  rate_limits: number;
-  fallbacks: number;
-};
-type ProviderRuntime = {
-  live_only: boolean;
-  global: {
-    capacity: number; in_flight: number; queue_depth: number; peak_in_flight: number;
-  };
-  simulated_days: { p50_wall_ms: number | null };
-  providers: ProviderLane[];
-};
-
-function display(value: unknown, fallback = "Not exposed") {
-  if (value === null || value === undefined || value === "") return fallback;
-  return String(value).replaceAll("_", " ");
+function CityDetailPanel({title,children,onClose}:{title:string;children:ReactNode;onClose:()=>void}) {
+  const ref=useModalFocus({onEscape:onClose});
+  return <div className="city-panel-backdrop" onMouseDown={e=>{if(e.currentTarget===e.target)onClose();}}>
+    <section className="city-detail-panel" role="dialog" aria-modal="true" aria-label={title+' in City'} ref={ref} tabIndex={-1}>
+      <header className="city-panel-heading"><div><p className="world-os-kicker">City details</p><h2>{title}</h2></div><button onClick={onClose}>Back to City · Esc</button></header>
+      {children}
+    </section>
+  </div>;
 }
 
-export function WorldWorkspace() {
-  const projection = useWorkspaceProjection<WorldProjection>("workspace.world", "/api/v2/workspaces/world");
-  const [searchParams, setSearchParams] = useSearchParams();
-  /*
-   * The civic panel used to live in Overview and was fed there. Moving it here
-   * carried the component but not its sources, so it lost the things that only
-   * data can supply: the run status line, the empty and error states, the
-   * evidence lens and the live inference fabric. They are restored at the panel's
-   * new home rather than by moving it back — see the workspace-projection query
-   * above, which answers a different question (the atlas) and cannot stand in
-   * for these.
-   */
-  const { observerState, runId } = projection;
-  const tick = observerState.tick;
-  const city3d = searchParams.get("cityView") === "3d";
-  const setCityView = (enabled: boolean) => {
-    const next = new URLSearchParams(searchParams);
-    if (enabled) next.set("cityView", "3d"); else next.delete("cityView");
-    setSearchParams(next, { replace: true });
-  };
-  const recordedDay = observerState.view === "recorded";
-  const city = useQuery({
-    queryKey: ["world-os", runId, observerState.fork, "world-city", tick, observerState.population],
-    queryFn: ({ signal }) => loadCityProjection({ ...observerState, runId }, path => projectionApi(path, signal)),
-    retry: false,
-    refetchInterval: query => tick === "live" && !TERMINAL_RUN_STATUSES.has(
-      String(query.state.data?.overview.data.summary?.status || "").toLowerCase()) ? 3000 : false,
+export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNode}) {
+  const projection=useWorkspaceProjection<{frontier?:FrontierState}>('workspace.world','/api/v2/workspaces/world');
+  const {observerState,runId}=projection;
+  const navigate=useNavigate();
+  const [params,setParams]=useSearchParams();
+  useEffect(()=>{if(!panel&&params.has('region')){const next=new URLSearchParams(params);next.delete('region');setParams(next,{replace:true});}},[panel,params,setParams]);
+  const [proposal,setProposal]=useState<CityProposal>(null);
+  const tick=observerState.tick;
+  const city=useQuery({
+    queryKey:['world-os',runId,observerState.fork,'world-city',tick,observerState.population],
+    queryFn:({signal})=>loadCityProjection({...observerState,runId},path=>projectionApi(path,signal)),
+    retry:false,
+    refetchInterval:query=>tick==='live'&&!TERMINAL.has(String(query.state.data?.overview.data.summary?.status||'').toLowerCase())?3000:false,
   });
-  const overview = { data: city.data?.overview };
-  const runStatus = String(overview.data?.data.summary?.status || "").toLowerCase();
-  const terminalRun = TERMINAL_RUN_STATUSES.has(runStatus);
-  const conversations = useQuery({
-    queryKey: ["world-os", runId, observerState.fork, "city-conversations", tick,
-      city.data?.envelope.snapshot_version],
-    queryFn: ({ signal }) => loadCityConversations(city.data!.envelope, path => projectionApi(path, signal)),
-    enabled: recordedDay && Boolean(city.data) && !city.error,
-    retry: false,
+  const frame=!city.error?city.data?.envelope:null;
+  const summary=city.data?.overview.data.summary;
+  const activity=useCityActivity(frame,!city.error?city.data?.activity:null);
+  const markers=cityActivityMarkers(activity.data);
+  const conversations=useQuery({
+    queryKey:['world-os',runId,observerState.fork,'city-conversations',frame?.snapshot_version],
+    queryFn:({signal})=>loadCityConversations(frame,path=>projectionApi(path,signal)),
+    enabled:observerState.view==='recorded'&&Boolean(frame),retry:false,
   });
-  const pollCurrentRun = tick === "live" && !recordedDay && !terminalRun && Boolean(city.data) && !city.error;
-  const runtime = useQuery({
-    queryKey: ["llm-runtime", runId, observerState.fork],
-    queryFn: ({ signal }) => workspaceApi<ProviderRuntime>("/api/llm/runtime", { signal }),
-    enabled: pollCurrentRun, retry: false,
-    refetchInterval: pollCurrentRun ? 2000 : false,
+  const pollRuntime=tick==='live'&&observerState.view!=='recorded'&&Boolean(frame)&&!TERMINAL.has(String(summary?.status));
+  const runtime=useQuery({
+    queryKey:['llm-runtime',runId,observerState.fork],
+    queryFn:({signal})=>workspaceApi<any>('/api/llm/runtime',{signal}),
+    enabled:pollRuntime,retry:false,refetchInterval:pollRuntime?2000:false,
   });
-  const runtimeMatches = cityRuntimeMatches(runtime.data, city.data?.envelope, tick);
-  const currentRuntime = pollCurrentRun && runtimeMatches && !runtime.error ? runtime.data : null;
-  const model = normalizeWorldWorkspace(projection.data || {});
-  const selectedRegionId = validatedSelectedId(searchParams.get("region"));
-  const selectedPlaceId = projection.observerState.place;
-  const selectedProjectId = projection.observerState.project;
-  const selectedRegion = model.regions.find(region => Number(region.id) === selectedRegionId) || null;
-  const selectedPlace = model.places.find(place => Number(place.id) === selectedPlaceId) || null;
-  const selectedProject = model.constructionProjects.find(
-    project => String(project.id) === String(selectedProjectId),
-  ) || null;
-
-  useEffect(() => {
-    if (projection.loading) return;
-    const next = new URLSearchParams(searchParams);
-    /*
-     * CivicCity validates place and project selections against the world-map
-     * projection after that request settles. Do not clear them here from the
-     * independently loaded workspace summary: a valid map selection can arrive
-     * before that summary contains the same record.
-     */
-    if (selectedProjectId != null || selectedPlaceId != null || observerState.firm != null
-      || observerState.household != null || observerState.institution != null) next.delete("region");
-    if (selectedRegionId != null && !selectedRegion) next.delete("region");
-    if (next.toString() !== searchParams.toString()) {
-      setSearchParams(next, { replace: true });
-    }
-  }, [
-    projection.loading,
-    searchParams,
-    selectedPlaceId,
-    selectedProjectId,
-    observerState.firm,
-    observerState.household,
-    observerState.institution,
-    selectedRegion,
-    selectedRegionId,
-    setSearchParams,
-  ]);
-
-  const select = (key: "region" | "place" | "project", rawValue: string) => {
-    if (key === "project") {
-      const next = patchObserverViewState(searchParams, {
-        project: rawValue || null,
-      });
-      next.delete("region");
-      setSearchParams(next);
-      return;
-    }
-    const value = validatedSelectedId(rawValue);
-    const next = key === "place"
-      ? patchObserverViewState(searchParams, { place: value })
-      : new URLSearchParams(searchParams);
-    if (key === "region") {
-      if (value == null) next.delete("region");
-      else next.set("region", String(value));
-      next.delete("place");
-      next.delete("project");
-      next.delete("agent");
-      next.delete("firm");
-      next.delete("household");
-      next.delete("institution");
-    }
-    if (key === "place") next.delete("region");
-    setSearchParams(next);
-  };
-  const route = (path: string) => workspaceUrl(projection.runId, path, projection.observerState);
-  const envelope = projection.envelope;
-
-  return <section className="world-os-world-workspace">
-    <WorkspaceState loading={projection.loading} error={projection.error}>
-      <FrontierPanel data={projection.data?.frontier} />
-      {city3d && <div className="city3d-toggle" role="group" aria-label="City presentation">
-        <button aria-pressed={!city3d} onClick={() => setCityView(false)}>2D atlas</button>
-        <button aria-pressed={city3d} onClick={() => setCityView(true)}>3D city</button>
-      </div>}
-      {city3d ? <Suspense fallback={<p role="status">Loading city viewer…</p>}>
-        <CityViewport key={`${runId}:${observerState.fork}:${city.data?.envelope.view_key || ""}`}
-          envelope={!city.error ? city.data?.envelope : null} snapshot={!city.error ? overview.data : null}
-          runId={runId} tick={tick} status={runStatus}
-          stale={city.isError || projection.transport.status !== "live"}
-          loading={city.isLoading} error={city.error instanceof Error ? city.error.message : ""}
-          onFallback={() => setCityView(false)} />
-      </Suspense> : <CivicCity
-        onOpen3d={() => setCityView(true)}
-        agents={!city.error ? city.data?.agents : []}
-        firms={!city.error ? city.data?.firms : []}
-        events={!city.error ? overview.data?.data.events?.items || [] : []}
-        /* No fallback to the atlas projection: when the city query fails the
-           panel must say so, not quietly draw a different dataset's people. */
-        map={!city.error ? city.data?.map : null}
-        frame={!city.error ? city.data?.envelope : null}
-        conversations={recordedDay && !city.error && !conversations.error
-          && conversations.data?.mapSnapshot === city.data?.envelope.snapshot_version ? conversations.data?.data : null}
-        conversationsLoading={conversations.isLoading}
-        conversationsError={conversations.error instanceof Error ? conversations.error.message : ""}
-        civic={!city.error ? city.data?.civic ?? null : null}
-        runtime={currentRuntime}
-        runId={projection.runId}
-        tick={projection.observerState.tick}
-        phase={overview.data?.data.summary?.phase}
-        status={overview.data?.data.summary?.status}
-        loading={city.isLoading}
-        error={city.error instanceof Error ? city.error.message : ""}
-        connected={projection.transport.status === "live"}
-        historical={projection.observerState.tick !== "live"}
-        lineage={city.data?.envelope ? {
-          semantics: city.data.envelope.semantics_version,
-          projection: city.data.envelope.projection_version,
-          policy: city.data.envelope.policy_version,
-        } : null}
-        /*
-         * "world-os", not "world-os-world". The variant string is what becomes
-         * the modifier class, and civic-weather-room.css only ever defined
-         * .civic-city--world-os. The extra word meant the atlas matched none of
-         * its own dark treatment and fell back to the light civic default, which
-         * is why "Civic Forum" was white-on-paper at 1.25:1 inside a dark app.
-         */
-        variant="world-os"
-        observerState={projection.observerState}
-        onObserverStateChange={projection.setObserverState}
-      />}
-
-      <div className="world-os-world-supplement">
-    <WorkspaceHeader
-      title="City map"
-      kicker="Agents, places, and construction"
-      sourceLabel="Live City committed projection"
-      envelope={envelope}
-      actions={<div className="world-os-world-controls" aria-label="World selection controls">
-        <label>Region
-          <select value={selectedRegion?.id ?? ""} onChange={event => select("region", event.target.value)}>
-            <option value="">All regions</option>
-            {model.regions.map(region => <option key={region.id} value={region.id}>{display(region.name, `Region ${region.id}`)}</option>)}
-          </select>
-        </label>
-        <label>Place
-          <select value={selectedPlace?.id ?? ""} onChange={event => select("place", event.target.value)}>
-            <option value="">All places</option>
-            {model.places.map(place => <option key={place.id} value={place.id}>{display(place.name, `Place ${place.id}`)}</option>)}
-          </select>
-        </label>
-        <label>Construction project
-          <select value={selectedProject?.id ?? ""} onChange={event => select("project", event.target.value)}>
-            <option value="">All projects</option>
-            {model.constructionProjects.map(project => <option key={project.id} value={project.id}>
-              {display(project.name, `Project ${project.id}`)} · {display(project.stage || project.status)}
-            </option>)}
-          </select>
-        </label>
-      </div>}
-    />
-      {!model.enabled && <p className="world-os-disabled-callout">Geographic simulation data is disabled for this run.</p>}
-      <dl className="world-os-summary-strip" aria-label="World projection summary">
-        <div><dt>Population</dt><dd>{model.summary.population}</dd></div>
-        <div><dt>Active organizations</dt><dd>{model.summary.activeOrganizations}</dd></div>
-        <div><dt>Currencies</dt><dd>{model.summary.currencies.join(", ") || "—"}</dd></div>
-        <div><dt>Recent migration flows</dt><dd>{model.summary.migrationCount}{model.summary.flowsWindowed ? "+" : ""}</dd></div>
-        <div><dt>Recent trade flows</dt><dd>{model.summary.tradeCount}{model.summary.flowsWindowed ? "+" : ""}</dd></div>
-        <div><dt>Construction projects</dt><dd>{model.summary.constructionCount}</dd></div>
-      </dl>
-      {model.summary.flowsWindowed && <p className="world-os-policy-note">
-        Flow counts describe the newest 100 migrations and shipments the projection returns, not the run total.
-      </p>}
-
-      </div>
-
-      {/*
-        * Provider lanes — the inference fabric actually answering for this
-        * world. It sat beside the civic panel in Overview and was dropped when
-        * that surface was rewritten, taking the only readout of who is thinking
-        * and how hard with it. Restored beside the panel it belongs to.
-        *
-        * Scripted and mock lanes are filtered out on purpose: they are not a
-        * provider under load, and showing them as one would overstate the fabric.
-        */}
-      {tick === "live" && !recordedDay && <section
-        className="world-os-provider-deck"
-        aria-label={terminalRun ? "Ended run provider activity" : "Live AI provider lanes"}
-      >
-        <header>
-          <div>
-            <p className="world-os-kicker">{terminalRun ? "Final inference fabric" : "Live inference fabric"}</p>
-            <h3>Provider lanes</h3>
-          </div>
-          {currentRuntime && <div className="world-os-provider-global">
-            <span>{currentRuntime.live_only ? "Live only" : "Mixed mode"}</span>
-            <strong>{currentRuntime.global.in_flight}/{currentRuntime.global.capacity}</strong>
-            <small>
-              {currentRuntime.global.queue_depth} queued · peak {currentRuntime.global.peak_in_flight}
-              {currentRuntime.simulated_days?.p50_wall_ms == null
-                ? ""
-                : ` · day p50 ${(currentRuntime.simulated_days.p50_wall_ms / 1000).toFixed(1)}s`}
-            </small>
-          </div>}
-        </header>
-        {terminalRun && <p className="world-os-policy-note">This run has ended. Current provider activity is unavailable.</p>}
-        {!terminalRun && runtime.error && <p className="world-os-policy-note">Runtime telemetry is temporarily unavailable.</p>}
-        {!terminalRun && !runtime.error && runtime.data && !runtimeMatches && !city.error && <p className="world-os-policy-note">
-          Runtime telemetry does not match this city's run and fork context.
-        </p>}
-        <div className="world-os-provider-lanes">
-          {(currentRuntime?.providers || [])
-            .filter(lane => !["scripted", "mock"].includes(lane.provider))
-            .map(lane => {
-              const utilization = Math.min(
-                100, Math.round((lane.in_flight / Math.max(1, lane.capacity)) * 100));
-              const state = lane.cooldown_remaining_s > 0 ? "cooldown"
-                : lane.queue_depth > 0 ? "queued"
-                  : lane.in_flight > 0 ? "active" : "ready";
-              return <article
-                key={lane.provider}
-                className={`world-os-provider-lane world-os-provider-lane--${state}`}
-              >
-                <div className="world-os-provider-lane-head">
-                  <span className="world-os-live-dot" />
-                  <strong>{titleCase(lane.provider)}</strong>
-                  <em>{state}</em>
-                </div>
-                <div className="world-os-provider-capacity"><span style={{ width: `${utilization}%` }} /></div>
-                <dl>
-                  <div><dt>Active</dt><dd>{lane.in_flight}/{lane.capacity}</dd></div>
-                  <div><dt>Queued</dt><dd>{lane.queue_depth}</dd></div>
-                  <div><dt>p50 wait</dt><dd>{lane.p50_queue_ms == null ? "—" : `${Math.round(lane.p50_queue_ms)}ms`}</dd></div>
-                  <div><dt>p95 response</dt><dd>{lane.p95_response_ms == null ? "—" : `${(lane.p95_response_ms / 1000).toFixed(1)}s`}</dd></div>
-                </dl>
-                <small>
-                  {lane.failures} failures · {lane.rate_limits} rate limits
-                  · {lane.fallbacks} fallback attempts
-                </small>
-              </article>;
-            })}
-          {runtime.isLoading && <div className="world-os-provider-loading">Loading live provider capacity…</div>}
-        </div>
-      </section>}
-      {tick !== "live" && <p className="world-os-policy-note">Current provider activity is unavailable in historical city views.</p>}
-
-      <div className="world-os-world-detail-grid">
-        <article className="world-os-workspace-card world-os-world-inspector" aria-live="polite">
-          <header><div><p className="world-os-kicker">Selection inspector</p><h3>{selectedProject ? "Construction project" : selectedPlace ? "Place" : selectedRegion ? "Region" : "World extent"}</h3></div></header>
-          {selectedProject ? <dl>
-            <div><dt>Name</dt><dd>{display(selectedProject.name, `Project ${selectedProject.id}`)}</dd></div>
-            <div><dt>Target</dt><dd>{display(selectedProject.target_place_type)}</dd></div>
-            <div><dt>Status</dt><dd>{display(selectedProject.status)}</dd></div>
-            <div><dt>Stage</dt><dd>{display(selectedProject.stage, selectedProject.status === "completed" ? "completed" : "site")}</dd></div>
-            <div><dt>Region</dt><dd>{display(selectedProject.region?.name, selectedProject.region?.id == null ? undefined : `Region ${selectedProject.region.id}`)}</dd></div>
-            <div><dt>Funding</dt><dd>{Number(selectedProject.contributed?.funding_cents || 0)}/{Number(selectedProject.requirements?.funding_cents || 0)} cents</dd></div>
-            <div><dt>Work</dt><dd>{Number(selectedProject.contributed?.work_units || 0)}/{Number(selectedProject.requirements?.work_units || 0)} units</dd></div>
-            <div><dt>Milestones</dt><dd>{Number(selectedProject.milestone_count || 0)}</dd></div>
-            <div><dt>Privacy</dt><dd>{selectedProject.privacy === "aggregated_private" ? "Private homes aggregated; owners and exact sites withheld" : "Public or policy-authorized site"}</dd></div>
-          </dl> : selectedPlace ? <dl>
-            <div><dt>Name</dt><dd>{display(selectedPlace.name, `Place ${selectedPlace.id}`)}</dd></div>
-            <div><dt>Kind</dt><dd>{display(selectedPlace.kind)}</dd></div>
-            <div><dt>Region</dt><dd>{display(selectedPlace.region_name, selectedPlace.region_id == null ? undefined : `Region ${selectedPlace.region_id}`)}</dd></div>
-            <div><dt>Capacity</dt><dd>{display(selectedPlace.capacity)}</dd></div>
-          </dl> : selectedRegion ? <dl>
-            <div><dt>Name</dt><dd>{display(selectedRegion.name, `Region ${selectedRegion.id}`)}</dd></div>
-            <div><dt>Currency</dt><dd>{display(selectedRegion.currency_code)}</dd></div>
-            <div><dt>Population target</dt><dd>{display(selectedRegion.population_target)}</dd></div>
-            <div><dt>Ruleset</dt><dd>{display(selectedRegion.legal_ruleset)}</dd></div>
-          </dl> : <p>Select a validated region, place, or construction project to inspect its committed public fields.</p>}
-        </article>
-        <nav className="world-os-workspace-card world-os-world-links" aria-label="Related World workspaces">
-          <p className="world-os-kicker">Follow the evidence</p>
-          <Link to={route("people")}>Living Agents <span>↗</span></Link>
-          <Link to={route("organizations")}>Organizations <span>↗</span></Link>
-          <Link to={route("investigations")}>Investigations <span>↗</span></Link>
-        </nav>
-      </div>
-    </WorkspaceState>
+  const currentRuntime=pollRuntime&&!runtime.error&&cityRuntimeMatches(runtime.data,frame,tick)?runtime.data:null;
+  const stale=city.isError||projection.transport.status!=='live';
+  const href=(path:string)=>'/runs/'+encodeURIComponent(runId)+'/'+path+'?'+cityEvidenceParams(observerState);
+  const closePanel=()=>navigate(cityWorkspaceHref(runId,observerState));
+  const actorScope=activity.category!=='all'||activity.actor
+    ? (activity.data?.data.actor_activity||[]).map((row:any)=>row.agent_id) : null;
+  return <section className="world-os-world-workspace city-home">
+    <div inert={panel?true:undefined} aria-hidden={panel?true:undefined}>
+    <nav className="city-context-actions" aria-label="Explore City details">
+      {PANELS.map(([path,label])=><Link key={path} to={href(path)}>{label}</Link>)}
+    </nav>
+    <div className="city-stage">
+      <CivicCity
+        agents={frame?city.data?.agents:[]} firms={frame?city.data?.firms:[]} events={markers}
+        map={frame?city.data?.map:null} frame={frame} civic={frame?city.data?.civic:null}
+        runtime={currentRuntime} runId={runId} tick={tick} phase={summary?.phase} status={summary?.status}
+        loading={city.isLoading} error={city.error instanceof Error?city.error.message:''}
+        connected={projection.transport.status==='live'} historical={tick!=='live'}
+        variant="world-os" observerState={observerState} onObserverStateChange={projection.setObserverState} suspendSelectionRepair={Boolean(panel)}
+        hideActivityDock activityActorIds={actorScope} activityDay={activity.data?.data}
+        recordedAvailable={Boolean(city.data?.map.presence?.length)}
+        conversations={!conversations.error&&conversations.data?.mapSnapshot===frame?.snapshot_version?conversations.data?.data:null}
+        conversationsLoading={conversations.isLoading} conversationsError={conversations.error instanceof Error?conversations.error.message:''}
+        lineage={frame?{semantics:frame.semantics_version,projection:frame.projection_version,policy:frame.policy_version}:null}
+        render3d={({visibleAgents,selected}:any)=><Suspense fallback={<p role="status">Loading 3D city…</p>}>
+          <CityViewport embedded envelope={frame} snapshot={activity.data} runId={runId} tick={tick}
+            status={summary?.status||''} stale={stale} loading={city.isLoading}
+            error={city.error instanceof Error?city.error.message:''} visibleAgentIds={visibleAgents.map((a:any)=>Number(a.id))}
+            selectedAgentId={selected?.id??null} onSelect={projection.setObserverState} followId={observerState.follow} proposal={proposal}
+            onFallback={()=>projection.setObserverState({view:'atlas'})}/>
+        </Suspense>}
+      />
+      <CityActivityPanel activity={activity} runId={runId} tick={tick} onSelect={projection.setObserverState}/>
+    </div>
+    <details className="city-secondary"><summary>Regions & settlements</summary>
+      {projection.loading?<p role="status">Reading regions…</p>:projection.error?<p role="alert">{projection.error.message}</p>:<FrontierPanel data={projection.data?.frontier}/>}
+    </details>
+    <details className="city-secondary"><summary>Construction & citizen actions</summary>
+      <UrbanDevelopment runId={runId} tick={tick} fork={observerState.fork} stale={stale} onPreview={setProposal}/>
+      {tick==='live'?<CityControls showClock={false} runId={runId} selectedAgentId={observerState.agent} stale={stale}/>:<p>Historical inspection is read-only. Return to Live to use citizen actions.</p>}
+    </details>
+    <details className="city-secondary"><summary>Provider diagnostics</summary>
+      {tick!=='live'?<p>Current provider activity is unavailable in historical views.</p>:runtime.error?<p role="alert">Runtime telemetry is unavailable.</p>:currentRuntime?<>
+        <p>{currentRuntime.global.in_flight} calls in flight · {currentRuntime.global.queue_depth} queued. These are live provider requests, separate from recorded agent actions.</p>
+        {(currentRuntime.providers||[]).map((lane:any)=><p key={lane.provider}>{lane.provider}: {lane.in_flight}/{lane.capacity} active · {lane.queue_depth} queued · {lane.failures} failures</p>)}
+      </>:<p>{TERMINAL.has(String(summary?.status))?'This run has ended. Current provider activity is unavailable.':runtime.data?"Runtime telemetry does not match this city's run and fork context.":'Live provider telemetry is unavailable for this frame.'}</p>}
+    </details>
+    </div>
+    {panel&&<CityDetailPanel title={panel} onClose={closePanel}>{children}</CityDetailPanel>}
   </section>;
 }

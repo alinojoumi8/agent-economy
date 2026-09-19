@@ -36,16 +36,16 @@ class CityObservationsBody(BaseModel):
 def validate_observations(entries: list[str], context: dict, current_tick: int) -> list[str]:
     """Admit bounded observer URL fields, never evidence payloads or credentials."""
     allowed = {"tick", "fork", "event", "agent", "firm", "place", "project", "household",
-               "institution", "camera", "follow", "layer", "q", "population", "activeOnly", "view"}
+               "institution", "camera", "follow", "layer", "q", "population", "activeOnly", "view", "activity", "actor"}
     if len(entries) > 20 or len(set(entries)) != len(entries):
         raise ValueError("at most 20 distinct observations are allowed")
     normalized = []
     order = ("fork", "tick", "event", "layer", "q", "activeOnly", "camera", "household", "institution",
-             "firm", "agent", "place", "project", "population", "view", "follow")
+             "firm", "agent", "place", "project", "population", "view", "activity", "actor", "follow")
     for entry in entries:
         if not isinstance(entry, str) or len(entry) > 2048:
             raise ValueError("observation is too long")
-        pairs = parse_qsl(entry, keep_blank_values=True, strict_parsing=True, max_num_fields=17)
+        pairs = parse_qsl(entry, keep_blank_values=True, strict_parsing=True, max_num_fields=19)
         values = dict(pairs)
         if len(pairs) != len(values) or not values.keys() <= allowed:
             raise ValueError("unsupported observation fields")
@@ -53,7 +53,7 @@ def validate_observations(entries: list[str], context: dict, current_tick: int) 
             raise ValueError("observation requires a recorded tick")
         if int(values["tick"]) > current_tick or values.get("fork") != context["fork_id"]:
             raise ValueError("observation is outside this run history")
-        for key in ("event", "agent", "firm", "place", "household", "follow"):
+        for key in ("event", "agent", "firm", "place", "household", "follow", "actor"):
             if key in values and (not re.fullmatch(r"[1-9][0-9]{0,15}", values[key])
                                   or int(values[key]) > 9007199254740991):
                 raise ValueError("invalid observation identifier")
@@ -67,8 +67,9 @@ def validate_observations(entries: list[str], context: dict, current_tick: int) 
         if "follow" in values and values.get("agent") != values["follow"]:
             raise ValueError("follow must match the selected person")
         choices = {"layer": {"work", "communications", "markets", "institutions", "health"},
+                   "activity": {"work", "markets", "learning", "business", "construction", "travel", "communications", "external", "civic", "other"},
                    "population": {"all", "clusters"}, "activeOnly": {"1"},
-                   "view": {"diorama", "recorded", "list"}}
+                   "view": {"diorama", "recorded", "list", "3d"}}
         if any(key in values and values[key] not in options for key, options in choices.items()):
             raise ValueError("invalid observation display option")
         if len(values.get("q", "").encode("utf-16-le")) // 2 > 100:

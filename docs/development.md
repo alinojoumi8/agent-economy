@@ -159,8 +159,8 @@ npm --prefix dashboard run test:e2e -- e2e/world-os-real-backend.spec.ts
 ```
 
 Without `AE_REAL_RUN_ID`, these opt-in tests are skipped and the mocked suite
-runs normally. The smoke may advance a non-terminal run to tick 3 through the
-ordinary UI controls. Use only a disposable local run. It makes no provider
+runs normally. Complete at least one day in the disposable run first; the smoke
+reads City and its panels without advancing the world. It makes no provider
 calls under `runs/base.yaml` and does not validate hosted-only destinations.
 
 To include the 3D city and test the committed production bundle directly, use
