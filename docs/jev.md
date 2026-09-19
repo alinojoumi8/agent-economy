@@ -202,10 +202,15 @@ only after every citizen has a queued receipt, preserves failed attempts, and
 stops on unresolved failure. Tick 1 is admission; ticks 2–100 allow up to 990
 Hermes decisions. Hermes inference is outside the app's USD ledger and uses its
 own provider account limits. If a session stops early, inspect its retained
-status and launch only the remaining days to tick 100.
+status and launch only the remaining days to tick 100. Nonzero Hermes exits
+are recorded in `decision-process-exits.jsonl`, including the exit code and
+transcript path even when the transcript is empty. Unknown process failures
+stop the operator; recovery preserves already queued actions.
+Process cleanup rechecks direct ancestry and creation time, so a stale process
+listing cannot authorize terminating a sibling worker after PID reuse.
 
 The [September 19 longer-test record](plans/2026-09-19-jev-100-tick-live-test.md)
-separates completed live evidence from the pending Hermes continuation.
+separates completed live evidence from the remaining supervised continuation.
 
 ## Prospective comparison workflow
 

@@ -1,11 +1,11 @@
 # Jev, direct chat providers and ten Hermes citizens
 
-The requested target is a fresh 100-tick world. Run `e911d9c2a8` has completed
-**1 of 100 ticks** and is paused. All ten Hermes citizens have been admitted;
-none has submitted a live Hermes decision in this run yet. Automatic approval
-review rejected the attempted launch of the 99-day supervised Hermes worker
-with `blocked by policy`, without a more specific reason. No alternative launch
-mechanism was attempted.
+The requested target is a fresh 100-tick world. Run `e911d9c2a8` is now running
+under the ten-citizen Hermes supervisor. The latest audited boundary in this
+record is **tick 6 of 100**; this is not a completed 100-tick result. All ten
+citizens submitted decisions on ticks 2–6. The original launch was blocked by
+automatic approval review. The user requested another attempt, and the current
+supervised continuation was accepted.
 
 ## Scope and configuration
 
@@ -90,26 +90,47 @@ Private aggregate evidence, launch configuration, snapshot and proof are under
 `reports/out/jev-hermes-100-20260919/`. The browser's Decisions view shows the
 five accepted choices without publishing candidate payloads or private prompts.
 
-## Remaining execution
+## Supervised continuation
 
-The server is available at `http://127.0.0.1:18774`, run `e911d9c2a8`, paused at
-tick 1. From the repository root, the prepared continuation is:
+The server is available at `http://127.0.0.1:18774`, run `e911d9c2a8`. The
+supervisor started the current continuation from tick 8 with `--days 92`, five
+concurrent Hermes workers, and a target of tick 100. Do not also press the app's
+Run or Step controls while the cohort operator owns the clock. Progress and
+failures remain in `data/control-plane/hermes-cohort/e911d9c2a8/`.
 
-```powershell
-.\.venv\Scripts\python.exe scripts/hermes_citizens.py --run-id e911d9c2a8 --url http://127.0.0.1:18774 --days 99 --workers 5 --supervise
-```
+An earlier supervisor and its worker exited without a final error record. A
+subsequent tick-4 attempt preserved nine queued actions when Ethan's Hermes
+process exited with an empty transcript. The existing error omitted its exit
+code, so its exact cause is unknown. The operator now journals nonzero subprocess
+exit codes and includes them in the failure message, without recording secrets
+or provider response bodies. It still refuses an unclassified automatic retry.
+Explicit recovery skipped the nine queued citizens, completed Ethan's missing
+decision, and saved tick 4 without duplicate accepted submissions.
 
-This command has **not run successfully**: its launch was rejected by automatic
-approval review. It is provided for the user to run directly. Do not also press
-the app's Run or Step controls while the cohort operator owns the clock.
-The supervisor retains progress and failures in
-`data/control-plane/hermes-cohort/e911d9c2a8/`.
+A later Aisha startup stopped with exit code 15 and an empty transcript while
+nine tick-9 actions were already queued. A targeted regression exposed a process
+ownership gap: the child list can become stale before process objects are
+constructed. Cleanup now rechecks direct parent IDs and creation times at every
+edge and tracks each process generation separately. The regression failed before
+the fix and passed afterward. A separate fast-launcher-exit regression preserves
+normal process completion when a fresh creation-time lookup is no longer possible.
+This hardens cleanup; it does not establish that this race caused the observed
+exit code 15. The live continuation retains the same profiles, models and world.
+
+Through tick 6, Jev selected 26 menus: 22 purchases and four combined
+purchase/job-application choices. Every selected action passed engine validation.
+Four specialized turns stayed outside Jev's bounded menu. Native inference cost
+USD 0.058026392, with no provider failures, repairs, or malformed-output no-ops.
+The ledger reconciled with no account mismatches. Live aggregate snapshots use
+`progress-audit.json`; admission evidence is reconstructed only from its frozen
+tick-1 snapshot. Budget reservations observed during an active tick are not
+treated as abandoned reservations.
 
 After tick 100, audit all native and external receipts, rejection causes,
 fallback attendance, model identity, usage and persistent Jev reservations;
 reconcile the ledger and replay the completed source with network access
 disabled. No claim about 100-tick reliability or Hermes decision quality can
-be made from the completed admission tick.
+be made from these early ticks.
 
 ## Verification
 
@@ -126,6 +147,15 @@ All 521 Git-visible Python files compile. Pinned dataset verification and
 temporary directory; subsequent tests used fresh directories under `tmp/`.
 The inherited FastAPI/Starlette httpx deprecation warning remains.
 
-The prior-head CI dashboard job failed its existing construction-navigation
-context test (138 of 139 browser tests passed). No dashboard source is changed
-by this work. The PR stays a draft; this record is not a release or merge claim.
+The final subprocess changes passed 41 operator/supervision tests and a local
+stress run of 300 concurrent process-tree lifecycles (five workers, 32.06 seconds,
+all exit codes zero). The
+policy-origin recovery case that crashed in CI passed locally in 220.77 seconds
+using the shorter workspace temporary path `tmp/p11`. Its first local attempt
+hit the Windows path-length limit under a longer temporary directory.
+
+CI for `d0e8ccc` completed successfully on attempt 2, including the dashboard.
+The first attempt's policy-recovery job exited with a Python segmentation fault;
+the same job passed when retried. That transient crash remains disclosed, with
+no demonstrated link to Jev. The PR stays a draft pending the live test; this
+record is not a release or merge claim.

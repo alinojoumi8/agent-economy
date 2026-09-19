@@ -140,6 +140,58 @@ def test_hermes_process_reaps_child_before_return_or_timeout(tmp_path, timeout):
         unrelated.wait()
 
 
+def test_process_cleanup_rechecks_child_ownership_after_pid_snapshot(monkeypatch):
+    """A child-list snapshot may contain a PID now owned by another worker."""
+    killed = []
+
+    class Process:
+        def __init__(self, pid, parent, created):
+            self.pid, self.parent_id, self.created = pid, parent, created
+            self.descendants = []
+        def children(self, recursive=False):
+            return self.descendants
+        def ppid(self):
+            return self.parent_id
+        def create_time(self):
+            return self.created
+        def poll(self):
+            return 0
+        def suspend(self):
+            pass
+        def kill(self):
+            assert self.pid not in {2, 3}, 'cleanup reached another worker'
+            killed.append(self.pid)
+        def wait(self):
+            return 0
+
+    root = Process(1, 999, 100)
+    sibling = Process(2, 999, 101)  # PID reused after children() took its snapshot.
+    older = Process(3, 1, 90)  # Its original parent used this root PID earlier.
+    owned = Process(4, 1, 101)
+    grandchild = Process(5, 4, 102)
+    root.descendants = [sibling, older, owned]
+    owned.descendants = [grandchild]
+    monkeypatch.setattr('scripts.hermes_citizens.psutil.Popen', lambda *args, **kwargs: root)
+    monkeypatch.setattr('scripts.hermes_citizens.psutil.wait_procs', lambda processes, **kwargs: (processes, []))
+    assert run_hermes_process(['fake'], timeout=1).returncode == 0
+    assert set(killed) == {1, 4, 5}
+
+
+def test_fast_process_exit_does_not_require_creation_time_lookup(monkeypatch):
+    class ExitedProcess:
+        pid = 123
+        def create_time(self):
+            raise psutil.NoSuchProcess(self.pid)
+        children = suspend = kill = create_time
+        def poll(self):
+            return 0
+        def wait(self):
+            return 0
+    monkeypatch.setattr('scripts.hermes_citizens.psutil.Popen', lambda *args, **kwargs: ExitedProcess())
+    monkeypatch.setattr('scripts.hermes_citizens.psutil.wait_procs', lambda processes, **kwargs: (processes, []))
+    assert run_hermes_process(['already-exited'], timeout=1).returncode == 0
+
+
 def test_incomplete_process_cleanup_is_not_retryable(monkeypatch):
     monkeypatch.setattr('scripts.hermes_citizens.psutil.wait_procs', lambda *args, **kwargs: ([], [object()]))
     with pytest.raises(RuntimeError, match='cleanup failed') as error:

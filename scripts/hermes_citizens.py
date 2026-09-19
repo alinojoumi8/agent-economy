@@ -65,19 +65,42 @@ class HermesCallTimeout(RuntimeError):
     """The bounded call timed out and its tracked process tree was reaped."""
 
 
+def _owned_hermes_children(parent):
+    """Recheck direct ancestry after psutil's process-list snapshot."""
+    try:
+        children = parent.children()
+        parent_created = parent.create_time()
+    except psutil.NoSuchProcess:
+        return []
+    owned = []
+    for child in children:
+        try:
+            # A PID can be recycled between the child-list snapshot and the
+            # Process object being created. Validate every edge, not just the
+            # descendant's age relative to the original root.
+            if child.ppid() == parent.pid and child.create_time() >= parent_created:
+                owned.append(child)
+        except psutil.NoSuchProcess:
+            pass
+    return owned
+
+
 def run_hermes_process(command, *, timeout, **kwargs):
     """Track Windows venv children so a timeout cannot leave a second citizen acting."""
     process = psutil.Popen(command, **kwargs)
-    tracked = {process.pid: process}
+    # Popen retains its own process handle even if a fast launcher has already
+    # exited. Do not require a new OS creation-time lookup for that root.
+    tracked = {(process.pid, None): process}
     deadline = time.monotonic() + timeout
     try:
         while True:
-            for parent in list(tracked.values()):
-                try:
-                    for child in parent.children(recursive=True):
-                        tracked.setdefault(child.pid, child)
-                except psutil.NoSuchProcess:
-                    pass
+            pending = list(tracked.values())
+            while pending:
+                for child in _owned_hermes_children(pending.pop()):
+                    identity = (child.pid, child.create_time())
+                    if identity not in tracked:
+                        tracked[identity] = child
+                        pending.append(child)
             returncode = process.poll()
             if returncode is not None:
                 return subprocess.CompletedProcess(command, returncode)
@@ -93,9 +116,10 @@ def run_hermes_process(command, *, timeout, **kwargs):
             parent = pending.pop()
             try:
                 parent.suspend()
-                for child in parent.children(recursive=True):
-                    if child.pid not in tracked:
-                        tracked[child.pid] = child
+                for child in _owned_hermes_children(parent):
+                    identity = (child.pid, child.create_time())
+                    if identity not in tracked:
+                        tracked[identity] = child
                         pending.append(child)
             except psutil.NoSuchProcess:
                 pass
