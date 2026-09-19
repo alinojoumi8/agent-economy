@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router';
+import { Link, useLocation, useSearchParams } from 'react-router';
 import { CityScene, type SceneStats } from './CityScene';
 import { activityForCity, projectCity, type CityInstance } from './cityProjection';
 import { UrbanDevelopment, type CityProposal } from './UrbanDevelopment';
@@ -9,6 +9,7 @@ import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
 
 type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal};
 export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal}:Props){
+  const location=useLocation();
   const host=useRef<HTMLDivElement>(null),scene=useRef<CityScene|null>(null);
   const [params,setParams]=useSearchParams();
   const [graphicsError,setGraphicsError]=useState(''),[ready,setReady]=useState(false);
@@ -53,8 +54,10 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
     return()=>{instance?.dispose();scene.current=null;};
   },[]);
   useEffect(()=>{if(city)scene.current?.update(city,visible,selected?.key||null,events,running);else scene.current?.clear();},[city,visible,selected?.key,events,running]);
-  useEffect(()=>{scene.current?.restoreCamera(cameraBookmark);},[cameraBookmark,ready]);
-  useEffect(()=>{if(followId&&selected?.entityType==='agent'&&selected.entityId===followId)scene.current?.focus(selected.key);},[city,selected?.key,followId,ready]);
+  // Back can cancel an uncommitted router transition after the scene already
+  // moved. Reapply on navigation even when the bookmark string is unchanged.
+  useEffect(()=>{scene.current?.restoreCamera(cameraBookmark);},[cameraBookmark,ready,location]);
+  useEffect(()=>{if(followId&&selected?.entityType==='agent'&&selected.entityId===followId)scene.current?.focus(selected.key);},[city,selected?.key,followId,ready,location]);
   useEffect(()=>{if(embedded)scene.current?.preview(proposal||null);},[embedded,proposal,ready]);
   const evidenceUrl=(item:CityInstance)=>{
     const scope=new URLSearchParams();if(params.get('fork'))scope.set('fork',params.get('fork')!);if(historical)scope.set('tick',tick);

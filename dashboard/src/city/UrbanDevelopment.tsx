@@ -2,6 +2,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { Link } from 'react-router';
 import { projectionApi, workspaceApi } from '../app/api';
+import { useObserverViewState } from '../app/observerViewState';
+import { cityEvidenceParams } from '../app/cityNavigation.js';
 
 type Parcel={id:number;parcel_key:string;region_id:number;x:number;y:number;zone_key:string;blocked:number;owner_firm_id:number|null};
 type Project={id:number;firm_id:number;parcel_id:number;status:string;requested_tick:number;completion_tick:number;cost_cents:number;currency_code:string;capacity:number;place_id:number|null;created_event_id:number|null;outcome_event_id:number|null};
@@ -10,6 +12,7 @@ type Descriptor={type:string;enabled:boolean;disabled_reason?:string;fields:Arra
 type Participant={enabled:boolean;active:boolean;running:boolean;completed_tick:number;controlled_agent?:{id:number;name:string};action_catalog:Descriptor[]};
 export type CityProposal={x:number;y:number;label:string}|null;
 export function UrbanDevelopment({runId,tick,fork,stale,onPreview}:{runId:string;tick:string;fork:string|null;stale:boolean;onPreview:(proposal:CityProposal)=>void}){
+  const [observerState]=useObserverViewState();
   const client=useQueryClient(),[parcelId,setParcelId]=useState(''),[firmId,setFirmId]=useState('');
   const [busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
   const request=useRef({signature:'',key:''});
@@ -41,7 +44,7 @@ export function UrbanDevelopment({runId,tick,fork,stale,onPreview}:{runId:string
     }catch(e){setError(e instanceof Error?e.message:'Proposal rejected');}finally{setBusy(false);}
   }
   function allowed(type:string,id:number){const d=participant.data?.action_catalog?.find(d=>d.type===type);return d?.enabled!==false&&d?.fields.some(f=>f.name==='project_id'&&f.options?.some(o=>Number(o.value)===id));}
-  const scope=new URLSearchParams();if(historical)scope.set('tick',tick);if(fork)scope.set('fork',fork);
+  const scope=cityEvidenceParams({...observerState,tick,fork});
   if(query.isPending)return <p role="status">Reading construction capability…</p>;
   if(query.isError)return <p role="alert">Construction evidence is unavailable. {query.error.message}</p>;
   if(!data?.enabled)return <p className="city-capability-note">Parcel construction is not enabled in this run. The city displays the places and activity this run actually records; it cannot reconstruct missing movement or building history. Use a fresh SimCity profile to exercise those mechanics.</p>;

@@ -22,6 +22,9 @@ their existing workflow.
 agent/category filters and totals independent of the visible page. Atlas, List
 and 3D use the same selected day and activity markers. Proposed, queued and
 scheduled events are pending; a request is not a completed economic outcome.
+Construction and travel starts remain pending until their recorded completion.
+Firm activity rows can select the named business directly, without inventing
+an individual actor when the source event identifies only the firm.
 Unknown events remain neutral recorded headers without raw payloads.
 **Inspect this day** freezes the observation while the simulation advances.
 Native scripted activity is visible even with zero external-agent or LLM calls.
@@ -44,6 +47,14 @@ explicit: use a fresh `runs/simcity.yaml` world to exercise permitted company
 construction, escrow and completion; old profiles are not silently upgraded.
 2.5D Diorama bookmarks remain readable for compatibility, but that duplicate
 renderer is no longer in the main view selector.
+
+The construction acceptance check uses the disposable provider-free SimCity
+fixture from `test_http_participant_catalog_wait_release_and_exact_replay`.
+Its public UI showed project 1 building at day 13 (event 2409, 50,000 cents
+committed, due day 16), then completed at day 16 (event 2964, workplace 40).
+Construction evidence opened in the common City panel and returned to the same
+business, renderer, filters and historical day. The source fixture also passes
+exact recorded replay; no original user world is upgraded by this check.
 
 Production-bundle captures from the disposable scripted SimCity run (day 1):
 

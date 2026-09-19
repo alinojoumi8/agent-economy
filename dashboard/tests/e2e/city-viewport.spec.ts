@@ -34,7 +34,9 @@ test('mount/unmount releases canvas and supports repeated 2D fallback',async({pa
   }
 });
 
-test('3D camera bookmarks restore the rendered view across modes, evidence, history and reload',async({page})=>{
+test('3D camera bookmarks restore the rendered view across modes, evidence, history and reload',async({page},testInfo)=>{
+  const navigations:string[]=[];page.on('framenavigated',frame=>{if(frame===page.mainFrame())navigations.push(frame.url());});
+  try {
   await openCity(page);
   await page.getByLabel('Keyboard explorer').selectOption('agent:125');
   await page.getByRole('button',{name:'Focus Citizen 125',exact:true}).click();
@@ -45,8 +47,8 @@ test('3D camera bookmarks restore the rendered view across modes, evidence, hist
   expect(moved).not.toBe(focused);
   const canvas=page.getByTestId('city-canvas');
   await expect(canvas).toHaveAttribute('data-camera3d',moved!);
-  await page.goBack();await expect(canvas).toHaveAttribute('data-camera3d',focused!);
-  await page.goForward();await expect(canvas).toHaveAttribute('data-camera3d',moved!);
+  await page.goBack();await expect(page).toHaveURL(url=>url.searchParams.get('camera3d')===focused);await expect(canvas).toHaveAttribute('data-camera3d',focused!);
+  await page.goForward();await expect(page).toHaveURL(url=>url.searchParams.get('camera3d')===moved);await expect(canvas).toHaveAttribute('data-camera3d',moved!);
   await page.getByRole('button',{name:'Atlas',exact:true}).click();
   await page.getByRole('button',{name:'3D · experimental',exact:true}).click();
   await expect(canvas).toHaveAttribute('data-camera3d',moved!);
@@ -57,6 +59,7 @@ test('3D camera bookmarks restore the rendered view across modes, evidence, hist
   await page.reload();await expect(canvas).toHaveAttribute('data-ready','true');
   await expect(canvas).toHaveAttribute('data-camera3d',moved!);
   await expect(page.getByLabel('Keyboard explorer')).toHaveValue('agent:125');
+  } finally {await testInfo.attach('camera-navigation',{body:JSON.stringify(navigations,null,2),contentType:'application/json'});}
 });
 
 test('streets and housing keep rendering resources bounded when layers change',async({page})=>{
@@ -117,6 +120,46 @@ test('construction preview queues a server-priced proposal and preserves request
   await expect(page.getByText('No construction projects at this tick.')).toBeVisible();
   await expect(page.getByLabel('Keyboard explorer').locator('option')).toHaveCount(403);
 });
+test('construction before and after states preserve City context through linked evidence',async({page})=>{
+  await installCityFixture(page);
+  await page.route('**/api/v2/urban-development*',route=>{
+    const tick=new URL(route.request().url()).searchParams.get('tick')==='1'?1:2;
+    return route.fulfill({json:{run_id:'city-fixture',fork_id:null,tick,semantics_version:13,projection_version:1,policy_version:1,view_key:'public',snapshot_version:`urban-t${tick}`,event_cursor:9,projection:'urban.development',data:{enabled:true,catalog:[],parcels:[],projects:[{
+      id:1,firm_id:1,status:tick===1?'building':'completed',completion_tick:2,created_event_id:8,outcome_event_id:tick===2?9:null,
+    }]}}});
+  });
+  await page.route('**/api/v2/city/activity*',route=>{
+    const tick=new URL(route.request().url()).searchParams.get('tick')==='1'?1:2;
+    const outcome=tick===1?'pending':'completed';
+    return route.fulfill({json:{run_id:'city-fixture',fork_id:null,tick,semantics_version:12,projection_version:2,policy_version:1,view_key:'public',snapshot_version:`s12-t${tick}-e9-fixture`,event_cursor:9,projection:'city.activity',data:{tick,source:'committed',total:1,day_total:1,changed_agents:0,offset:0,limit:40,next_offset:null,through_id:9,actors:[],actor_activity:[],counts:{[outcome]:1},categories:{construction:1},items:[{
+      id:tick===1?8:9,tick,kind:tick===1?'construction_started':'construction_completed',title:'Workshop One construction',detail:'',category:'construction',outcome,actor_ids:[],actors:[],firm_id:1,firm_name:'Workshop One',
+    }]}}});
+  });
+  const camera='95,100,110,0,0,0,2.6';
+  await page.goto(`/runs/city-fixture/world?tick=1&agent=125&view=3d&camera3d=${encodeURIComponent(camera)}`);
+  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
+  await page.getByRole('button',{name:'Locate Workshop One',exact:true}).click();
+  await expect(page.getByLabel('Keyboard explorer')).toHaveValue('firm:1');
+  await page.getByText('Construction & citizen actions',{exact:true}).click();
+  const construction=page.getByRole('region',{name:'City construction',exact:true});
+  await expect(construction).toContainText('1 under construction · 0 completed');
+  await expect(construction.getByRole('button',{name:'Cancel · full refund'})).toBeDisabled();
+  await construction.getByRole('link',{name:'Event #8',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Evidence in City'})).toBeVisible();
+  await page.getByRole('button',{name:'Back to City · Esc'}).click();
+  await expect(page.getByLabel('Keyboard explorer')).toHaveValue('firm:1');
+  await expect(page.getByRole('button',{name:'3D · experimental',exact:true})).toHaveAttribute('aria-pressed','true');
+  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-camera3d',camera);
+  await expect(page.getByRole('textbox',{name:'Inspect tick'})).toHaveValue('1');
+  await page.getByRole('textbox',{name:'Inspect tick'}).fill('2');
+  await page.getByRole('button',{name:'Go to tick'}).click();
+  const constructionDetails=page.locator('details.city-secondary').filter({has:page.getByText('Construction & citizen actions',{exact:true})});
+  if(await constructionDetails.getAttribute('open')===null)await page.getByText('Construction & citizen actions',{exact:true}).click();
+  await expect(construction).toContainText('0 under construction · 1 completed');
+  await expect(construction.getByRole('link',{name:'Event #9',exact:true})).toHaveAttribute('href',/city=/);
+  await expect(construction.getByRole('button',{name:'Demolish · no refund'})).toBeDisabled();
+});
+
 test('graphics context loss remains failed while projections refresh',async({page})=>{
   await openCity(page);
   await page.evaluate(()=>{const gl=document.querySelector('canvas')!.getContext('webgl2')!;gl.getExtension('WEBGL_lose_context')!.loseContext();});

@@ -67,7 +67,7 @@ def _outcome(kind: str) -> str:
         return "rejected"
     if any(word in kind for word in ("cancelled", "demolished")):
         return "cancelled"
-    if any(word in kind for word in ("queued", "requested", "proposed", "applied", "scheduled")) or kind == "order_placed":
+    if any(word in kind for word in ("queued", "requested", "proposed", "applied", "scheduled")) or kind in {"order_placed", "construction_started", "travel_started"}:
         return "pending"
     if kind in _PUBLIC_KINDS and kind != "belief_updated":
         return "completed"
@@ -116,6 +116,7 @@ def _card(row, agents: dict, firms: dict) -> dict:
     for key, unit in (("qty", "units"), ("quantity", "units"), ("units", "units produced"), ("amount_cents", "cents"),
                       ("total_cents", "cents total"), ("unit_price_cents", "cents per unit"),
                       ("new_cents", "cents new price"), ("premium_cents", "cents premium"),
+                      ("cost_cents", "cents committed"),
                       ("price_cents", "cents per unit"), ("limit_price_cents", "cents limit"),
                       ("work_units", "work units"), ("xp", "XP")):
         value = payload.get(key)
@@ -123,6 +124,8 @@ def _card(row, agents: dict, firms: dict) -> dict:
             details.append(f"{value:,} {unit}")
     if isinstance(payload.get("side"), str) and payload["side"] in {"buy", "sell"}:
         details.insert(0, payload["side"])
+    if kind == "construction_started" and _id(payload.get("completion_tick")):
+        details.append(f"due tick {payload['completion_tick']}")
     outcome = _outcome(kind)
     event_id, tick = int(row["id"]), int(row["tick"])
     semantic = project_activity(ActivityFact(

@@ -91,6 +91,20 @@ def test_native_activity_has_explicit_units_and_unknown_kinds_stay_neutral(econo
     assert "SECRET" not in str(day)
 
 
+def test_started_construction_and_travel_remain_pending_until_outcomes(economy):
+    for kind in ("construction_started", "travel_started"):
+        economy.store.log_event(2, kind, {"cost_cents": 50000, "completion_tick": 5})
+    for kind in ("construction_completed", "travel_completed"):
+        economy.store.log_event(5, kind, {})
+    before = build_city_activity(economy.store, as_of_tick=2)
+    after = build_city_activity(economy.store, as_of_tick=5)
+    assert before["counts"] == {"pending": 2}
+    assert after["counts"] == {"completed": 2}
+    construction = next(row for row in before["items"] if row["kind"] == "construction_started")
+    assert "50,000 cents committed" in construction["detail"]
+    assert "due tick 5" in construction["detail"]
+
+
 def test_news_is_day_scoped_paged_and_never_exposes_future_sources(economy):
     store = economy.store
     past = store.log_event(2, "production", {"firm_id": 1, "units": 4})

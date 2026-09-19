@@ -8,7 +8,7 @@ import { cityEvidenceParams } from '../app/cityNavigation.js';
 
 export type ActivityCard = {
   id:number; tick:number; kind:string; title:string; detail:string; category:string; outcome:string;
-  actor_ids:number[]; actors:Array<{id:number;name:string}>; firm_id:number|null;
+  actor_ids:number[]; actors:Array<{id:number;name:string}>; firm_id:number|null; firm_name?:string|null;
 };
 export type ActivityDay = {
   tick:number; through_id:number; total:number; day_total:number; changed_agents:number;
@@ -53,7 +53,7 @@ export function CityActivityPanel({activity,runId,tick,onSelect}: {
     {day && <><div className="city-activity-totals" aria-label="Day activity totals">
       <strong>{day.total.toLocaleString()} events</strong><span>{day.changed_agents} agents</span>
       {Object.entries(day.counts).filter(([,count])=>count>0).map(([state,count])=><span key={state} className={`city-outcome city-outcome--${state}`}>{count} {state}</span>)}
-    </div><p className="city-activity-note">Counts cover the selected day{activity.category!=='all'||activity.actor?' and filters':''}. Pending means proposed or queued; completed requires a recorded outcome.</p></>}
+    </div><p className="city-activity-note">Counts cover the selected day{activity.category!=='all'||activity.actor?' and filters':''}. Pending means proposed, queued or in progress; completed requires a recorded outcome.</p></>}
     <div className="city-activity-filters">
       <label>Activity<select aria-label="Activity" value={activity.category} onChange={e=>setFilter('activity',e.target.value)}>{['all','work','markets','learning','business','construction','travel','communications','external','civic','other'].map(c=><option key={c} value={c}>{c==='all'?'All activity':c[0].toUpperCase()+c.slice(1)}</option>)}</select></label>
       <label>Agent<select aria-label="Agent" value={activity.actor || ''} onChange={e=>setFilter('actor',e.target.value)}><option value="">All agents</option>{day?.actors.map(a=><option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
@@ -65,7 +65,7 @@ export function CityActivityPanel({activity,runId,tick,onSelect}: {
     <ol className="city-activity-events">{day?.items.map(event=><li key={event.id}>
       <div><span className={`city-outcome city-outcome--${event.outcome}`}>{event.outcome}</span><small>#{event.id} · {event.kind.replaceAll('_',' ')}</small></div>
       <strong>{event.title}</strong>{event.detail&&<p>{event.detail}</p>}
-      <footer>{event.actors.map(actor=><button key={actor.id} onClick={()=>onSelect({agent:actor.id,population:'all',q:'',layer:'all'})}>Locate {actor.name}</button>)}<Link to={evidence(event)}>Evidence ↗</Link></footer>
+      <footer>{event.actors.map(actor=><button key={actor.id} onClick={()=>onSelect({agent:actor.id,population:'all',q:'',layer:'all'})}>Locate {actor.name}</button>)}{event.firm_id&&<button onClick={()=>onSelect({firm:event.firm_id,q:'',layer:'all'})}>Locate {event.firm_name||`business #${event.firm_id}`}</button>}<Link to={evidence(event)}>Evidence ↗</Link></footer>
     </li>)}</ol>
     {day && day.total>0 && <nav className="city-activity-pages" aria-label="Activity pages"><button disabled={activity.offset===0} onClick={()=>activity.setOffset(Math.max(0,activity.offset-40))}>Previous</button><span>{activity.offset+1}–{activity.offset+day.items.length} of {day.total}</span><button disabled={day.next_offset===null} onClick={()=>day.next_offset!==null&&activity.setOffset(day.next_offset)}>Next</button></nav>}
   </section>;
