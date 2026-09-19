@@ -74,6 +74,7 @@ test('3D camera bookmarks restore the rendered view across modes, evidence, hist
   await page.getByRole('link',{name:'Open citizen dossier'}).click();
   await expect(page.getByRole('dialog',{name:'People in City'})).toBeVisible();
   await page.getByRole('button',{name:'Back to City · Esc'}).click();
+  await expect(page.getByRole('dialog',{name:'People in City'})).toBeHidden();
   await expect(canvas).toHaveAttribute('data-camera3d',moved!);
   await page.reload();await expect(canvas).toHaveAttribute('data-ready','true');
   await expect(canvas).toHaveAttribute('data-camera3d',moved!);
@@ -166,6 +167,7 @@ test('construction before and after states preserve City context through linked 
   await construction.getByRole('link',{name:'Event #8',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Evidence in City'})).toBeVisible();
   await page.getByRole('button',{name:'Back to City · Esc'}).click();
+  await expect(page.getByRole('dialog',{name:'Evidence in City'})).toBeHidden();
   // Returning remounts the 3D viewport; wait for its readiness before checking
   // the restored selection so a busy CI renderer cannot exhaust that assertion.
   await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true',{timeout:15000});

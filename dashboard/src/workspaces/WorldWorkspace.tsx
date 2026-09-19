@@ -64,7 +64,9 @@ export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNo
   const currentRuntime=pollRuntime&&!runtime.error&&cityRuntimeMatches(runtime.data,frame,tick)?runtime.data:null;
   const stale=city.isError||projection.transport.status!=='live';
   const href=(path:string)=>'/runs/'+encodeURIComponent(runId)+'/'+path+'?'+cityEvidenceParams(observerState);
-  const closePanel=()=>navigate(cityWorkspaceHref(runId,observerState));
+  // Dismiss the modal with its URL change; a deferred transition can otherwise
+  // leave the inert City and focus trap mounted after history already moved.
+  const closePanel=()=>navigate(cityWorkspaceHref(runId,observerState),{flushSync:true});
   const actorScope=activity.category!=='all'||activity.actor
     ? (activity.data?.data.actor_activity||[]).map((row:any)=>row.agent_id) : null;
   return <section className="world-os-world-workspace city-home">
