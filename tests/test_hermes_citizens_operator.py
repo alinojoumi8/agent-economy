@@ -222,19 +222,57 @@ def test_hermes_process_reaps_child_before_return_or_timeout(tmp_path, timeout):
         unrelated.wait()
 
 
-def test_process_cleanup_rechecks_child_ownership_after_pid_snapshot(monkeypatch):
+@pytest.mark.skipif(sys.platform != 'linux', reason='Linux subreaper contract')
+@pytest.mark.parametrize('timeout', [False, True])
+def test_linux_guardian_reaps_reparented_descendant(tmp_path, timeout):
+    grandchild_pid = tmp_path / 'grandchild.pid'
+    grandchild = ('import os,time,pathlib; os.setsid(); '
+        f'pathlib.Path({str(grandchild_pid)!r}).write_text(str(os.getpid())); time.sleep(60)')
+    intermediate = f'import subprocess,sys; subprocess.Popen([sys.executable,"-c",{grandchild!r}])'
+    root = ('import subprocess,sys,time,pathlib; '
+        f'subprocess.run([sys.executable,"-c",{intermediate!r}], check=True); '
+        f'time.sleep({60 if timeout else 1})')
+    unrelated = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])
+    try:
+        if timeout:
+            with pytest.raises(HermesCallTimeout):
+                run_hermes_process([sys.executable, '-c', root], timeout=3)
+        else:
+            assert run_hermes_process([sys.executable, '-c', root], timeout=10).returncode == 0
+        assert grandchild_pid.is_file()
+        assert not psutil.pid_exists(int(grandchild_pid.read_text()))
+        assert unrelated.poll() is None
+    finally:
+        # Also clean up the fixture if the regression fails before containment.
+        if grandchild_pid.exists():
+            try:
+                child = psutil.Process(int(grandchild_pid.read_text()))
+                child.kill()
+            except psutil.NoSuchProcess:
+                pass
+        unrelated.kill()
+        unrelated.wait()
+
+
+@pytest.mark.parametrize('exit_after_snapshot', [False, True])
+def test_process_cleanup_rechecks_child_ownership_after_pid_snapshot(monkeypatch, exit_after_snapshot):
     """A child-list snapshot may contain a PID now owned by another worker."""
     killed = []
+    monkeypatch.setattr('scripts.hermes_citizens.LINUX_GUARDIAN', False)
 
     class Process:
         def __init__(self, pid, parent, created):
             self.pid, self.parent_id, self.created = pid, parent, created
             self.descendants = []
+            self.creation_reads = 0
         def children(self, recursive=False):
             return self.descendants
         def ppid(self):
             return self.parent_id
         def create_time(self):
+            self.creation_reads += 1
+            if exit_after_snapshot and self.pid == 5 and self.creation_reads > 1:
+                raise psutil.NoSuchProcess(self.pid)
             return self.created
         def poll(self):
             return 0
@@ -242,6 +280,8 @@ def test_process_cleanup_rechecks_child_ownership_after_pid_snapshot(monkeypatch
             pass
         def kill(self):
             assert self.pid not in {2, 3}, 'cleanup reached another worker'
+            if exit_after_snapshot and self.pid == 5:
+                raise psutil.NoSuchProcess(self.pid)
             killed.append(self.pid)
         def wait(self):
             return 0
@@ -256,10 +296,11 @@ def test_process_cleanup_rechecks_child_ownership_after_pid_snapshot(monkeypatch
     monkeypatch.setattr('scripts.hermes_citizens.psutil.Popen', lambda *args, **kwargs: root)
     monkeypatch.setattr('scripts.hermes_citizens.psutil.wait_procs', lambda processes, **kwargs: (processes, []))
     assert run_hermes_process(['fake'], timeout=1).returncode == 0
-    assert set(killed) == {1, 4, 5}
+    assert set(killed) == ({1, 4} if exit_after_snapshot else {1, 4, 5})
 
 
 def test_fast_process_exit_does_not_require_creation_time_lookup(monkeypatch):
+    monkeypatch.setattr('scripts.hermes_citizens.LINUX_GUARDIAN', False)
     class ExitedProcess:
         pid = 123
         def create_time(self):
@@ -275,6 +316,7 @@ def test_fast_process_exit_does_not_require_creation_time_lookup(monkeypatch):
 
 
 def test_incomplete_process_cleanup_is_not_retryable(monkeypatch):
+    monkeypatch.setattr('scripts.hermes_citizens.LINUX_GUARDIAN', False)
     monkeypatch.setattr('scripts.hermes_citizens.psutil.wait_procs', lambda *args, **kwargs: ([], [object()]))
     with pytest.raises(RuntimeError, match='cleanup failed') as error:
         run_hermes_process([sys.executable, '-c', 'pass'], timeout=10,
@@ -282,31 +324,37 @@ def test_incomplete_process_cleanup_is_not_retryable(monkeypatch):
     assert not isinstance(error.value, HermesCallTimeout)
 
 
-def test_hundred_day_session_pauses_at_target(monkeypatch, tmp_path):
+@pytest.mark.parametrize('start_tick,pending,recovery,days', [
+    (41, False, False, 100), (0, True, False, 10), (0, True, False, 1), (41, False, True, 1)])
+def test_bounded_session_counts_admission_in_target(monkeypatch, tmp_path, start_tick, pending, recovery, days):
     monkeypatch.setattr("scripts.hermes_citizens.ROOT", tmp_path)
     operator = CohortOperator(Namespace(run_id="one", url="http://127.0.0.1:8000",
-        hermes_python="unused", profiles_root=str(tmp_path), days=100))
+        hermes_python="unused", profiles_root=str(tmp_path), days=days))
     citizens = [{"name": name, "home": str(tmp_path / slug)} for slug, name, _, _ in COHORT]
     for citizen in citizens:
         write_json(Path(citizen["home"]) / "agent-economy.json", {"access_token": "test-only"})
     write_json(operator.manifest_path, {"citizens": citizens})
-    state = {"run_id": "one", "tick": 41, "status": "paused"}
+    state = {"run_id": "one", "tick": start_tick, "status": "paused"}
+    if recovery:
+        state['active_tick'] = start_tick + 1
     decisions = []
     def api(path, **kwargs):
         if path == "/api/run/step":
             state["tick"] += 1
+            state['active_tick'] = None
         if path == "/api/v2/agent/me":
-            return {"status": "active"}
+            return {"status": "pending_actor" if pending and state['tick'] == start_tick else "active"}
         return dict(state)
     monkeypatch.setattr(operator, "api", api)
     monkeypatch.setattr(operator, "decide", lambda citizen, tick: decisions.append((citizen["name"], tick)))
     monkeypatch.setattr(operator, "receipts", lambda *args: [{"status": "executed"}])
     try:
         operator.run()
-        assert state["tick"] == 141
-        assert len(decisions) == 1000
-        assert len(list(operator.root.glob("day-*.json"))) == 100
-        assert json.loads((operator.root / "status.json").read_text()) == {"state": "paused", "tick": 141}
+        assert state["tick"] == start_tick + days
+        assert len(decisions) == 10 * (days - int(pending) - int(recovery))
+        assert len(list(operator.root.glob("day-*.json"))) == days - int(pending)
+        assert json.loads((operator.root / "status.json").read_text()) == {
+            "state": "paused", "tick": start_tick + days}
     finally:
         operator.client.close()
 
@@ -359,6 +407,8 @@ def test_setup_can_preserve_the_existing_selected_world(monkeypatch, tmp_path, k
 @pytest.mark.parametrize('url,allowed', [
     ('http://127.0.0.1:18774', True), ('http://localhost:8000', True),
     ('http://example.com:8000', False), ('http://127.0.0.1:8000/path', False),
+    ('http://localhost:99999', False), ('http://localhost:abc', False),
+    ('http://localhost', False), ('http://[localhost:8000', False),
     ('http://user:password@localhost:8000', False), ('https://localhost:8000', False)])
 def test_operator_accepts_only_explicit_loopback_ports(monkeypatch, url, allowed):
     from scripts.hermes_citizens import main
