@@ -13,9 +13,12 @@ from scripts.hermes_citizens import (CohortOperator, COHORT, MissingQueuedAction
     HermesCallTimeout, run_hermes_process, write_json)
 
 
-@pytest.mark.parametrize('missing_attempts', [0, 1, 3])
-@pytest.mark.parametrize('timeout', [False, True])
-def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, missing_attempts, timeout):
+@pytest.mark.parametrize('missing_attempts,timeout,exit_code', [
+    (0, False, 0), (1, False, 0), (3, False, 0),
+    (0, True, 0), (1, True, 0), (3, True, 0),
+    (3, False, 77), (0, False, 77),
+])
+def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, missing_attempts, timeout, exit_code):
     monkeypatch.setattr('scripts.hermes_citizens.ROOT', tmp_path)
     monkeypatch.delenv('DEEPSEEK_API_KEY', raising=False)
     operator = CohortOperator(Namespace(run_id='one', url='http://127.0.0.1:8000',
@@ -49,21 +52,29 @@ def test_decide_uses_profile_luna_without_deepseek_key(monkeypatch, tmp_path, mi
         if timeout:
             raise HermesCallTimeout('Call exceeded 240 seconds')
         kwargs['stdout'].write('Session: saved-session\n')
-        return Namespace(returncode=0)
+        return Namespace(returncode=exit_code)
     monkeypatch.setattr('scripts.hermes_citizens.run_hermes_process', run)
     try:
-        if missing_attempts == 3:
+        if exit_code and missing_attempts:
+            with pytest.raises(RuntimeError, match=f'Hermes exit code {exit_code}'):
+                operator.decide(citizen, 64)
+        elif missing_attempts == 3:
             with pytest.raises(HermesCallTimeout if timeout else MissingQueuedAction):
                 operator.decide(citizen, 64)
         else:
             operator.decide(citizen, 64)
-        assert len(attempts) == min(missing_attempts+1, 3)
+        assert len(attempts) == (1 if exit_code else min(missing_attempts+1, 3))
         assert len(list((operator.root / 'maya').glob('tick-64-attempt-*.log'))) == len(attempts)
         assert json.loads((operator.root / 'maya/session.json').read_text())['session_id'] == 'saved-session'
         if timeout:
             events = [json.loads(line) for line in (operator.root / 'decision-timeouts.jsonl').read_text().splitlines()]
             assert len(events) == len(attempts)
             assert all(event['process_cleanup'] == 'complete' for event in events)
+        if exit_code or timeout:
+            exits = [json.loads(line) for line in (operator.root / 'decision-process-exits.jsonl').read_text().splitlines()]
+            assert len(exits) == len(attempts)
+            assert all(event['exit_code'] == (-1 if timeout else exit_code) for event in exits)
+            assert 'test-only' not in json.dumps(exits)
     finally:
         operator.client.close()
 

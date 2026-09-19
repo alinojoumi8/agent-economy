@@ -307,6 +307,13 @@ class CohortOperator:
                     journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
                         "tick": tick, "attempt": attempt, "timeout_seconds": 240,
                         "process_cleanup": "complete"}) + "\n")
+        if result.returncode:
+            # Startup failures can leave an empty transcript. Retain the OS exit
+            # code without copying provider output, credentials, or private prompts.
+            with (self.root / "decision-process-exits.jsonl").open("a", encoding="utf-8") as journal:
+                journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
+                    "tick": tick, "attempt": attempt, "exit_code": result.returncode,
+                    "log": str(log_path.relative_to(self.root))}) + "\n")
         # Desktop and connection checks can create newer conversations while
         # this citizen resumes an older one. Persist the session from THIS CLI
         # invocation, never the latest row in the shared profile database.
@@ -321,7 +328,8 @@ class CohortOperator:
                 raise RuntimeError(f"{citizen['name']} did not identify its saved session; no unrelated session will be substituted")
         if not any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
             error = HermesCallTimeout if timed_out else (RuntimeError if result.returncode else MissingQueuedAction)
-            raise error(f"{citizen['name']} did not queue an action; inspect {log_path}")
+            raise error(f"{citizen['name']} did not queue an action; Hermes exit code "
+                        f"{result.returncode}; inspect {log_path}")
         print(f"{citizen['name']}: queued tick {tick}", flush=True)
 
     def run(self):
