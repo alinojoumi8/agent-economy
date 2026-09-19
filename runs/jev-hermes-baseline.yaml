@@ -1,0 +1,9 @@
+# Existing DeepSeek/MiniMax Hermes routing on the shared prospective engine.
+# Compare only with jev-hermes-live.yaml at the same seed and tick horizon.
+extends: hermes-local-live-deepseek.yaml
+engine_semantics_version: 16
+checkpoint_every: 0
+budget:
+  cap_usd: 1.0
+  oracle_reserve_usd: 0.0
+  report_reserve_usd: 0.0

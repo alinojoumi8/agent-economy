@@ -31,6 +31,7 @@ MAINTAINED_ROOT_DOCS = (
     "CONTRIBUTING.md", "SECURITY.md",
 )
 HANDBOOK_DOCS = (
+    "jev.md",
     "README.md", "getting-started.md", "civic-atlas.md", "research-guide.md",
     "architecture.md", "configuration.md", "api-reference.md",
     "operator-runbook.md", "troubleshooting.md", "development.md",

@@ -52,6 +52,8 @@ from .policies import (
 from .scheduler import Scheduler
 from .participant import ParticipantService
 from .external import ExternalAgentService
+from .decision_candidates import DecisionMenu
+from .typed_policy import TypedDecisionPolicy, record_execution_receipt
 from observability import get_logger, log_event as operational_log
 
 
@@ -74,6 +76,7 @@ class PreparedDecision(NamedTuple):
     scripted_envelope: dict | None
     attention_context_key: str
     attention_source_event_ids: list[int]
+    typed_menu: DecisionMenu | None = None
 
 
 def _decision_output_budget(llm_config: dict, purpose: str) -> int:
@@ -239,6 +242,7 @@ class AgentRuntime:
         self.scheduler = Scheduler(self.store, config)
         register_scripted_policies(self.gw.scripted)
         self.gw.scripted.register("persona", scripted_persona_enrichment)
+        self.typed_policy = TypedDecisionPolicy(gateway, config)
 
     async def enrich_pending_arrivals(self, tick: int) -> None:
         """Run each semantics-7 arrival's one governed persona enrichment call.
@@ -1052,6 +1056,7 @@ class AgentRuntime:
             scripted_envelope=None,
             attention_context_key=attention_context_key,
             attention_source_event_ids=attention_source_event_ids,
+            typed_menu=self.typed_policy.prepare(context, tick),
         )
 
     async def _complete_prepared_decision(
@@ -1077,8 +1082,10 @@ class AgentRuntime:
 
         if prepared.request is None:
             raise RuntimeError("prepared model decision has no request")
-        resp = await self.gw.complete(prepared.request)
-        env = dict(resp.parsed) if isinstance(resp.parsed, dict) else {}
+        typed = (await self.typed_policy.complete(prepared.request, prepared.typed_menu)
+                 if prepared.typed_menu is not None else None)
+        resp = typed.response if typed is not None else await self.gw.complete(prepared.request)
+        env = typed.envelope if typed is not None else (dict(resp.parsed) if isinstance(resp.parsed, dict) else {})
         raw_reasoning = str(env.get("reasoning", "")).strip()
         public_reasoning = sanitize_model_numeric_narrative(
             raw_reasoning,
@@ -1089,6 +1096,8 @@ class AgentRuntime:
             ),
             sources=_decision_numeric_sources(context),
         )
+        if typed is not None and typed.suppress_reasoning:
+            public_reasoning = ""
         if raw_reasoning or public_reasoning:
             env["reasoning"] = public_reasoning
         return {
@@ -1098,6 +1107,7 @@ class AgentRuntime:
             "reasoning": public_reasoning,
             "numeric_claims_redacted": public_reasoning != raw_reasoning,
             "llm_call_id": getattr(resp, "call_id", None),
+            **({"typed_receipt": typed.receipt} if typed is not None else {}),
             "communication_sources": context.get("communication_sources", []),
             "communication_read_context_key": context.get(
                 "communication_read_context_key"),
@@ -1494,6 +1504,7 @@ class AgentRuntime:
                 "SELECT COALESCE(MAX(id),0) FROM events", default=0))
             results = self.executor.execute_actions(
                 tick, agent_id, attributed_actions, phase="EXECUTION")
+            record_execution_receipt(self.store, tick, d, results)
             proposals = self.store.query(
                     "SELECT id,payload_json FROM action_proposals WHERE id>? AND tick=? AND actor_id=? "
                     "ORDER BY id",

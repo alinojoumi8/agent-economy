@@ -22,6 +22,7 @@ from engine.legal import DECISION_ROLES
 from engine.store import load_json
 from communications.projections import AgentKnowledgeProjection
 from engine.types import positive_integer_id
+from llm.decision_config import POLICY_VERSION_V3
 from world.recovery import assess_recovery, recovery_settings
 from .memory import Memory
 from .numeric_grounding import model_grounding_active
@@ -686,6 +687,17 @@ class ContextBuilder:
             "portfolio_day": portfolio_day,
             "career_day": career_day,
         }
+        policy = self.config.get("llm", {}).get("decision_policy") or {}
+        if policy.get("version") == POLICY_VERSION_V3:
+            # Own active applications only, bounded to the already visible jobs.
+            # Historical policies keep their original observation hashes.
+            visible_jobs = [job["job_id"] for job in context["jobs"]]
+            marks = ",".join("?" for _ in visible_jobs)
+            context["pending_job_ids"] = [int(row["job_id"]) for row in self.store.query(
+                "SELECT DISTINCT job_id FROM applications WHERE agent_id=? "
+                "AND state IN ('pending','negotiating') "
+                f"AND job_id IN ({marks}) ORDER BY job_id",
+                (agent_id, *visible_jobs))] if visible_jobs else []
         if recovery_settings_at_tick is not None:
             context["supply_recovery"] = {"active": True}
         if self.engine_semantics_version >= 7:

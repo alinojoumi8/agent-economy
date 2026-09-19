@@ -613,7 +613,7 @@ class ExternalAgentService:
         return int(earliest) + ((interval - offset) % interval)
 
     def renew_local_turn(self, auth: dict[str, Any], *, target_tick: int) -> dict[str, Any]:
-        """Explicit operational recovery for the paused semantics-11 local cohort.
+        """Explicit operational recovery for an opted-in paused local cohort.
 
         A normal poll must never reopen a closed mailbox. The local operator
         may renew an expired, unconsumed window, with its previous lease audited.
@@ -621,10 +621,13 @@ class ExternalAgentService:
         if not {SCOPE_WORLD_READ, SCOPE_WORLD_ACT}.issubset(set(auth["scopes"])):
             raise ExternalAgentError(403, "world.read and world.act required", "insufficient_scope")
         meta = self.store.get_meta()
-        if (self.economy.engine_semantics_version != 11 or meta["active_tick"] is not None
+        renewal_enabled = (self.economy.engine_semantics_version == 11 or (
+            self.economy.engine_semantics_version >= 16 and self.config.get("external_gateway", {}).get(
+                "local_turn_renewal_contract") == "paused-next-turn-v2"))
+        if (not renewal_enabled or meta["active_tick"] is not None
                 or meta["status"] not in {"created", "paused"}
                 or target_tick != self.store.tick + 1):
-            raise ExternalAgentError(409, "renewal requires the next day of a paused local semantics-11 world", "renewal_boundary")
+            raise ExternalAgentError(409, "renewal requires the next day of an opted-in paused local world", "renewal_boundary")
         current = self.turn(auth)  # validates residency, scope and next wake
         if int(current["target_tick"]) != target_tick:
             raise ExternalAgentError(409, "not this citizen's next wake", "renewal_boundary")
@@ -758,9 +761,9 @@ class ExternalAgentService:
             # exact without contacting the external agent.
             if self._replay_commons_precedes_control(tick):
                 self._restore_replay_commons(tick)
-                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
+                self._replay_decisions(tick, before_night=True)
             else:
-                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
+                self._replay_decisions(tick, before_night=True)
                 self._restore_replay_commons(tick)
             return
         while True:
@@ -1458,6 +1461,40 @@ class ExternalAgentService:
                                 "agent": dict(agent) if agent else None,
                                 "accounts": accounts})
 
+    def _restore_replay_negative_inputs(self, source) -> None:
+        """Restore rejected boundary inputs as audit evidence, never decisions."""
+        events = source.execute(
+            "SELECT * FROM events WHERE tick=? AND phase='CONTROL' "
+            "AND kind IN ('external_action_rejected','external_action_stale') ORDER BY id",
+            (self.store.tick,)).fetchall()
+        with self.store.savepoint('external_negative_inputs'):
+            for event in events:
+                data = load_json(event['payload_json'], {})
+                row = source.execute('SELECT * FROM external_action_submissions WHERE id=?',
+                                     (data.get('submission_id'),)).fetchone()
+                if (row is None or event['kind'] != f"external_action_{row['status']}"
+                        or row['connection_id'] != data.get('connection_id')
+                        or row['actor_id'] != data.get('actor_id')
+                        or row['actor_id'] != event['subject_id']
+                        or row['target_tick'] != data.get('target_tick')):
+                    raise RuntimeError('recorded negative external input binding is invalid')
+                if self.store.query_one('SELECT 1 FROM external_action_submissions WHERE id=?', (row['id'],)):
+                    continue
+                # A stale request may name an older or future target tick. Its
+                # CONTROL event determines when it occurred, not that bad target.
+                for table, identity in [('external_agent_connections', row['connection_id']),
+                                        ('external_agent_turns', row['turn_id']),
+                                        ('external_action_submissions', row['id'])]:
+                    if identity is None or self.store.query_one(f'SELECT 1 FROM {table} WHERE id=?', (identity,)):
+                        continue
+                    recorded = source.execute(f'SELECT * FROM {table} WHERE id=?', (identity,)).fetchone()
+                    if recorded is None:
+                        raise RuntimeError('recorded negative external input dependency is missing')
+                    self.store.insert(table, **dict(recorded))
+                self.store.log_event(event['tick'], event['kind'], data, phase=event['phase'],
+                    subject_type=event['subject_type'], subject_id=event['subject_id'],
+                    importance=event['importance'])
+
     def _replay_decisions(self, tick: int, *, before_night: bool = False,
                           submission_ids=None, validate_only=False,
                           restore_turns=True) -> list[dict[str, Any]]:
@@ -1571,6 +1608,8 @@ class ExternalAgentService:
                      str(turn_row["envelope_json"]), int(turn_row["event_cursor"]),
                      str(turn_row["deadline_at"]), str(turn_row["status"]),
                      str(turn_row["created_at"]), _iso()))
+            if before_night and self.economy.engine_semantics_version < 21:
+                self._restore_replay_negative_inputs(conn)
             out = []
             for row in rows:
                 actor = self.store.query_one("SELECT alive FROM agents WHERE id=?", (int(row["actor_id"]),))

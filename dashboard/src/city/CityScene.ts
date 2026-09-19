@@ -166,7 +166,8 @@ export class CityScene {
     ground.position.y=-.6;this.ground.add(ground);
     // Base streets remain stable when the entity filter changes.
     const scenery=buildCityScenery(this.projection.instances);
-    this.scenery.add(...[...scenery.children]);
+    // Worlds without recorded places can legitimately have no scenery.
+    for(const child of [...scenery.children])this.scenery.add(child);
     this.updateMarkers();
     if(!this.initialCamera){
       const bookmark=this.initiallyFramed?this.cameraState():null;

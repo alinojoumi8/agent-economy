@@ -1,0 +1,7 @@
+# Jev plus deterministic abstention; no second model is called.
+# Compatibility profile name retained. The provisional threshold needs calibration.
+extends: jev-live.yaml
+llm:
+  decision_policy:
+    minimum_confidence: 0.70
+    on_abstain: wait

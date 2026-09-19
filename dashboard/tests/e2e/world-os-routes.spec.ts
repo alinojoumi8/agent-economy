@@ -174,6 +174,12 @@ async function mockWorkspaceApis(
         experiments: historical ? [] : [{ id: 1, experiment_key: "price-shock", scenario_key: "baseline", status: "complete", checkpoint_hash: "abc" }],
         results: historical ? [] : [{ id: 1, experiment_id: 1, arm: "control", seed: 7, run_id: "child", replay_hash: "def", metrics: { output: 1 } }],
         current_only_artifacts_omitted: historical,
+        decisions: {total: historical ? 0 : 1, window: 200, items: historical ? [] : [{
+          id: 7, tick: 6, agent_id: 1, status: "selected", reason: "provider_choice",
+          confidence: .8, escalated: false, action_types: ["buy_goods"],
+          accepted: 1, attempted: 1, provider_calls: 1, cost_usd: .0000042,
+          models: ["typesafe/jev-1.13-20260917"], latency_ms: 37,
+        }]},
       });
     } else if (path === "/api/v2/snapshot") {
       body = envelope("snapshot", url, {
@@ -253,6 +259,23 @@ async function setup(page: Page) {
   const historicalBodies: string[] = [];
   await mockWorkspaceApis(page, bodies, historicalBodies);
   return { consoleErrors, requestFailures, bodies, historicalBodies };
+}
+
+for (const width of [1440, 390]) {
+  test(`bounded decision receipts and historical empty state at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await setup(page);
+    await page.goto("/runs/run-demo/experiments?view=decisions");
+    await expect(page.getByRole("heading", { name: "Agent decisions", exact: true })).toBeVisible();
+    await expect(page.getByText("typesafe/jev-1.13-20260917", {exact: true})).toBeVisible();
+    await expect(page.getByText("80%", {exact: true})).toBeVisible();
+    await expect(page.getByText(/Confidence describes answer concentration/)).toBeVisible();
+    await expect(page.locator("body")).not.toContainText(PRIVATE_CANARY);
+    await page.goto("/runs/run-demo/experiments?view=decisions&tick=3");
+    await expect(page.getByText("No bounded decision policy has produced receipts in this view.")).toBeVisible();
+    await expect(page.locator("body")).not.toContainText("typesafe/jev-1.13-20260917");
+    expect(state.consoleErrors).toEqual([]);
+  });
 }
 
 test("estate money follows the selected day on desktop and mobile", async ({ page }, testInfo) => {

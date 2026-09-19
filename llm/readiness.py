@@ -4,12 +4,14 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from typing import Any
+from urllib.parse import urlsplit
 
 from .cache_config import normalize_prompt_cache_mode
+from .decision_config import decision_policy
 
 
 BUILTIN_PROVIDERS = {"scripted", "mock"}
-NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic"}
+NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic", "openrouter_decisions"}
 KNOWN_PROVIDER_KINDS = NETWORK_PROVIDER_KINDS | {"cli"}
 PROMPT_CACHE_MODES = {
     "off", "provider_automatic", "openai_key", "anthropic_ephemeral",
@@ -18,6 +20,7 @@ PROMPT_CACHE_MODES_BY_KIND = {
     "openai_compat": {"off", "provider_automatic", "openai_key"},
     "anthropic": {"off", "anthropic_ephemeral"},
     "cli": {"off"},
+    "openrouter_decisions": {"off"},
 }
 
 
@@ -27,6 +30,19 @@ class ProviderConfigurationError(RuntimeError):
     def __init__(self, errors: list[str]):
         self.errors = errors
         super().__init__("LLM configuration is not ready: " + "; ".join(errors))
+
+
+def openrouter_route_error(provider_config: dict, model: str) -> str | None:
+    """The owner's OpenRouter connection is reserved for the Jev pilot."""
+    kind = provider_config.get("kind")
+    urls = (provider_config.get("base_url", ""), provider_config.get("endpoint", ""))
+    hosts = {(urlsplit(str(url)).hostname or "").lower() for url in urls}
+    is_openrouter = (kind == "openrouter_decisions"
+                     or provider_config.get("api_key_env") == "OPENROUTER_API_KEY"
+                     or any(host == "openrouter.ai" or host.endswith(".openrouter.ai") for host in hosts))
+    if is_openrouter and (kind != "openrouter_decisions" or model != "typesafe/jev-1.13"):
+        return "OpenRouter is restricted to Jev 1.13 through the Decisions API; other model routes are disabled"
+    return None
 
 
 def validate_llm_config(
@@ -49,6 +65,25 @@ def validate_llm_config(
     route_contract = llm.get("route_contract")
 
     route_items = [("default", default_route), *sorted(routes.items())]
+    typed_errors = []
+    response_contract = llm.get("response_contract")
+    if response_contract is not None and (response_contract != "required-json-v2"
+            or int(config.get("engine_semantics_version", 1)) < 16):
+        typed_errors.append("response_contract requires required-json-v2 and prospective Semantics 16 or later")
+    for provider in providers.values():
+        if isinstance(provider, dict) and "minimum_output_tokens" in provider:
+            floor = provider["minimum_output_tokens"]
+            if response_contract != "required-json-v2" or type(floor) is not int or not 128 <= floor <= 32768:
+                typed_errors.append("minimum_output_tokens requires required-json-v2 and an integer from 128 to 32768")
+    try:
+        typed_policy = decision_policy(config)
+    except (ValueError, TypeError) as exc:
+        typed_policy = None
+        typed_errors.append(str(exc))
+    if typed_policy is not None:
+        for label in ("primary", "escalation"):
+            if typed_policy.get(label) is not None:
+                route_items.append((f"decision_policy.{label}", typed_policy[label]))
     tier_routes = llm.get("tier_routes", {}) or {}
     premium_routes = llm.get("premium_routes", {}) or {}
     citizen_model_cohorts = llm.get("citizen_model_cohorts", [])
@@ -97,7 +132,7 @@ def validate_llm_config(
                 add_route_group(
                     "citizen_model_cohorts", name or str(index), cohort)
     referenced: dict[str, set[str]] = {}
-    errors: list[str] = list(cohort_errors)
+    errors: list[str] = [*cohort_errors, *typed_errors]
     warnings: list[str] = []
 
     for route_name, route in route_items:
@@ -112,6 +147,9 @@ def validate_llm_config(
         if not model:
             errors.append(f"route '{route_name}' has no model")
         referenced.setdefault(provider, set()).add(model)
+        if (providers.get(provider, {}).get("kind") == "openrouter_decisions"
+                and not route_name.startswith("decision_policy.")):
+            errors.append(f"route '{route_name}' cannot send prose purposes to a Decisions provider")
 
     contract_report: dict[str, Any] = {"enforced": False}
     if route_contract is not None:
@@ -184,6 +222,12 @@ def validate_llm_config(
         key_value = str(env.get(key_env, "")).strip() if key_env else ""
         key_present = bool(key_value)
 
+        if not config.get("replay"):
+            for model in models:
+                route_error = openrouter_route_error(pcfg, model)
+                if route_error:
+                    errors.append(f"provider '{provider}': {route_error}")
+
         if kind not in KNOWN_PROVIDER_KINDS:
             errors.append(f"provider '{provider}' has unknown kind '{kind or '<empty>'}'")
         if prompt_cache_mode not in PROMPT_CACHE_MODES:
@@ -197,6 +241,18 @@ def validate_llm_config(
                 f"prompt_cache_mode '{prompt_cache_mode}' (allowed: {allowed})")
         if kind == "openai_compat" and not base_url:
             errors.append(f"provider '{provider}' requires base_url")
+        if kind == "openrouter_decisions":
+            from .openrouter_decisions import OpenRouterDecisionsAdapter, PINNED_MODEL
+            try:
+                OpenRouterDecisionsAdapter(pcfg)
+            except (ValueError, TypeError) as exc:
+                errors.append(f"provider '{provider}': {exc}")
+            if auth_none:
+                errors.append(f"provider '{provider}' requires bearer authentication")
+            if pcfg.get("request_defaults") or base_url:
+                errors.append(f"provider '{provider}' requires endpoint configuration without chat defaults")
+            if any(m != PINNED_MODEL for m in models):
+                errors.append(f"provider '{provider}' requires pinned model {PINNED_MODEL}")
         if key_required and not key_env:
             errors.append(f"provider '{provider}' requires api_key_env")
         elif key_required and require_secrets and not key_present:
