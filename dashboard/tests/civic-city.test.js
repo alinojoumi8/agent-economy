@@ -91,7 +91,7 @@ test("derived city layout is deterministic and labels actor-linked activity", ()
 test("projected coordinates are retained and normalized from unit space", () => {
   const model = deriveCityModel({
     agents: [{ id: 3, name: "Editor", occupation: "editor" }],
-    map: { core_agents: [{ id: 3, name: "Editor", occupation: "editor", x: 0.25, y: 0.7 }] },
+    map: { core_agents: [{ id: 3, name: "Editor", occupation: "editor", place_id: 1, x: 0.25, y: 0.7 }] },
   });
 
   assert.equal(model.coordinateMode, "observed");
@@ -150,7 +150,7 @@ test("mixed coordinate provenance is reported when projected and derived coexist
     ],
     map: {
       core_agents: [
-        { id: 1, name: "Projected", occupation: "editor", x: 0.1, y: 0.2 },
+        { id: 1, name: "Projected", occupation: "editor", place_id: 1, x: 0.1, y: 0.2 },
       ],
     },
   });

@@ -258,9 +258,9 @@ test("organization filters are deterministic across search, type, region, sector
 test("World OS maps organization list and detail routes to the canonical workspace", () => {
   const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ OrganizationsWorkspace \}/);
-  assert.match(source, /path="organizations" element=\{<OrganizationsWorkspace \/>\}/);
-  assert.match(source, /path="organizations\/:organizationType\/:organizationId" element=\{<OrganizationsWorkspace \/>\}/);
-  assert.match(source, /path="organizations\/:organizationId" element=\{<OrganizationsWorkspace \/>\}/);
+  assert.match(source, /path="organizations" element=\{<WorldWorkspace panel="[^"]+"><OrganizationsWorkspace \/><\/WorldWorkspace>\}/);
+  assert.match(source, /path="organizations\/:organizationType\/:organizationId" element=\{<WorldWorkspace panel="[^"]+"><OrganizationsWorkspace \/><\/WorldWorkspace>\}/);
+  assert.match(source, /path="organizations\/:organizationId" element=\{<WorldWorkspace panel="[^"]+"><OrganizationsWorkspace \/><\/WorldWorkspace>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Organizations"/);
 });
 
@@ -302,7 +302,7 @@ test("empty market books are empty evidence, not measured zero activity", () => 
 test("World OS maps Markets to the canonical workspace", () => {
   const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ MarketsWorkspace \}/);
-  assert.match(source, /path="markets" element=\{<MarketsWorkspace \/>\}/);
+  assert.match(source, /path="markets" element=\{<WorldWorkspace panel="[^"]+"><MarketsWorkspace \/><\/WorldWorkspace>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Markets"/);
 });
 
@@ -349,7 +349,7 @@ test("World OS maps Politics and Law to the canonical workspace", () => {
   const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
   const workspace = readFileSync(new URL("../src/workspaces/PoliticsLawWorkspace.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ PoliticsLawWorkspace \}/);
-  assert.match(source, /path="politics-law" element=\{<PoliticsLawWorkspace \/>\}/);
+  assert.match(source, /path="politics-law" element=\{<WorldWorkspace panel="[^"]+"><PoliticsLawWorkspace \/><\/WorldWorkspace>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace title="Politics & Law"/);
   assert.match(workspace, /row\.disclosure_state/);
   assert.doesNotMatch(workspace, /row\.disclosureState/);
@@ -399,8 +399,8 @@ test("experiment action state requires a paused live observer boundary", () => {
 test("World OS maps experiment routes canonically and has no legacy placeholders", () => {
   const source = readFileSync(new URL("../src/app/WorldOSApp.tsx", import.meta.url), "utf8");
   assert.match(source, /import \{ ExperimentsWorkspace \}/);
-  assert.match(source, /path="experiments" element=\{<ExperimentsWorkspace \/>\}/);
-  assert.match(source, /path="experiments\/:experimentId" element=\{<ExperimentsWorkspace \/>\}/);
+  assert.match(source, /path="experiments" element=\{<WorldWorkspace panel="[^"]+"><ExperimentsWorkspace \/><\/WorldWorkspace>\}/);
+  assert.match(source, /path="experiments\/:experimentId" element=\{<WorldWorkspace panel="[^"]+"><ExperimentsWorkspace \/><\/WorldWorkspace>\}/);
   assert.doesNotMatch(source, /LegacyWorkspace|Canonical route established/);
 });
 
@@ -427,8 +427,8 @@ test("the shell never invents a run id for the bare Commons alias", () => {
   // The run is taken from the route, then the mode document, then the server hello.
   assert.match(shell, /const runId = routeRunId\s*\?\? modeQuery\.data\?\.navigation\?\.run_id\s*\?\? transport\.runId\s*\?\? null;/);
   // Without one, rail entries are inert and the pill says so instead of "Run run".
-  assert.match(shell, /runId === null \? null : workspacePath\(runId, path, search\)/);
-  assert.match(shell, /if \(destination === null\) \{\s*return <a[\s\S]*?aria-disabled="true"/);
-  assert.match(shell, /"Identifying run…" : "Run not identified"/);
+  assert.match(shell, /runId === null \? null : workspacePath\(runId, path,/);
+  assert.doesNotMatch(shell, /className="world-os-rail"/);
+  assert.match(shell, /Identifying run…/);
   assert.match(shell, /runId=\{runId \?\? ""\}/);
 });

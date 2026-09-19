@@ -56,6 +56,9 @@ def test_transcript_limits_disclose_omissions_and_keep_stable_order(recorded_day
     item = data["items"][1]
     assert data["content_truncated"] and item["messages_truncated"] and item["topic_truncated"]
     assert len(item["messages"]) == MESSAGE_LIMIT
+    second_page = build_city_conversations(store, as_of_tick=2, limit=1, before_id=older)
+    assert second_page["items"][0]["id"] == conversation
+    assert second_page["next_before_id"] is None
     assert item["messages"][0]["text"] == "Recorded words"
     assert len(item["messages"][1]["text"]) == TEXT_LIMIT and item["messages"][1]["text_truncated"]
     assert store.scalar("SELECT length(text) FROM messages WHERE conv_id=? AND seq=3", (conversation,)) == TEXT_LIMIT + 1

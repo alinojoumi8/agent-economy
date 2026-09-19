@@ -1,9 +1,10 @@
 import { CITY_LAYERS } from "../lib/civicCity.js";
 import { parseCityCamera, serializeCityCamera } from "../lib/cityCamera.js";
+import { normalizeCityCamera3d } from "../lib/cityCamera3d.js";
 
 const CITY_LAYER_IDS = new Set(CITY_LAYERS.map(layer => layer.id));
 const CITY_POPULATION_MODES = new Set(["core", "all", "clusters"]);
-const CITY_VIEW_MODES = new Set(["atlas", "diorama", "recorded", "list"]);
+const CITY_VIEW_MODES = new Set(["atlas", "diorama", "recorded", "list", "3d"]);
 
 function positiveInteger(value) {
   if (!value || !/^\d+$/.test(value)) return null;
@@ -33,15 +34,17 @@ function normalizedTick(value) {
 export function parseObserverViewState(params) {
   const layer = params.get("layer") || "all";
   const population = params.get("population") || "core";
-  const view = params.get("view") || "atlas";
-  const institution = institutionIdentifier(params.get("institution"));
+  const view = params.get("view") || (params.get("cityView") === "3d" ? "3d" : "atlas");
+  const legacyType = params.get("cityType");
+  const legacyId = params.get("cityEntity");
+  const institution = institutionIdentifier(params.get("institution") || (legacyType === "bank" ? `bank:${legacyId}` : null));
   const household = institution ? null : positiveInteger(params.get("household"));
   const society = institution || household;
   const project = society ? null : projectIdentifier(params.get("project"));
-  const firm = society || project ? null : positiveInteger(params.get("firm"));
+  const firm = society || project ? null : positiveInteger(params.get("firm") || (legacyType === "firm" ? legacyId : null));
   const requestedFollow = positiveInteger(params.get("follow"));
-  const requestedAgent = positiveInteger(params.get("agent"));
-  const place = positiveInteger(params.get("place"));
+  const requestedAgent = positiveInteger(params.get("agent") || (legacyType === "agent" ? legacyId : null));
+  const place = positiveInteger(params.get("place") || (legacyType === "place" ? legacyId : null));
   const follow = society || project || firm || (!requestedAgent && place)
     || (requestedAgent && requestedAgent !== requestedFollow) ? null : requestedFollow;
   const agent = society || project || firm ? null : requestedAgent || follow;
@@ -59,9 +62,12 @@ export function parseObserverViewState(params) {
     household,
     institution,
     camera: parseCityCamera(params.get("camera")),
-    place: society || project || firm || agent ? null : positiveInteger(params.get("place")),
+    camera3d: normalizeCityCamera3d(params.get("camera3d")),
+    place: society || project || firm || agent ? null : place,
     project,
     population: CITY_POPULATION_MODES.has(population) ? population : "core",
+    activity: params.get("activity") || "all",
+    actor: positiveInteger(params.get("actor")),
     view: CITY_VIEW_MODES.has(view) ? view : "atlas",
   };
 }
@@ -69,6 +75,10 @@ export function parseObserverViewState(params) {
 /** @param {URLSearchParams} params @param {Record<string, unknown>} patch */
 export function patchObserverViewState(params, patch) {
   const next = new URLSearchParams(params);
+  if (["agent", "firm", "place", "household", "institution", "project"].some(key => key in patch)) {
+    next.delete("cityType");
+    next.delete("cityEntity");
+  }
   const setOrDelete = (key, value) => {
     if (value) next.set(key, value);
     else next.delete(key);
@@ -95,6 +105,7 @@ export function patchObserverViewState(params, patch) {
   }
   if ("activeOnly" in patch) setOrDelete("activeOnly", patch.activeOnly ? "1" : null);
   if ("camera" in patch) setOrDelete("camera", serializeCityCamera(patch.camera));
+  if ("camera3d" in patch) setOrDelete("camera3d", normalizeCityCamera3d(patch.camera3d));
   for (const key of ["household", "institution"]) {
     if (!(key in patch)) continue;
     const selected = key === "institution" ? institutionIdentifier(patch[key])
@@ -159,11 +170,14 @@ export function patchObserverViewState(params, patch) {
     setOrDelete("population", population === "core" ? null : population);
   }
   if ("view" in patch) {
+    next.delete("cityView");
     const view = typeof patch.view === "string" && CITY_VIEW_MODES.has(patch.view)
       ? patch.view
       : "atlas";
     setOrDelete("view", view === "atlas" ? null : view);
   }
+  if ("activity" in patch) setOrDelete("activity", patch.activity === "all" ? null : String(patch.activity || ""));
+  if ("actor" in patch) setOrDelete("actor", positiveInteger(String(patch.actor || ""))?.toString());
   if ("follow" in patch) setOrDelete("follow", positiveInteger(String(patch.follow || ""))?.toString());
   // A selected object never inherits another person's follow identity.
   const follow = positiveInteger(next.get("follow"));

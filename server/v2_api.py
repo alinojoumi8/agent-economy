@@ -46,6 +46,8 @@ from server.projections.envelope import ProjectionRequestError, lineage, validat
 from server.projections.events import build_backfill
 from server.projections.price_lab import build_price_lab
 from server.projections.city_conversations import build_city_conversations
+from server.projections.city_news import build_city_news
+from server.projections.city_activity import CATEGORIES, build_city_activity
 from server.projections.city_society import build_city_households, build_city_institutions
 from server.projections.construction import hidden_home_place_ids, redact_hidden_home_locations
 from server.projections.legal_relief import monetary_relief_as_of
@@ -197,6 +199,31 @@ def install_v2_routes(app, world, controller) -> None:
         data = build_events(
             store, as_of_tick=as_of_tick, after_id=after, limit=limit, kinds=kinds)
         return build_envelope(store, principal, "events.page", data, as_of_tick=as_of_tick)
+
+    @router.get("/city/activity")
+    async def city_activity(
+        tick: str = Query("live"), fork_id: str | None = None,
+        offset: int = Query(0, ge=0), limit: int = Query(40, ge=1, le=200),
+        actor_id: int | None = Query(default=None, gt=0),
+        category: str = Query("all"), through_id: int | None = Query(default=None, ge=0),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        if category not in CATEGORIES:
+            raise HTTPException(status_code=422, detail="unsupported activity category")
+        data = build_city_activity(store, as_of_tick=as_of_tick, offset=offset,
+                                   limit=limit, actor_id=actor_id, category=category,
+                                   through_id=through_id)
+        return build_envelope(store, Principal("ordinary-dashboard"), "city.activity", data,
+                              as_of_tick=as_of_tick)
+
+    @router.get("/city/news")
+    async def city_news(
+        tick: str = Query("live"), fork_id: str | None = None,
+        limit: int = Query(30, ge=1, le=100), before_id: int | None = Query(None, ge=1),
+    ):
+        as_of_tick = projection_tick(tick, fork_id)
+        data = build_city_news(store, as_of_tick=as_of_tick, limit=limit, before_id=before_id)
+        return build_envelope(store, Principal("ordinary-dashboard"), "city.news", data, as_of_tick=as_of_tick)
 
     @router.get("/search")
     async def search_projection(
@@ -694,11 +721,12 @@ def install_v2_routes(app, world, controller) -> None:
     async def city_conversations(
         tick: str = Query("live"), fork_id: str | None = None,
         limit: int = Query(60, ge=1, le=200),
+        before_id: int | None = Query(None, ge=1),
     ):
         as_of_tick = projection_tick(tick, fork_id)
         return build_envelope(
             store, Principal("ordinary-dashboard"), "city.conversations",
-            build_city_conversations(store, as_of_tick=as_of_tick, limit=limit),
+            build_city_conversations(store, as_of_tick=as_of_tick, limit=limit, before_id=before_id),
             as_of_tick=as_of_tick,
         )
     @router.get("/urban-development")

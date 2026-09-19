@@ -173,6 +173,7 @@ jobs:
           tests/test_price_observations.py
           tests/test_price_lab_projection.py
           tests/test_city_conversations_projection.py
+          tests/test_city_activity.py
           tests/test_city_society_projection.py
           tests/test_city_observations_api.py
           tests/test_operator_workspace.py
@@ -462,6 +463,8 @@ jobs:
           agent-connections.spec.ts
           world-os-routes.spec.ts
           live-city-context.spec.ts
+          city-unified.spec.ts
+          city-viewport.spec.ts
         working-directory: dashboard
       - name: Preserve failed browser diagnostics
         if: failure()

@@ -192,7 +192,7 @@ export function CivicCity(props) {
     layer: activeLayer,
     q: cityView === "list" ? "" : query,
     activeOnly,
-  }).filter(agent => cityView !== "list" || cityObjectMatches({
+   }).filter(agent => !props.activityActorIds || props.activityActorIds.includes(Number(agent.id))).filter(agent => cityView !== "list" || cityObjectMatches({
     name: agent.name, id: agent.id, role: agent.role, label: "Person",
   }, query));
   const showClusters = populationMode === "clusters"
@@ -229,7 +229,7 @@ export function CivicCity(props) {
     ? visibleAgents.findIndex(agent => String(agent.id) === String(selected.id))
     : -1;
   useEffect(() => {
-    if (!observerState || !onObserverStateChange || loading || error || followId || societySelected) return;
+    if (!observerState || !onObserverStateChange || props.suspendSelectionRepair || loading || error || followId || societySelected) return;
     const resolvedId = selected ? Number(selected.id) : null;
     if (observerState.firm != null) {
       if (!selectedFirm) onObserverStateChange({ firm: null, agent: resolvedId }, { replace: true, onlyIfCurrent: true });
@@ -257,6 +257,7 @@ export function CivicCity(props) {
       onObserverStateChange({ agent: resolvedId }, { replace: true, onlyIfCurrent: true });
     }
   }, [
+    props.suspendSelectionRepair,
     loading,
     error,
     observerState,
@@ -538,6 +539,7 @@ export function CivicCity(props) {
   };
   const openMobileLens = () => {
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    if(lensRef.current)lensRef.current.scrollTop=0;
     lensRef.current?.focus({ preventScroll: true });
     lensRef.current?.scrollIntoView({
       behavior: reduceMotion ? "auto" : "smooth",
@@ -566,7 +568,7 @@ export function CivicCity(props) {
         {!compactCity && <div><dt>Feed</dt><dd><i className={connected ? "is-live" : "is-offline"} />{statusCopy(status, connected, tick, historical)}</dd></div>}
         <div><dt>Phase</dt><dd>{humanize(phase, "Between phases")}</dd></div>
         <div><dt>AI live</dt><dd>{historical || !runtime || cityView === "recorded" ? "Unavailable in this view" : `${model.counts.thinking} thinking · ${model.counts.queued} queued`}</dd></div>
-        <div><dt>Changed</dt><dd>{model.counts.settled} settled · {model.counts.rejected} rejected</dd></div>
+        <div><dt>Recorded day</dt><dd>{props.activityDay ? `${props.activityDay.changed_agents} agents · ${props.activityDay.total} events` : `${model.counts.settled} completed · ${model.counts.rejected} rejected`}</dd></div>
         <div><dt>Residents</dt><dd>{model.counts.residents} <small>{model.population.core} core</small></dd></div>
         {model.population.knownLivingOutside != null && <div><dt>Known outside</dt><dd>{model.population.knownLivingOutside}</dd></div>}
         <div><dt>Construction</dt><dd>{model.counts.construction} <small>stored projects</small></dd></div>
@@ -580,9 +582,8 @@ export function CivicCity(props) {
         <span>Projection</span>
         <div>
           <button type="button" aria-pressed={cityView === "atlas"} onClick={() => changeView("atlas")}>Atlas</button>
-          <button type="button" aria-pressed={cityView === "diorama"} onClick={() => changeView("diorama")}>2.5D Diorama</button>
-          {onObserverStateChange && <button type="button" aria-pressed={cityView === "recorded"} onClick={() => changeView("recorded")}>Recorded day</button>}
-          {props.onOpen3d && <button type="button" aria-pressed={false} onClick={props.onOpen3d}>3D city</button>}
+          {onObserverStateChange && props.recordedAvailable && <button type="button" aria-pressed={cityView === "recorded"} onClick={() => changeView("recorded")}>Recorded day</button>}
+          {props.render3d && <button type="button" aria-pressed={cityView === "3d"} onClick={() => changeView("3d")}>3D · experimental</button>}
           {onObserverStateChange && <button type="button" aria-pressed={cityView === "list"} onClick={() => changeView("list")}>List</button>}
         </div>
       </div>
@@ -660,6 +661,8 @@ export function CivicCity(props) {
     </div>
     <div className="civic-city__workfield">
       <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
+        {cityView === "3d" && props.render3d?.({ visibleAgents, selected })}
+        {cityView === "recorded" && !props.recordedAvailable && <p className="city-capability-note">This run has no recorded presence for this day. Agent activity remains available in Atlas and List.</p>}
         {cityView === "list" && <CityObjectList
           key={`${runId}:${observerState?.fork}:${tick}:${activeLayer}:${populationMode}:${activeOnly}`}
           rows={cityObjectRows(model, society, visibleAgents, query)} state={observerState}
@@ -877,7 +880,9 @@ export function CivicCity(props) {
         <div className="civic-city__legend" role="group" aria-label="City map legend">
           <span><i className="is-thinking" />Thinking</span>
           <span><i className="is-queued" />Queued</span>
-          <span><i className="is-settled" />Settled</span>
+          <span><i className="is-settled" />Completed</span>
+          <span><i className="is-pending" />Pending</span>
+          <span><i className="is-recorded" />Recorded</span>
           <span><i className="is-rejected" />Rejected</span>
           <span><i className="is-cluster" />Peripheral cluster</span>
           <span><i className="is-construction" />Construction stage</span>
@@ -919,7 +924,7 @@ export function CivicCity(props) {
               ? (followId ? `Follow enabled for person #${followId}.` : "Select a person to follow their recorded day.")
               : follow.message || "Select a person to follow across committed ticks. Drag the Atlas background to pan."}</p>
           </div>
-          {cityView !== "recorded" && <CityCameraControls
+          {cityView !== "recorded" && cityView !== "3d" && <CityCameraControls
             getCamera={() => cameraPositionRef.current} onCameraChange={changeCamera}
             canFocus={Boolean(cameraSelection)} disabled={loading || Boolean(error)}
             onFocus={() => cameraSelection && changeCamera({ ...displayCamera, x: cameraSelection.x, y: cameraSelection.y })}
@@ -1114,7 +1119,7 @@ export function CivicCity(props) {
           </dl>
           {selected.event && <section className="civic-city__record">
             <header><span>Event record</span><b>#{selected.event.id}</b></header>
-            {eventFacts.length
+            {selected.event.title ? <><p>{selected.event.title}</p>{selected.event.detail && <p>{selected.event.detail}</p>}</> : eventFacts.length
               ? <dl>{eventFacts.map(([key, value]) => <div key={key}><dt>{humanize(key)}</dt><dd>{String(value)}</dd></div>)}</dl>
               : <p>The committed event exposes no scalar payload fields.</p>}
           </section>}
@@ -1156,7 +1161,7 @@ export function CivicCity(props) {
     {compactCity && <CityObservationBar frame={frame} runId={runId} state={observerState}
       event={selected?.event || null} disabled={loading || Boolean(error)} onRestore={onObserverStateChange} />}
 
-    <section className="civic-city__activity-dock" aria-label="Live agent activity dock">
+    {!props.hideActivityDock && <section className="civic-city__activity-dock" aria-label="Live agent activity dock">
       <header>
         <div><span>Agent activity</span><strong>{historical ? `Tick ${tick}` : "Live operations"}</strong></div>
         <small>{historical
@@ -1180,7 +1185,7 @@ export function CivicCity(props) {
           <span>Queued and thinking calls appear here; committed outcomes remain in the evidence lens.</span>
         </p>}
       </div>
-    </section>
+    </section>}
 
     <details className="civic-city__instrument-details" open={!compactCity}>
     <summary>City instrumentation</summary>

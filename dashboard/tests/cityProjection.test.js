@@ -32,6 +32,7 @@ test("city supporting projections are pinned to the map's actual tick and fork",
     if (url.pathname.endsWith("world-map")) return frame("world.map", { agents: [{ id: 1 }] });
     assert.equal(url.searchParams.get("tick"), "4");
     assert.equal(url.searchParams.get("fork_id"), "fork-a");
+    if (url.pathname.endsWith("city/activity")) return frame("city.activity", { tick:4, source:"committed", items:[], actor_activity:[] });
     return url.pathname.endsWith("summary") ? frame("civic.summary", { tick: 4 }) : frame("world.snapshot");
   });
   assert.equal(requests[0].searchParams.get("tick"), "live");

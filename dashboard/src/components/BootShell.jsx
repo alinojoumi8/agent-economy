@@ -23,7 +23,7 @@ export function BootShell({ error = "" }) {
           Agent Economy
         </p>
         <h1 className="mt-3 text-4xl font-semibold text-[var(--civic-navy)]">
-          Observatory
+          City
         </h1>
         <p role="alert" className="mt-4 text-sm leading-relaxed text-[var(--civic-muted)]">
           The server did not say which deployment this is ({error}), so no

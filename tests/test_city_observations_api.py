@@ -106,6 +106,8 @@ def test_audit_failure_rolls_back_saved_navigation(economy, tmp_path, monkeypatc
     "tick=live", "tick=7", "tick=3&tick=4", "tick=3&fork=foreign", "tick=3&private_body=PRIVATE-CANARY",
     "tick=3&csrf_token=PRIVATE-CANARY", "tick=3&agent=1&firm=2", "tick=3&institution=private:1",
     "tick=3&project=../file", "tick=3&camera=NaN,50,3", "tick=3&camera=50,50,8",
+    "tick=3&camera3d=NaN,100,110,0,0,0,2", "tick=3&camera3d=95,100,110,0,0,0,99",
+    "tick=3&camera3d=10001,100,110,0,0,0,2", "tick=3&camera3d=0,0,0,0,0,0,2",
     "tick=3&follow=2&agent=1", "tick=3&agent=9007199254740992", "tick=3&q=" + "a" * 101,
 ])
 def test_invalid_or_private_bookmark_fields_are_rejected_without_writes(economy, tmp_path, entry):

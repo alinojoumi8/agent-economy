@@ -10,6 +10,6 @@ export type CityProjection = {
   instances:CityInstance[]; regions:Array<{id:number;name:string;position:[number,number,number]}>;
   clusters:Array<{id:string;name:string;count:number}>; warnings:string[];
 };
-export type CityActivity = {id:number;tick:number;kind:string;state:'settled'|'rejected';targets:string[]};
+export type CityActivity = {id:number;tick:number;kind:string;state:'settled'|'rejected'|'pending'|'recorded';targets:string[]};
 export const projectCity = project as (envelope:unknown)=>CityProjection;
 export const activityForCity = activity as (city:CityProjection,snapshot:unknown)=>CityActivity[];

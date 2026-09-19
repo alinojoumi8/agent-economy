@@ -1,5 +1,6 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
+import { activityFrame } from './fixtures/activity';
 
 const PRIVATE_CANARY = "PRIVATE-EXPORT-INTERNAL-9f3c";
 const baseEnvelope = {
@@ -82,6 +83,12 @@ async function installApi(context: BrowserContext, state: ReturnType<typeof init
     const request = route.request();
     const url = new URL(request.url());
     const path = url.pathname;
+    if (path === '/api/run/status') return route.fulfill({json:{run_id:'run-demo',tick:6,status:'paused',running:false,active_tick:null,provider_readiness:{mode:'offline'}}});
+    if (path === '/api/participant') return route.fulfill({json:{active:false}});
+    if (path === '/api/v2/workspaces/world') return route.fulfill({json:{...baseEnvelope,projection:'workspace.world',data:{frontier:null}}});
+    if (path === '/api/v2/urban-development') return route.fulfill({json:{...baseEnvelope,projection:'urban.development',data:{enabled:false}}});
+    if (path === '/api/v2/city/activity') return route.fulfill({json:activityFrame(baseEnvelope)});
+    if (path === '/api/v2/operator/city-observations') return route.fulfill({json:{context:JSON.parse(url.searchParams.get('context')!),version:0,entries:[]}});
     if (path === "/api/v2/mode") return route.fulfill({ json: {
       mode: "local", hosted: false, api_base: "/api/v2",
     } });
@@ -297,7 +304,7 @@ test("two analyst contexts resolve stale titles and download redacted evidence",
   await pageB.keyboard.press("Escape");
   await expect(discardDialog).toBeHidden();
   await expect(navigationTrigger).toBeFocused();
-  await pageB.getByRole("link", { name: "City", exact: true }).click();
+  await pageB.getByRole("button", { name: "Back to City · Esc" }).click();
   await expect(discardDialog).toBeVisible();
   await expect(pageB).toHaveURL(/\/investigations\/inv-1\?/);
   await discardDialog.getByRole("button", { name: "Stay" }).click();

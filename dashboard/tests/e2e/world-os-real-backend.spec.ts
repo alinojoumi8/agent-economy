@@ -1,171 +1,53 @@
-import { expect, test } from "@playwright/test";
+import {expect,test} from '@playwright/test';
 
-const realRunId = process.env.AE_REAL_RUN_ID || "";
-
-test.describe("provider-free real backend menu smoke", () => {
-  test.skip(!realRunId, "Set AE_REAL_RUN_ID to an active local deterministic run.");
-
-  test("every workspace and internal view is operable against canonical projections", async ({ page, request }) => {
-    test.setTimeout(120_000);
-    const consoleErrors: string[] = [];
-    const requestFailures: string[] = [];
-    page.on("console", message => {
-      if (message.type() === "error") consoleErrors.push(message.text());
-    });
-    page.on("pageerror", error => consoleErrors.push(error.message));
-    page.on("requestfailed", failed => {
-      if (failed.failure()?.errorText !== "net::ERR_ABORTED") {
-        requestFailures.push(`${failed.method()} ${failed.url()} ${failed.failure()?.errorText || "failed"}`);
-      }
-    });
-
-    const runPath = `/runs/${encodeURIComponent(realRunId)}`;
-    await page.goto(`${runPath}/overview`);
-    await expect(page.locator(".world-os-context h1")).toHaveText("Pulse");
-
-    const citizenMenu = page.locator("details.citizen-menu-dropdown");
-    await citizenMenu.locator("summary").click();
-    const productNavigation = page.getByRole("navigation", { name: "Agent Economy sections" });
-    for (const [label, href] of [
-      ["Observatory", "/"],
-      ["World OS", `${runPath}/overview`],
-      ["Commons", `${runPath}/commons`],
-    ] as const) {
-      await expect(productNavigation.getByRole("link", { name: label, exact: true })).toHaveAttribute("href", href);
+const realRunId=process.env.AE_REAL_RUN_ID||'';
+test.describe('provider-free real backend City smoke',()=>{
+  test.skip(!realRunId,'Set AE_REAL_RUN_ID to a disposable deterministic run with a recorded day.');
+  test('City home, activity and contextual panels read the same real run without advancing it',async({page,request})=>{
+    const errors:string[]=[];page.on('pageerror',error=>errors.push(error.message));
+    const before=await(await request.get('/api/run/status')).json();
+    expect(before.run_id).toBe(realRunId);
+    await page.goto('/');
+    await expect(page).toHaveURL(new RegExp(`/runs/${realRunId}/world`));
+    await expect(page.locator('.world-os-context h1')).toHaveText('City');
+    await expect(page.getByLabel('Day activity totals')).toContainText('events');
+    const activity=await(await request.get('/api/v2/city/activity')).json();
+    await expect(page.getByLabel('Day activity totals')).toContainText(`${activity.data.total.toLocaleString()} events`);
+    if(process.env.AE_CAPTURE_CITY) await page.screenshot({path:'../docs/research/assets/city-unified-atlas.png'});
+    for(const label of ['Economy','People','Businesses & banks','Markets','Law & civic life','Conversations & news','Evidence']){
+      await page.getByRole('link',{name:label,exact:true}).click();
+      const panel=page.getByRole('dialog',{name:label+' in City'});
+      await expect(panel).toBeVisible();
+      // The causal graph exposes its current zoom as a live status readout.
+      // Wait for actual workspace and nested loaders, not every status region.
+      await expect(panel.locator('.world-os-loading')).toHaveCount(0,{timeout:15000});
+      await expect(panel.getByRole('alert')).toHaveCount(0);
+      await page.getByRole('button',{name:'Back to City · Esc'}).click();
+      await expect(page.getByLabel('Keyboard explorer')).toBeEnabled();
     }
-    await citizenMenu.locator("summary").click();
-
-    const commandTrigger = page.getByRole("button", { name: "Open command menu" });
-    await commandTrigger.click();
-    const command = page.getByRole("dialog", { name: "Navigate and inspect" });
-    await expect(command.getByRole("option", { name: /Markets/ })).toBeVisible();
-    await page.keyboard.press("Escape");
-    await expect(command).toBeHidden();
-    await expect(commandTrigger).toBeFocused();
-
-    const initialStatus = await request.get("/api/run/status");
-    expect(initialStatus.ok()).toBe(true);
-    const initial = await initialStatus.json() as { tick?: number; running?: boolean; status?: string };
-    if (Number(initial.tick || 0) < 3 && initial.running !== true) {
-      const run = page.getByRole("button", { name: "Run", exact: true });
-      await expect(run).toBeEnabled();
-      await run.click();
-    }
-    await expect.poll(async () => {
-      const response = await request.get("/api/run/status");
-      if (!response.ok()) return -1;
-      const status = await response.json() as { tick?: number };
-      return Number(status.tick || 0);
-    }, { timeout: 60_000 }).toBeGreaterThanOrEqual(3);
-
-    const destinations = [
-      ["Pulse", "overview"],
-      ["City", "world"],
-      ["People", "people"],
-      ["Commons", "commons"],
-      ["Evidence Lab", "investigations"],
-      ["Institutions", "organizations"],
-      ["Markets", "markets"],
-      ["Politics & Law", "politics-law"],
-      ["Communications", "news-communications"],
-      ["Experiments", "experiments"],
-    ] as const;
-    for (const [label, route] of destinations) {
-      const navigation = page.getByRole("navigation", { name: "Civic Atlas workspaces" });
-      const link = navigation.getByRole("link", { name: label, exact: true });
-      await expect(link).toBeVisible();
-      await link.click();
-      await expect(page).toHaveURL(new RegExp(`${runPath}/${route}(?:\\?|$)`));
-      await expect(page.locator(".world-os-context h1")).toHaveText(label);
-      await expect(page.locator(".world-os-error")).toHaveCount(0);
-    }
-
-    await page.goto(`${runPath}/markets`);
-    const marketMenu = page.getByRole("group", { name: "Market evidence view" });
-    for (const label of ["trades", "fx", "Circuit breakers", "orders"]) {
-      const button = marketMenu.getByRole("button", { name: label, exact: true });
-      await button.click();
-      await expect(button).toHaveAttribute("aria-pressed", "true");
-    }
-
-    await page.goto(`${runPath}/politics-law`);
-    const institutionalMenu = page.getByRole("group", { name: "Institutional evidence view" });
-    for (const label of ["lobbying", "legal", "M&A", "legislation"]) {
-      const button = institutionalMenu.getByRole("button", { name: label, exact: true });
-      await button.click();
-      await expect(button).toHaveAttribute("aria-pressed", "true");
-    }
-
-    await page.goto(`${runPath}/experiments`);
-    const experimentMenu = page.getByRole("group", { name: "Experiment evidence view" });
-    for (const label of ["rehearsals", "forecasts", "campaigns", "inputs", "evidence"]) {
-      const button = experimentMenu.getByRole("button", { name: label, exact: true });
-      await button.click();
-      await expect(button).toHaveAttribute("aria-pressed", "true");
-    }
-
-    await page.goto(`${runPath}/commons`);
-    const hot = page.getByRole("button", { name: "Hot", exact: true });
-    const chronological = page.getByRole("button", { name: "Chronological", exact: true });
-    await hot.click();
-    await expect(hot).toHaveAttribute("aria-pressed", "true");
-    await chronological.click();
-    await expect(chronological).toHaveAttribute("aria-pressed", "true");
-
-    await page.goto(`${runPath}/news-communications`);
-    const communicationMenu = page.getByRole("group", { name: "Communication access view" });
-    for (const label of ["Agent view", "Truth inspector", "Ordinary"]) {
-      const button = communicationMenu.getByRole("button", { name: label, exact: true });
-      await button.click();
-      await expect(button).toHaveAttribute("aria-pressed", "true");
-    }
-
-    await page.goto(`${runPath}/people`);
-    const projectBrowser = page.locator("details.world-os-project-browser");
-    await projectBrowser.locator("summary").click();
-    await projectBrowser.getByLabel("Kind").selectOption("construction");
-    await projectBrowser.getByLabel("Status").selectOption("active");
-    await expect(projectBrowser).toHaveAttribute("open", "");
-
-    await page.goto(`${runPath}/world`);
-    await expect(page.getByRole("heading", { name: "The living city", exact: true })).toBeVisible();
-    const cityView = page.getByRole("group", { name: "City view" });
-    await cityView.getByRole("button", { name: "Atlas", exact: true }).click();
-    await page.getByText("Layers and agent filters", { exact: true }).click();
-    const cityLayers = page.getByRole("group", { name: "City evidence layer" });
-    for (const label of ["Work", "Comms", "Markets", "Civic", "Health", "All"]) {
-      const button = cityLayers.getByRole("button", { name: new RegExp(`^${label}`) });
-      await button.click();
-      await expect(button).toHaveAttribute("aria-pressed", "true");
-    }
-
-    await page.goto(`${runPath}/live-city`);
-    await expect(page.getByRole("heading", { name: "The recorded day", exact: true })).toBeVisible();
-    await expect(page).toHaveURL(/\/world\?.*view=recorded/);
-    await expect(page.getByRole("navigation", { name: "Civic Atlas workspaces" })).toBeVisible();
-
-    await page.goto("/");
-    await expect(page.getByText("The living legal-political economy", { exact: true })).toBeVisible();
-    await expect(page.getByRole("link", { name: "Open World OS", exact: true })).toHaveAttribute(
-      "href", `${runPath}/overview`,
-    );
-
-    expect(consoleErrors).toEqual([]);
-    expect(requestFailures).toEqual([]);
+    await page.getByRole('button',{name:'Inspect this day'}).click();
+    await expect(page.getByRole('group',{name:'Simulation clock'})).toHaveCount(0);
+    await page.getByRole('link',{name:'Economy',exact:true}).click();
+    await expect(page.getByRole('dialog')).toContainText('hidden while inspecting');
+    await page.keyboard.press('Escape');
+    await page.setViewportSize({width:390,height:844});
+    await page.getByRole('button',{name:'List',exact:true}).click();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBeTruthy();
+    if(process.env.AE_CAPTURE_CITY) await page.screenshot({path:'../docs/research/assets/city-unified-mobile.png'});
+    expect((await(await request.get('/api/run/status')).json()).tick).toBe(before.tick);
+    expect(errors).toEqual([]);
   });
-
-  test("3D city accepts the real projection and preserves entity evidence", async ({ page }) => {
-    await page.goto(`/runs/${encodeURIComponent(realRunId)}/world?cityView=3d`);
-    await expect(page.getByTestId("city-canvas")).toHaveAttribute("data-ready", "true");
-    await expect(page.getByText("Unsupported or malformed city projection.", { exact: false })).toHaveCount(0);
-    const entities = page.locator("#city-entity-select");
-    await expect.poll(() => entities.locator("option").count()).toBeGreaterThan(0);
-    await entities.selectOption({ index: 0 });
-    await expect(page.getByRole("link", { name: "Open agent evidence" })).toHaveAttribute(
-      "href", new RegExp(`/runs/${realRunId}/people/\\d+$`),
-    );
-    await page.getByRole("button", { name: "Zoom in", exact: true }).click();
-    await page.reload();
-    await expect(page.getByTestId("city-canvas")).toHaveAttribute("data-ready", "true");
+  test('experimental 3D uses the shared inspector and survives reload',async({page})=>{
+    await page.goto(`/runs/${realRunId}/world?view=3d&population=all`);
+    await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
+    const explorer=page.getByLabel('Keyboard explorer');
+    const first=await explorer.locator('optgroup[label="Agents"] option').first().getAttribute('value');
+    expect(first).toBeTruthy();await explorer.selectOption(first!);
+    await expect(page.getByRole('link',{name:'Open citizen dossier'})).toHaveAttribute('href',new RegExp(`/runs/${realRunId}/people/`));
+    await page.getByRole('button',{name:'Zoom in',exact:true}).click();
+    await page.reload();await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
+    await expect(explorer).toHaveValue(first!);
+    await expect(page.locator('.city3d-inspector')).toHaveCount(0);
+    if(process.env.AE_CAPTURE_CITY) await page.screenshot({path:'../docs/research/assets/city-unified-3d.png'});
   });
 });

@@ -14,13 +14,13 @@ TEXT_LIMIT = 4000
 TOPIC_LIMIT = 512
 
 
-def build_city_conversations(store, *, as_of_tick: int, limit: int = 60) -> dict:
+def build_city_conversations(store, *, as_of_tick: int, limit: int = 60, before_id: int | None = None) -> dict:
     if not 1 <= limit <= 200:
         raise ValueError("conversation limit must be between 1 and 200")
     rows = store.query(
         "SELECT c.id,c.tick,c.participant_ids,substr(c.topic,1,?) AS topic,"
         "length(c.topic)>? AS topic_truncated FROM conversations c "
-        "WHERE c.tick=? AND json_valid(c.participant_ids) "
+        "WHERE c.tick=? AND (? IS NULL OR c.id<?) AND json_valid(c.participant_ids) "
         "AND json_type(CASE WHEN json_valid(c.participant_ids) "
         "THEN c.participant_ids ELSE '[]' END)='array' "
         "AND json_array_length(CASE WHEN json_valid(c.participant_ids) "
@@ -29,7 +29,7 @@ def build_city_conversations(store, *, as_of_tick: int, limit: int = 60) -> dict
         "THEN c.participant_ids ELSE '[]' END) p LEFT JOIN agents a ON a.id=p.value "
         "WHERE p.type!='integer' OR a.id IS NULL OR a.arrived_tick>?) "
         "ORDER BY c.id DESC LIMIT ?",
-        (TOPIC_LIMIT, TOPIC_LIMIT, as_of_tick, as_of_tick, limit + 1),
+        (TOPIC_LIMIT, TOPIC_LIMIT, as_of_tick, before_id, before_id, as_of_tick, limit + 1),
     )
     items = [{
         "id": int(row["id"]), "tick": int(row["tick"]),
@@ -62,6 +62,7 @@ def build_city_conversations(store, *, as_of_tick: int, limit: int = 60) -> dict
     return {
         "items": items, "tick": as_of_tick, "limit": limit,
         "has_more": len(rows) > limit,
+        "next_before_id": items[-1]["id"] if len(rows) > limit and items else None,
         "content_truncated": any(item["topic_truncated"] or item["messages_truncated"]
                                  or any(message["text_truncated"] for message in item["messages"])
                                  for item in items),

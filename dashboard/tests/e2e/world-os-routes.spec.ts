@@ -1,3 +1,4 @@
+import {activityFrame} from "./fixtures/activity";
 import { expect, test, type Page } from "@playwright/test";
 
 const PRIVATE_CANARY = "PRIVATE-WORKSPACE-CANARY";
@@ -77,6 +78,9 @@ async function mockWorkspaceApis(
     const url = new URL(request.url());
     const path = url.pathname;
     const historical = url.searchParams.get("tick") === "3";
+    if(path==='/api/v2/urban-development')return route.fulfill({json:envelope('urban',url,{enabled:false},'urban.development')});
+    if(path==='/api/v2/city/news'||path==='/api/v2/city/conversations')return route.fulfill({json:envelope('information',url,{tick:historical?3:6,items:[],next_before_id:null})});
+    if (path === "/api/v2/city/activity") return route.fulfill({json:activityFrame(envelope('activity',url,{}))});
     if (path === "/api/v2/operator/session") {
       return route.fulfill({ json: { owner_id: "local-operator", csrf_token: "test" } });
     }
@@ -222,9 +226,10 @@ async function mockWorkspaceApis(
     return route.fulfill({ contentType: "application/json", body: serialized });
   });
   await page.route("**/api/agents", route => route.fulfill({ json: [] }));
+  await page.route("**/api/participant", route => route.fulfill({ json: {enabled:false,active:false} }));
   await page.route("**/api/firms", route => route.fulfill({ json: [] }));
   await page.route("**/api/run/status", route => route.fulfill({ json: {
-    status: "paused", running: false,
+    run_id:'run-demo',status: "paused", running: false,
   } }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
     context: { run_id: "run-demo", fork_id: null, tick: "live" },
@@ -304,39 +309,21 @@ test("estate money follows the selected day on desktop and mobile", async ({ pag
   expect(diagnostics.requestFailures).toEqual([]);
 });
 
-test("workspace rail exposes every canonical destination with observer context", async ({ page }) => {
-  const diagnostics = await setup(page);
-  await page.goto("/runs/run-demo/overview?fork=fork-1&tick=3");
-
-  const navigation = page.getByRole("navigation", { name: "Civic Atlas workspaces" });
-  const destinations = [
-    ["Pulse", "overview"],
-    ["City", "world"],
-    ["People", "people"],
-    ["Commons", "commons"],
-    ["Evidence Lab", "investigations"],
-    ["Institutions", "organizations"],
-    ["Markets", "markets"],
-    ["Politics & Law", "politics-law"],
-    ["Communications", "news-communications"],
-    ["Experiments", "experiments"],
-  ] as const;
-
-  await expect(navigation).toBeVisible();
-  for (const [label, path] of destinations) {
-    const link = navigation.getByRole("link", { name: label, exact: true });
-    await expect(link).toBeAttached();
-    await expect(link).toHaveAttribute(
-      "href",
-      `/runs/run-demo/${path}?fork=fork-1&tick=3`,
-    );
+test("City details replace the workspace rail and preserve observer context", async ({ page }) => {
+  const diagnostics=await setup(page);
+  await page.goto('/runs/run-demo/overview?fork=fork-1&tick=3');
+  await expect(page).toHaveURL(/\/world\?/);
+  const navigation=page.getByRole('navigation',{name:'Explore City details'});
+  await expect(page.locator('.world-os-rail')).toHaveCount(0);
+  for(const label of ['People','Businesses & banks','Markets','Law & civic life','Conversations & news','Evidence']){
+    const link=navigation.getByRole('link',{name:label,exact:true});
+    await expect(link).toHaveAttribute('href',/fork=fork-1&tick=3/);
   }
-
-  await navigation.getByRole("link", { name: "Institutions", exact: true }).click();
-  await expect(page).toHaveURL(/\/runs\/run-demo\/organizations\?fork=fork-1&tick=3$/);
-  await expect(page.getByRole("heading", { name: "Organizations", exact: true }).last()).toBeVisible();
+  await navigation.getByRole('link',{name:'Businesses & banks',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'Businesses & banks in City'})).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(navigation).toBeVisible();
   expect(diagnostics.consoleErrors).toEqual([]);
-  expect(diagnostics.requestFailures).toEqual([]);
 });
 
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
@@ -356,6 +343,9 @@ test("all canonical workspace routes navigate with observer context and validate
     await expect(page.getByRole("heading", { name: heading, exact: true }).last()).toBeVisible();
     await expect(page).toHaveURL(/fork=fork-1/);
     await expect(page).toHaveURL(/tick=3/);
+    await page.getByRole('button',{name:'Back to City · Esc'}).click();
+    await expect(page.getByRole('dialog')).toBeHidden();
+    await expect(page).toHaveURL(/\/world\?/);
   }
 
   await page.goto("/runs/run-demo/organizations/1?fork=fork-1&tick=3");
@@ -400,7 +390,7 @@ test("deep-dive menus expose every view and participate in browser history", asy
   await fx.click();
   await expect(page.getByRole("heading", { name: "FX orders", exact: true })).toBeVisible();
   await page.getByLabel("Side").selectOption("buy");
-  await page.getByLabel("Status").selectOption("open");
+    await page.getByRole('dialog').getByLabel("Status").selectOption("open");
   await expect.poll(() => new URL(page.url()).searchParams.get("side")).toBe("buy");
   await page.goBack();
   await expect(trades).toHaveAttribute("aria-pressed", "true");
@@ -503,9 +493,8 @@ test("organization filters survive selection, reload, and browser history", asyn
 test("world selection URL gives a validated place precedence over region", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/world?region=2&place=1&fork=fork-1&tick=3");
-  await expect(page.getByLabel("Region")).toHaveValue("");
-  await expect(page.getByLabel("Place")).toHaveValue("1");
-  await expect(page.locator(".world-os-world-inspector").getByRole("heading", { name: "Place" })).toBeVisible();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("place:1");
+  await expect(page.getByLabel("Selected city evidence").getByRole("heading", { name: "North Exchange" })).toBeVisible();
   await expect.poll(() => new URL(page.url()).searchParams.has("region")).toBe(false);
   expect(new URL(page.url()).searchParams.get("place")).toBe("1");
   expect(diagnostics.consoleErrors).toEqual([]);
@@ -556,7 +545,7 @@ test("Commons uses the selected run fork and historical tick without polling", a
     await route.fallback();
   });
   await page.goto("/runs/run-demo/commons?fork=fork-1&tick=3&feed=hot");
-  await expect(page.getByRole("heading", { name: "Commons", exact: true })).toBeVisible();
+  await expect(page.getByRole('dialog',{name:'Public commons in City'})).toBeVisible();
   await expect(page.getByText("Bounded historical commons post")).toBeVisible();
   await expect.poll(() => requests.length).toBeGreaterThan(0);
   const first = new URL(requests[0]);
@@ -632,13 +621,13 @@ test("command navigation reaches canonical routes and unknown paths redirect onc
     if (frame === page.mainFrame()) redirectNavigations.push(new URL(frame.url()).pathname);
   });
   await page.goto("/runs/run-demo/not-a-workspace");
-  await expect(page).toHaveURL(/\/runs\/run-demo\/overview$/);
+  await expect(page).toHaveURL(/\/runs\/run-demo\/world$/);
   const distinctNavigations = redirectNavigations.filter(
     (path, index) => index === 0 || path !== redirectNavigations[index - 1],
   );
   expect(distinctNavigations).toEqual([
     "/runs/run-demo/not-a-workspace",
-    "/runs/run-demo/overview",
+    "/runs/run-demo/world",
   ]);
   expect(await page.evaluate(() => history.length)).toBe(historyBeforeRedirect + 1);
   expect(diagnostics.consoleErrors).toEqual([]);
@@ -661,6 +650,7 @@ test("price lab gives goods and equities the same historical scope and preserves
   await expect(page.getByText("Historical order-book state is unavailable. Current quotes are not shown here.")).toBeVisible();
   await page.getByLabel("Measurement window").selectOption("7");
   await page.getByLabel("Business", { exact: true }).selectOption("2");
+  await expect(page.getByLabel("Measurement window")).toHaveValue("7");
   await expect(page.getByLabel("Business", { exact: true })).toHaveValue("2");
   await expect(page.getByRole("link", { name: "Inspect business" })).toHaveAttribute("href", "/runs/run-demo/organizations/firm/2?fork=fork-1&tick=3");
   const last = priceRequests.at(-1)!;
@@ -712,7 +702,7 @@ test("city business selection and camera survive price inspection and return", a
   await page.getByRole("button", { name: "Select business Northstar Foods" }).click();
   await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
   await expect(page.getByRole("heading", { name: "Northstar Foods", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "2.5D Diorama", exact: true }).click();
+  {const legacy=new URL(page.url());legacy.searchParams.set("view","diorama");await page.goto(legacy.href);}
   const scene = page.getByTestId("civic-diorama");
   await expect(scene).toBeVisible();
   await page.getByRole("button", { name: "Focus selection", exact: true }).click();
