@@ -239,6 +239,9 @@ def summarize_frozen(rows):
         for split in ("calibration", "held_out"):
             group = [r for r in rows if r["arm"] == arm and r["split"] == split]
             valid = [r for r in group if r["status"] == "complete"]
+            attempted = [r for r in group if r["status"] != "excluded"]
+            missing_costs = sum(r.get("cost_usd") is None for r in attempted)
+            known_cost = sum(r.get("known_call_cost_usd", r.get("cost_usd") or 0) for r in attempted)
             labelled = [r for r in valid if r["label_agreement"] is not None and r["confidence"] is not None]
             bins = []
             for lower in range(10):
@@ -250,7 +253,9 @@ def summarize_frozen(rows):
             summaries[f"{arm}:{split}"] = {"assigned": len(group), "valid": len(valid),
                 "failures": len(group) - len(valid), "labelled_with_confidence": len(labelled),
                 "baseline_agreement": statistics.fmean(r["baseline_agreement"] for r in valid) if valid else None,
-                "call_cost_usd": sum(r.get("cost_usd", 0) for r in group),
+                "call_cost_usd": None if missing_costs else known_cost,
+                "known_call_cost_usd": known_cost,
+                "cost_unavailable_evaluations": missing_costs,
                 "latency_p50_ms": _percentile([r["latency_ms"] for r in valid], .5),
                 "latency_p95_ms": _percentile([r["latency_ms"] for r in valid], .95),
                 "abstentions": sum(r.get("selection_status") == "abstained" for r in valid),
@@ -314,7 +319,8 @@ async def execute(root: Path, *, approve_live=False):
                 continue
             store = Store(str(root / f"frozen-{arm}.db"))
             store.init_run_meta(f"frozen-{arm}", 0, config)
-            gateway = Gateway(store, config, completion_guard=_guard(root, contract, f"frozen-{arm}", arm))
+            guard = _guard(root, contract, f"frozen-{arm}", arm)
+            gateway = Gateway(store, config, completion_guard=guard)
             policy = TypedDecisionPolicy(gateway, config)
             try:
                 for record in records:
@@ -324,6 +330,8 @@ async def execute(root: Path, *, approve_live=False):
                         stopped = stopped or "wall_budget"
                         row["reason"] = stopped
                         continue
+                    first_call = store.scalar("SELECT COALESCE(MAX(id),0) FROM llm_calls")
+                    before = guard.snapshot(scope=f"frozen-{arm}") if guard else None
                     try:
                         result = await asyncio.wait_for(policy.complete(LLMRequest(role="citizen",
                             purpose="decision", tick=record["tick"]), frozen_menu(record)),
@@ -338,6 +346,19 @@ async def execute(root: Path, *, approve_live=False):
                             cost_usd=sum(c["cost_usd"] for c in receipt["calls"]), calls=receipt["calls"])
                     except Exception as exc:
                         row.update(status="failed", reason=type(exc).__name__)
+                        calls = [dict(call) for call in store.query(
+                            "SELECT id AS call_id,provider,model,cost_usd,latency_ms "
+                            "FROM llm_calls WHERE id>? ORDER BY id", (first_call,))]
+                        known_cost = sum(call["cost_usd"] for call in calls)
+                        unavailable = False
+                        if guard:
+                            after = guard.snapshot(scope=f"frozen-{arm}")
+                            dispatched = after["provider_calls"] - before["provider_calls"]
+                            unavailable = (dispatched > len(calls) or any(
+                                after[key] > before[key] for key in ("unknown_usage_calls", "unresolved_calls")))
+                        row.update(calls=calls, known_call_cost_usd=known_cost,
+                            cost_usd=None if unavailable else known_cost,
+                            cost_status="unavailable" if unavailable else "recorded")
                         stopped = "frozen_evaluation_failed"
                     publish_json(root / f"frozen-{arm}-{record['id']}.json", row)
             finally:

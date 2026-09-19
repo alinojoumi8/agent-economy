@@ -89,3 +89,56 @@ def test_calibration_requires_labels_and_reports_each_split():
                                  {**base, "split": "held_out", "label_agreement": None}])
     assert summaries["jev:calibration"]["ece_against_labels"] == pytest.approx(.2)
     assert summaries["jev:held_out"]["ece_against_labels"] is None
+
+
+@pytest.mark.parametrize('failure', ['http', 'malformed'])
+def test_failed_frozen_evaluation_reports_known_or_unavailable_cost(tmp_path, monkeypatch, failure):
+    monkeypatch.setenv('OPENROUTER_API_KEY', 'private-fixture-key')
+    baseline_root = tmp_path / 'baseline'
+    store, world, _ = open_run(profiles()['baseline'], None, None, data_dir=baseline_root)
+    source = Path(store.path)
+    try:
+        asyncio.run(world.step())
+    finally:
+        world.close()
+    snapshots = tmp_path / 'frozen.json'
+    freeze(source, snapshots, limit=1)
+
+    def fail(request):
+        if failure == 'http':
+            return httpx.Response(402, json={'error': 'quota'})
+        response = typed_handler(request).json()
+        response['answers'] = {}
+        return httpx.Response(200, json=response)
+
+    transport(monkeypatch, fail)
+    study = tmp_path / 'failed'
+    prepare(profiles(), study, seeds=(9,), ticks=1, snapshots=snapshots)
+    result = asyncio.run(execute(study, approve_live=True))
+    row = next(r for r in result['frozen'] if r['arm'] == 'jev')
+    summary = result['frozen_summary']['jev:' + row['split']]
+    assert row['status'] == 'failed'
+    assert result['provider_accounting']['sealed']
+    if failure == 'http':
+        assert row['cost_usd'] is None and row['cost_status'] == 'unavailable'
+        assert summary['call_cost_usd'] is None
+        assert summary['cost_unavailable_evaluations'] == 1
+        assert result['provider_accounting']['unknown_usage_calls'] >= 1
+        assert result['provider_accounting']['encumbered_nano_usd'] > 0
+    else:
+        assert row['cost_usd'] > 0 and row['cost_status'] == 'recorded'
+        assert row['cost_usd'] == sum(c['cost_usd'] for c in row['calls'])
+        assert summary['call_cost_usd'] == row['cost_usd']
+        assert summary['cost_unavailable_evaluations'] == 0
+
+
+def test_frozen_summary_preserves_known_subtotal_when_a_call_cost_is_unknown():
+    summary = summarize_frozen([
+        {'arm': 'jev', 'split': 'held_out', 'status': 'failed',
+         'cost_usd': None, 'known_call_cost_usd': .25},
+        {'arm': 'jev', 'split': 'held_out', 'status': 'failed', 'cost_usd': .5},
+        {'arm': 'jev', 'split': 'held_out', 'status': 'excluded'},
+    ])['jev:held_out']
+    assert summary['call_cost_usd'] is None
+    assert summary['known_call_cost_usd'] == .75
+    assert summary['cost_unavailable_evaluations'] == 1
