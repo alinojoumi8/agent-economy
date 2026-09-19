@@ -1,0 +1,2 @@
+# Provider-free comparison: the same menu and engine, using the local baseline.
+extends: jev-offline.yaml

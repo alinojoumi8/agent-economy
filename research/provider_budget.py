@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from contextlib import closing, contextmanager
 import hashlib
+import math
 from pathlib import Path
 import os
 import sqlite3
@@ -56,7 +57,7 @@ class GatewayBinding(Contract):
 
 
 class ProviderBudgetContract(Contract):
-    protocol_version: Literal["research-provider-budget-v1", "research-provider-budget-v2"]
+    protocol_version: Literal["research-provider-budget-v1", "research-provider-budget-v2", "typed-provider-budget-v1"]
     study_manifest_sha256: Digest
     gateway_config_sha256: Digest | None = None
     gateway_bindings: tuple[GatewayBinding, ...] | None = None
@@ -350,10 +351,17 @@ class ProviderBudget:
         for target in self._allowed_targets:
             tariff = self._tariffs[target]
             provider = providers.get(tariff.provider, {})
-            if provider.get("kind") not in {"openai_compat", "anthropic"}:
+            allowed_kinds = {"openai_compat", "anthropic"}
+            if self.contract.protocol_version == "typed-provider-budget-v1":
+                allowed_kinds.add("openrouter_decisions")
+            if provider.get("kind") not in allowed_kinds:
                 raise BudgetLedgerError("research completion budgets require a direct HTTP adapter")
+            extras = provider.get("request_defaults")
+            typed_routing = (self.contract.protocol_version == "typed-provider-budget-v1"
+                and isinstance(extras, dict) and set(extras) == {"provider"}
+                and extras["provider"] == {"only": ["OpenAI"], "allow_fallbacks": False})
             if provider.get("kind") == "openai_compat" and (
-                    provider.get("request_defaults")
+                    (extras and not typed_routing)
                     or provider.get("max_tokens_field", "max_tokens") not in {"max_tokens", "max_completion_tokens"}):
                 raise BudgetLedgerError("research adapter extras can change the declared request or token ceiling")
         self.snapshot()
@@ -435,6 +443,16 @@ class ProviderBudget:
                         input_tokens = output_tokens = cost = None
                     else:
                         state, reason = "settled", None
+            # A reported charge remains evidence even if usage is missing.
+            # Historical research contracts keep their original settlement.
+            reported = result.reported_cost_usd if result is not None else None
+            if self.contract.protocol_version == "typed-provider-budget-v1" and reported is not None:
+                if type(reported) not in {int, float} or not math.isfinite(reported) or reported < 0:
+                    state, reason, breach = "breached", "invalid_usage", True
+                else:
+                    cost = max(cost or 0, math.ceil(reported * 1_000_000_000))
+                    if cost > row["reserved_cost"]:
+                        state, reason, breach = "breached", "usage_exceeds_reservation", True
             conn.execute("""UPDATE reservations SET state=?,reason=?,input_tokens=?,output_tokens=?,usage_cost=?
                 WHERE id=?""", (state, reason, input_tokens, output_tokens, cost, reservation))
         if breach:

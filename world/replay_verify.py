@@ -538,7 +538,17 @@ def _event_llm_expectations(
             purpose=_action_purposes_for(conn, owner_id, int(event_row["tick"]), role))
         return expectations, valid and _engine_semantics(conn) == 7
 
-    if key == "source_llm_call_id" and "agent_id" in root:
+    if key == "model_call_id" and str(event_row["kind"]) == "typed_decision":
+        owner_id = root.get("agent_id")
+        if (type(owner_id) is not int or event_row["phase"] != "EXECUTION"
+                or event_row["subject_type"] != "agent" or event_row["subject_id"] != owner_id
+                or root.get("contract") not in {"bounded-economic-choice-v1", "bounded-economic-choice-v2",
+                                               "bounded-economic-choice-v3"}):
+            return expectations, False
+        role, valid = _agent_role(conn, owner_id, tick=int(event_row["tick"]))
+        purpose = str(root.get("purpose") or "")
+        valid = valid and purpose == "decision"
+    elif key == "source_llm_call_id" and "agent_id" in root:
         try:
             owner_id = int(root["agent_id"])
         except (TypeError, ValueError):

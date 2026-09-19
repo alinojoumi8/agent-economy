@@ -12,6 +12,8 @@ htmlcov/
 data/runs/*.db
 data/runs/*.db-wal
 data/runs/*.db-shm
+data/runs/*.jev-budget.json
+data/runs/preflight/
 data/runs/oracle-commitments/
 data/runs/oracle-locks/
 data/runs/oracle-pending/

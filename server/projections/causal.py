@@ -4,6 +4,7 @@ from __future__ import annotations
 from causal import CausalLinkService
 from communications.policy import CommunicationPolicy, MessageField, Principal
 from engine.store import load_json
+from .decisions import observer_event_payload
 
 
 def _message_for_memory(store, memory_id: int) -> int | None:
@@ -40,7 +41,7 @@ def _semantic_row(store, node: dict) -> dict:
                 "tick": int(row["tick"]), "phase": row["phase"], "label": row["kind"],
                 "subject_type": row["subject_type"], "subject_id": row["subject_id"],
                 "importance": float(row["importance"]),
-                "payload": load_json(row["payload_json"], {}) or {},
+                "payload": observer_event_payload(row["kind"], load_json(row["payload_json"], {}) or {}),
             })
     elif kind == "action_proposal":
         row = store.query_one(

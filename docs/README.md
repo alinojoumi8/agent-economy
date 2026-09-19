@@ -25,6 +25,8 @@ each audience can find the authoritative level of detail.
   streams, explicit research declarations and goods/equity pilot limits.
 - [Configuration and providers](configuration.md) — profiles, inheritance,
   information boundaries, beliefs, routing, budget, and shock targeting.
+- [Jev bounded decisions](jev.md) — OpenRouter key setup, offline/live/hybrid
+  pilots, private receipts, exact replay and prospective comparison commands.
 - [Local and hosted API reference](api-reference.md) — REST, WebSocket,
   tenant/auth/run routes, request shapes, and PowerShell examples.
 

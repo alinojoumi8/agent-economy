@@ -1,0 +1,23 @@
+# Provider-free rehearsal and equal-menu deterministic baseline.
+extends: price-lab-keyed.yaml
+checkpoint_every: 0
+information:
+  citizen_bank_visibility: public_status
+llm:
+  default_route: {provider: scripted, model: scripted}
+  provider_retries: 1
+  max_in_flight: 3
+  logical_deadline_s: 30
+  decision_policy:
+    version: bounded-economic-choice-v1
+    primary: {provider: scripted, model: scripted}
+    population_fraction: 1.0
+    eligible_tiers: [legacy, local, flash, premium]
+    minimum_confidence: 0.0
+    on_abstain: wait
+    activation_tick: 1
+    max_goods_offers: 4
+    max_job_options: 3
+    max_quantity: 8
+    spending_bps: 2000
+    max_output_tokens: 2048

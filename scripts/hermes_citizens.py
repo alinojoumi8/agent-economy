@@ -1,7 +1,8 @@
 """Persistent local Hermes cohort operator. Secrets stay in isolated profiles.
 
-Provision with --setup, then run bounded days with --days N. Re-running resumes
-the same world and profile sessions and verifies queued/executed receipts.
+Provision with --setup, then advance at most N ticks with --days N, including
+admission or saved-day recovery. Re-running resumes the same world and profile
+sessions and verifies queued/executed receipts.
 """
 from __future__ import annotations
 
@@ -14,7 +15,9 @@ import re
 import sqlite3
 import subprocess
 import sys
+import tempfile
 import time
+from urllib.parse import urlsplit
 
 import httpx
 import psutil
@@ -22,6 +25,7 @@ import yaml
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
+LINUX_GUARDIAN = sys.platform == "linux"
 COHORT = [
     ("maya-chen", "Maya Chen", "engineer", "Practical and careful. Seek engineering work and improve useful skills."),
     ("omar-haddad", "Omar Haddad", "small_business", "Entrepreneurial but cost-conscious. Look for unmet needs and viable business opportunities."),
@@ -40,7 +44,16 @@ def write_json(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".new")
     temporary.write_text(json.dumps(value, indent=2), encoding="utf-8")
-    temporary.replace(path)
+    for attempt in range(6):
+        try:
+            temporary.replace(path)
+            return
+        except PermissionError:
+            # Windows readers/scanners may briefly deny atomic replacement.
+            # Keep the previous complete document and surface persistent errors.
+            if attempt == 5:
+                raise
+            time.sleep(.02 * 2**attempt)
 
 
 def read_json(path):
@@ -55,19 +68,74 @@ class HermesCallTimeout(RuntimeError):
     """The bounded call timed out and its tracked process tree was reaped."""
 
 
+def _owned_hermes_children(parent):
+    """Recheck direct ancestry after psutil's process-list snapshot."""
+    try:
+        children = parent.children()
+        parent_created = parent.create_time()
+    except psutil.NoSuchProcess:
+        return []
+    owned = []
+    for child in children:
+        try:
+            # A PID can be recycled between the child-list snapshot and the
+            # Process object being created. Validate every edge, not just the
+            # descendant's age relative to the original root.
+            child_created = child.create_time()
+            if child.ppid() == parent.pid and child_created >= parent_created:
+                owned.append((child, child_created))
+        except psutil.NoSuchProcess:
+            pass
+    return owned
+
+
+def _run_linux_hermes_process(command, *, timeout, **kwargs):
+    # A separate process owns each subreaper, so concurrent Hermes workers
+    # cannot adopt or terminate one another's descendants.
+    with tempfile.TemporaryDirectory(prefix="ae-hermes-guardian-") as directory:
+        result_path = Path(directory) / "result.json"
+        guardian = Path(__file__).with_name("hermes_process_guardian.py")
+        process = subprocess.Popen([sys.executable, str(guardian), "--result",
+            str(result_path), "--timeout", str(timeout), "--", *command], **kwargs)
+        try:
+            process.wait(timeout=timeout + 20)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=15)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait()
+                    raise RuntimeError("Hermes process cleanup failed; refusing another dispatch") from None
+        if not result_path.is_file():
+            raise RuntimeError("Hermes guardian exited without cleanup evidence")
+        result = read_json(result_path)
+        if result["state"] == "timed_out":
+            raise HermesCallTimeout(f"Hermes call exceeded {timeout} seconds")
+        if result["state"] != "complete":
+            raise RuntimeError("Hermes process cleanup or launch failed; refusing another dispatch")
+        return subprocess.CompletedProcess(command, result["returncode"])
+
+
 def run_hermes_process(command, *, timeout, **kwargs):
     """Track Windows venv children so a timeout cannot leave a second citizen acting."""
+    if LINUX_GUARDIAN:
+        return _run_linux_hermes_process(command, timeout=timeout, **kwargs)
     process = psutil.Popen(command, **kwargs)
-    tracked = {process.pid: process}
+    # Popen retains its own process handle even if a fast launcher has already
+    # exited. Do not require a new OS creation-time lookup for that root.
+    tracked = {(process.pid, None): process}
     deadline = time.monotonic() + timeout
     try:
         while True:
-            for parent in list(tracked.values()):
-                try:
-                    for child in parent.children(recursive=True):
-                        tracked.setdefault(child.pid, child)
-                except psutil.NoSuchProcess:
-                    pass
+            pending = list(tracked.values())
+            while pending:
+                for child, child_created in _owned_hermes_children(pending.pop()):
+                    identity = (child.pid, child_created)
+                    if identity not in tracked:
+                        tracked[identity] = child
+                        pending.append(child)
             returncode = process.poll()
             if returncode is not None:
                 return subprocess.CompletedProcess(command, returncode)
@@ -83,9 +151,10 @@ def run_hermes_process(command, *, timeout, **kwargs):
             parent = pending.pop()
             try:
                 parent.suspend()
-                for child in parent.children(recursive=True):
-                    if child.pid not in tracked:
-                        tracked[child.pid] = child
+                for child, child_created in _owned_hermes_children(parent):
+                    identity = (child.pid, child_created)
+                    if identity not in tracked:
+                        tracked[identity] = child
                         pending.append(child)
             except psutil.NoSuchProcess:
                 pass
@@ -113,9 +182,23 @@ class CohortOperator:
 
     def api(self, path, *, body=None, token=None):
         headers = {"Authorization": f"Bearer {token}"} if token else {}
-        response = self.client.request("POST" if body is not None else "GET", path, json=body, headers=headers)
-        response.raise_for_status()
-        return response.json()
+        method = "POST" if body is not None else "GET"
+        for attempt in range(1, 4):
+            try:
+                response = self.client.request(method, path, json=body, headers=headers)
+            except (httpx.NetworkError, httpx.TimeoutException, httpx.RemoteProtocolError) as error:
+                # A lost write response may follow a successful clock step or
+                # registration. Only repeat reads; leave ambiguous writes for
+                # boundary/receipt recovery instead of applying them twice.
+                if method != "GET" or attempt == 3:
+                    raise
+                with (self.root / "api-read-retries.jsonl").open("a", encoding="utf-8") as journal:
+                    journal.write(json.dumps({"time": time.time(), "path": httpx.URL(path).path,
+                        "attempt": attempt, "error": type(error).__name__}) + "\n")
+                time.sleep(.25 * attempt)
+                continue
+            response.raise_for_status()
+            return response.json()
 
     def check_world(self):
         state = self.api("/api/run/status")
@@ -181,7 +264,8 @@ class CohortOperator:
             # The exchanged bootstrap token is no longer useful.
             pending_path.unlink()
             print(f"Onboarded {name}", flush=True)
-        write_json(ROOT / "data/control-plane/hermes-city.json", {"run_id": self.args.run_id})
+        if not getattr(self.args, "keep_active_world", False):
+            write_json(ROOT / "data/control-plane/hermes-city.json", {"run_id": self.args.run_id})
 
     def receipts(self, citizen, tick):
         with sqlite3.connect(f"file:{self.database.as_posix()}?mode=ro", uri=True) as connection:
@@ -296,6 +380,13 @@ class CohortOperator:
                     journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
                         "tick": tick, "attempt": attempt, "timeout_seconds": 240,
                         "process_cleanup": "complete"}) + "\n")
+        if result.returncode:
+            # Startup failures can leave an empty transcript. Retain the OS exit
+            # code without copying provider output, credentials, or private prompts.
+            with (self.root / "decision-process-exits.jsonl").open("a", encoding="utf-8") as journal:
+                journal.write(json.dumps({"time": time.time(), "citizen": citizen["name"],
+                    "tick": tick, "attempt": attempt, "exit_code": result.returncode,
+                    "log": str(log_path.relative_to(self.root))}) + "\n")
         # Desktop and connection checks can create newer conversations while
         # this citizen resumes an older one. Persist the session from THIS CLI
         # invocation, never the latest row in the shared profile database.
@@ -310,7 +401,8 @@ class CohortOperator:
                 raise RuntimeError(f"{citizen['name']} did not identify its saved session; no unrelated session will be substituted")
         if not any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
             error = HermesCallTimeout if timed_out else (RuntimeError if result.returncode else MissingQueuedAction)
-            raise error(f"{citizen['name']} did not queue an action; inspect {log_path}")
+            raise error(f"{citizen['name']} did not queue an action; Hermes exit code "
+                        f"{result.returncode}; inspect {log_path}")
         print(f"{citizen['name']}: queued tick {tick}", flush=True)
 
     def run(self):
@@ -326,6 +418,10 @@ class CohortOperator:
             else:
                 import fcntl
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            starting = self.api("/api/run/status")
+            if starting["run_id"] != self.args.run_id:
+                raise RuntimeError("The server is serving a different world")
+            target_tick = starting["tick"] + self.args.days
             self.recover_day(citizens)
             self.check_world()
             if not (self.root / "STOP").exists():
@@ -334,13 +430,13 @@ class CohortOperator:
                 if any(item.get("status") == "pending_actor" for item in identities):
                     self.api("/api/run/step", body={})
                     print(f"Saved admission day {self.check_world()['tick']}", flush=True)
-            for _ in range(self.args.days):
+            for _ in range(target_tick - self.check_world()["tick"]):
                 if (self.root / "STOP").exists():
                     print("Stopped at a saved day boundary", flush=True)
                     break
                 tick = self.check_world()["tick"] + 1
                 write_json(self.root / "status.json", {"state": "deciding", "tick": tick, "pid": os.getpid()})
-                with ThreadPoolExecutor(max_workers=2) as pool:
+                with ThreadPoolExecutor(max_workers=getattr(self.args, "workers", 2)) as pool:
                     list(pool.map(lambda citizen: self.decide(citizen, tick), citizens))
                 if (self.root / "STOP").exists():
                     break
@@ -364,12 +460,22 @@ def main():
     parser.add_argument("--hermes-python", default=str(Path(os.environ.get("LOCALAPPDATA", "")) / "hermes/hermes-agent/venv/Scripts/python.exe"))
     parser.add_argument("--profiles-root", default=str(Path(os.environ.get("LOCALAPPDATA", "")) / "hermes/profiles"))
     parser.add_argument("--setup", action="store_true")
-    parser.add_argument("--days", type=int, default=3)
+    parser.add_argument("--keep-active-world", action="store_true", help="Keep the launcher's existing selected world")
+    parser.add_argument("--workers", type=int, default=2, choices=range(1, 11))
+    parser.add_argument("--days", type=int, default=3,
+                        help="Maximum ticks to advance, including admission or saved-day recovery")
     parser.add_argument("--supervise", action="store_true", help="Record child exits and progress independently")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-zA-Z0-9_-]+", args.run_id) or not 1 <= args.days <= 100:
         parser.error("Use a safe run ID and 1-100 days per bounded session")
-    if args.url not in {"http://127.0.0.1:8000", "http://localhost:8000"}:
+    try:
+        target = urlsplit(args.url)
+        port = target.port
+    except ValueError:
+        parser.error("This operator supports the local sandbox only")
+    if (target.scheme != "http" or target.hostname not in {"127.0.0.1", "localhost"}
+            or target.username or target.password or target.path or target.query or target.fragment
+            or port is None or not 1 <= port <= 65535):
         parser.error("This operator supports the local sandbox only")
     if args.supervise:
         from hermes_supervision import supervise

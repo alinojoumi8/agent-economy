@@ -936,8 +936,10 @@ def test_dead_actor_and_expired_decision_window_close_pending_receipts(world10: 
     assert late["validator_results"][0]["validator"] == "deadline"
 
 
-def test_local_expired_turn_renewal_is_audited_and_preserves_receipts(tmp_path):
-    world = _world(tmp_path, engine_semantics_version=11)
+@pytest.mark.parametrize("semantics", [11, 16])
+def test_local_expired_turn_renewal_is_audited_and_preserves_receipts(tmp_path, semantics):
+    world = _world(tmp_path, engine_semantics_version=semantics,
+                   local_turn_renewal_contract="paused-next-turn-v2")
     try:
         created = _connection(world)
         service = world.runtime.external
@@ -965,14 +967,16 @@ def test_local_expired_turn_renewal_is_audited_and_preserves_receipts(tmp_path):
         assert queued['status'] == 'queued'
         with pytest.raises(ExternalAgentError, match='already been'):
             service.renew_local_turn(auth, target_tick=turn['target_tick'])
-        assert world.economy.ledger.reconcile()
+        assert world.economy.ledger.reconcile()[0]
     finally:
         world.close()
 
 
 @pytest.mark.parametrize('blocked', ['scope', 'target', 'active', 'audit_failure'])
-def test_local_turn_renewal_refuses_invalid_boundary_and_rolls_back(tmp_path, monkeypatch, blocked):
-    world = _world(tmp_path, engine_semantics_version=11)
+@pytest.mark.parametrize("semantics", [11, 16])
+def test_local_turn_renewal_refuses_invalid_boundary_and_rolls_back(tmp_path, monkeypatch, blocked, semantics):
+    world = _world(tmp_path, engine_semantics_version=semantics,
+                   local_turn_renewal_contract="paused-next-turn-v2")
     try:
         created = _connection(world)
         service = world.runtime.external
@@ -991,6 +995,66 @@ def test_local_turn_renewal_refuses_invalid_boundary_and_rolls_back(tmp_path, mo
                                   (turn['turn_id'],)) == '2000-01-01T00:00:00+00:00'
     finally:
         world.close()
+
+
+def test_semantics16_local_turn_renewal_requires_explicit_opt_in(tmp_path):
+    world = _world(tmp_path, engine_semantics_version=16)
+    try:
+        created = _connection(world)
+        service = world.runtime.external
+        auth = service.authenticate(created['credential']['token'], rate_limit=False)
+        with pytest.raises(ExternalAgentError, match='opted-in'):
+            service.renew_local_turn(auth, target_tick=1)
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize('semantics', [14, 16])
+def test_fresh_external_admission_then_mixed_attendance_replays_from_genesis(tmp_path, semantics):
+    from run import open_run, replay_headless
+
+    source_root = tmp_path / 'source'
+    source_root.mkdir()
+    world = _world(source_root, engine_semantics_version=semantics)
+    source = Path(world.store.path)
+    try:
+        created = [world.runtime.external.create_connection(tenant_id='test', owner_id=f'owner-{i}',
+            display_name=f'Citizen {i}', tier='actor') for i in range(2)]
+        asyncio.run(world.step())
+        assert world.store.scalar('SELECT COUNT(*) FROM external_turn_attendance WHERE target_tick=1') == 2
+        service = world.runtime.external
+        auth = service.authenticate(created[0]['credential']['token'], rate_limit=False)
+        turn = service.turn(auth)
+        invalid = service.submit_action(auth, {'target_tick': 2, 'action': {'type': 'not_a_legal_action'},
+            'observed_projection_hash': turn['projection_hash'], 'idempotency_key': 'invalid'})
+        assert invalid['status'] == 'rejected'
+        stale = service.submit_action(auth, {'target_tick': 2, 'action': {'type': 'do_nothing'},
+            'observed_projection_hash': '0' * 64, 'idempotency_key': 'stale-hash'})
+        assert stale['status'] == 'stale'
+        stale_tick = service.submit_action(auth, {'target_tick': 1, 'action': {'type': 'do_nothing'},
+            'observed_projection_hash': turn['projection_hash'], 'idempotency_key': 'stale-tick'})
+        assert stale_tick['status'] == 'stale'
+        service.submit_action(auth, {'target_tick': 2, 'action': {'type': 'do_nothing'},
+            'observed_projection_hash': turn['projection_hash'], 'idempotency_key': 'day-two'})
+        asyncio.run(world.step())
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        world.close()
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    store, replay, _ = open_run({}, None, 'world', replay_source_dir=source_root,
+                                 data_dir=tmp_path / 'replay')
+    try:
+        asyncio.run(replay_headless(replay, 2))
+        proof = verify_replay(source, store.path)
+        assert proof['exact'], proof['differences']
+        assert store.scalar('SELECT COUNT(*) FROM external_turn_attendance') == 4
+        assert store.scalar("SELECT COUNT(*) FROM external_action_submissions WHERE status='executed'") == 1
+        assert store.scalar("SELECT COUNT(*) FROM external_action_submissions WHERE status='rejected'") == 1
+        assert store.scalar("SELECT COUNT(*) FROM external_action_submissions WHERE status='stale'") == 2
+        assert replay.economy.ledger.reconcile()[0]
+    finally:
+        replay.close()
+    assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
 
 
 def test_local_renewal_route_requires_credentials_and_is_unavailable_hosted(tmp_path):

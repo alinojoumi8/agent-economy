@@ -651,6 +651,7 @@ def build_politics_law_workspace(store, *, as_of_tick: int) -> dict:
 
 
 def build_experiments_workspace(store, *, as_of_tick: int) -> dict:
+    from .decisions import build_decision_workspace
     tick = int(as_of_tick)
     current = tick == int(store.tick)
     checkpoints = _dicts(store.query(
@@ -704,5 +705,6 @@ def build_experiments_workspace(store, *, as_of_tick: int) -> dict:
         "checkpoints": checkpoints, "shocks": shocks, "predictions": predictions,
         "acceptance": acceptance, "datasets": datasets, "scenarios": scenarios,
         "experiments": experiments, "results": results,
+        "decisions": build_decision_workspace(store, as_of_tick=tick),
         "current_only_artifacts_omitted": not current,
     }
