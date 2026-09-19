@@ -239,6 +239,16 @@ class CommonsService:
         if reaction not in {"like", "agree", "disagree", "insightful"}:
             raise CommonsError(400, "invalid reaction")
         status = "active" if active else "removed"
+        policy = (self.economy.config.get("llm", {}).get("decision_policy") or {})
+        if (self.economy.engine_semantics_version >= 20
+                and policy.get("version") == "bounded-economic-choice-v4"
+                and "commons" in policy.get("services", [])
+                and self.store.tick >= policy.get("activation_tick", 1)):
+            prior = self.store.query_one(
+                "SELECT status FROM commons_reactions WHERE entry_id=? AND agent_id=? AND reaction=?",
+                (entry_id, actor_id, reaction))
+            if (prior and prior["status"] == status) or (not prior and not active):
+                return {"ok": True, "status": status, "idempotent": True}
         self.store.execute(
             "INSERT INTO commons_reactions(entry_id,agent_id,reaction,created_tick,status) "
             "VALUES(?,?,?,?,?) ON CONFLICT(entry_id,agent_id,reaction) DO UPDATE SET "

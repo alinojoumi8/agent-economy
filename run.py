@@ -956,6 +956,20 @@ async def replay_headless(world: World, target_tick: int) -> None:
 
                 governed_contract = _scheduled_contract(
                     acceptance, matching_items[0])
+            typed_requests = source.execute(
+                "SELECT payload_json FROM events WHERE tick=? AND kind='oracle_typed_request' "
+                "AND json_extract(payload_json,'$.prediction_id')=?",
+                (action_tick, source_prediction_id)).fetchall()
+            if typed_requests:
+                if len(typed_requests) != 1:
+                    raise RuntimeError("recorded typed Oracle request is ambiguous")
+                typed_request = json.loads(typed_requests[0]["payload_json"])
+                if typed_request.get("question") != prediction["question"]:
+                    raise RuntimeError("recorded typed Oracle question does not match its prediction")
+                recorded_contract = typed_request["governed_contract"]
+                if governed_contract is not None and governed_contract != recorded_contract:
+                    raise RuntimeError("recorded typed Oracle contract disagrees with its schedule")
+                governed_contract = recorded_contract
             result = await world.oracle.ask(
                 str(prediction["question"]),
                 governed_contract=governed_contract)

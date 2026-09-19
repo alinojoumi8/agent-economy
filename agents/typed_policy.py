@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import json
 
-from llm.decision_config import POLICY_VERSION_V2, POLICY_VERSION_V3, decision_policy
+from llm.decision_config import POLICY_VERSION_V2, POLICY_VERSION_V3, POLICY_VERSION_V4, decision_policy
 from llm.decisions import decision_hash
 from llm.gateway import LLMRequest, LLMResponse
 from .decision_candidates import DecisionMenu, compile_candidates
@@ -26,7 +26,13 @@ class TypedDecisionPolicy:
 
     def prepare(self, context: dict, tick: int) -> DecisionMenu | None:
         policy = self.policy
-        if policy is None or tick < policy["activation_tick"] or context.get("purpose") != "decision":
+        if policy is None or tick < policy["activation_tick"]:
+            return None
+        if policy["version"] == POLICY_VERSION_V4:
+            from .decision_domains import TYPED_PURPOSES
+            if not policy["domains"] or context.get("purpose") not in TYPED_PURPOSES:
+                return None
+        elif context.get("purpose") != "decision":
             return None
         if policy["version"] in {POLICY_VERSION_V2, POLICY_VERSION_V3} and context.get("agent", {}).get("role"):
             return None
@@ -60,6 +66,9 @@ class TypedDecisionPolicy:
                    "evaluation": menu.evaluation, "baseline_choice": menu.baseline_choice,
                    "confidence_meaning": "answer_distribution_concentration",
                    "escalated": False, "selected_candidate": None}
+        if self.policy["version"] == POLICY_VERSION_V4:
+            receipt.update(menu.metadata)
+            receipt["question_hash"] = decision_hash(menu.evaluation["questions"])
         receipt["receipt_key"] = decision_hash({key: receipt[key] for key in (
             "contract", "agent_id", "tick", "purpose", "observation_hash", "menu_hash")})
         if menu.unsupported_reason:
@@ -71,8 +80,11 @@ class TypedDecisionPolicy:
                            calls=[self._call_receipt(response)])
             return TypedDecision(dict(response.parsed), response, receipt, suppress_reasoning=False)
         response = None
-        if len(menu.candidates) == 2:
+        ballot_actions = menu.metadata.get("ballot_actions", {})
+        if len(menu.candidates) == 2 and not ballot_actions:
             choice, status, reason = "wait", "no_candidates", "no_eligible_shopping_or_job_action"
+            if self.policy["version"] == POLICY_VERSION_V4:
+                reason = "no_eligible_domain_action"
         elif self.policy["primary"]["provider"] == "scripted":
             choice, status, reason = menu.baseline_choice, "selected", "deterministic_menu_baseline"
         else:
@@ -82,6 +94,8 @@ class TypedDecisionPolicy:
             answer = response.parsed["answers"]["action"]
             choice, confidence = answer["choice"], answer.get("confidence")
             receipt["confidence"] = confidence
+            if self.policy["version"] == POLICY_VERSION_V4:
+                receipt["probabilities"] = answer.get("probabilities")
             threshold = self.policy["minimum_confidence"]
             reason = ("unsupported_choice" if choice == "escalate" else
                       "missing_confidence" if threshold > 0 and confidence is None else
@@ -93,13 +107,39 @@ class TypedDecisionPolicy:
                     receipt["calls"].append(self._call_receipt(response))
                     receipt["escalated"] = True
                     choice = response.parsed["answers"]["action"]["choice"]
+                    if self.policy["version"] == POLICY_VERSION_V4:
+                        receipt["probabilities"] = response.parsed["answers"]["action"].get("probabilities")
                     status = "escalated" if choice != "escalate" else "abstained"
                 else:
                     status = "abstained"
                 if status == "abstained":
                     choice = "wait"
+        additional = []
+        ballot_choices = {}
+        for question, choices in ballot_actions.items():
+            answer = (response.parsed.get("answers", {}).get(question, {}) if response else {})
+            if response is None:
+                # An explicit same-menu comparator, never an inferred counted
+                # vote. The resulting command is recorded through the engine.
+                lean = float(request.context.get("agent", {}).get("political_lean") or 0)
+                preference = "expand" if lean <= 0 else "austerity"
+                options = [key for key in choices if key != "abstain"]
+                selected = preference if preference in choices else (
+                    options[0 if lean <= 0 else -1] if options else "abstain")
+            else:
+                selected = answer.get("choice", "abstain")
+                confidence = answer.get("confidence")
+                if self.policy["minimum_confidence"] > 0 and (
+                        confidence is None or confidence < self.policy["minimum_confidence"]):
+                    selected = "abstain"
+            if selected not in choices:
+                raise ValueError("ballot answer is outside the frozen catalog")
+            additional.append(choices[selected])
+            ballot_choices[question] = selected
         receipt.update(status=status, reason=reason, selected_candidate=choice)
-        return TypedDecision({"reasoning": "", "actions": menu.actions_for(choice), "belief_updates": []},
+        if ballot_actions:
+            receipt["ballot_choices"] = ballot_choices
+        return TypedDecision({"reasoning": "", "actions": menu.actions_for(choice) + additional, "belief_updates": []},
                              response, receipt)
 
 

@@ -23,7 +23,7 @@ def build_schema() -> dict:
         description="Scoped REST, OAuth, and MCP boundary for owner-hosted agents.",
     )
     placeholder = SimpleNamespace(
-        runtime=SimpleNamespace(external=None), commons=None)
+        runtime=SimpleNamespace(external=SimpleNamespace(config={})), commons=None)
     install_external_routes(app, placeholder, hosted_safe=False)
     return app.openapi()
 

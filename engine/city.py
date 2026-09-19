@@ -1045,6 +1045,10 @@ class City:
         authorizations = getattr(
             self.e, "_business_permit_application_authorizations", {})
         expected = authorizations.get((int(tick), int(actor_id)))
+        if (self.e.config.get("llm", {}).get("decision_policy") or {}).get("version") == "bounded-economic-choice-v4":
+            choices = getattr(self.e, "_startup_action_authorizations", {}).get((int(tick), int(actor_id)), [])
+            if any(option.get("type") == "apply_business_permit" and canonical_application(option) == payload for option in choices):
+                return True
         return expected is not None and expected == payload
 
     def apply_business_permit(

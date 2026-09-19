@@ -76,8 +76,22 @@ class LocalTurnRenewalBody(_StrictBody):
     target_tick: int = Field(ge=1)
 
 
+class JevAdviceBody(_StrictBody):
+    target_tick: int = Field(ge=1)
+    observed_projection_hash: str = Field(min_length=64, max_length=64)
+    candidate_actions: list[dict[str, Any]] = Field(min_length=1, max_length=32)
+    goal: str = Field(default="", max_length=800)
+
+
 class CommonsActionBody(_StrictBody):
     action: dict[str, Any]
+
+
+class CommonsAdviceBody(_StrictBody):
+    observed_tick: int = Field(ge=0)
+    observation_hash: str = Field(min_length=64, max_length=64)
+    candidate_actions: list[dict[str, Any]] = Field(min_length=1, max_length=32)
+    goal: str = Field(default="", max_length=800)
 
 
 def _bearer_challenge(request: Request, *, invalid_token: bool = False) -> str:
@@ -227,7 +241,7 @@ def _agent_instructions(identity: dict[str, Any]) -> str:
     return " ".join(guidance)
 
 
-def _tool_definitions(scopes: set[str]) -> list[dict[str, Any]]:
+def _tool_definitions(scopes: set[str], *, jev_helper: bool = False, commons_helper: bool = False) -> list[dict[str, Any]]:
     tools: list[dict[str, Any]] = [{
         "name": "ae_identity_get",
         "description": "Get this connection's public identity, actor binding, and exact scopes.",
@@ -291,6 +305,17 @@ def _tool_definitions(scopes: set[str]) -> list[dict[str, Any]]:
                 "properties": {"action": _commons_action_schema(scopes)},
                 "additionalProperties": False},
         })
+    if jev_helper and {SCOPE_WORLD_READ, SCOPE_WORLD_ACT}.issubset(scopes):
+        tools.append({"name": "ae_jev_recommend", "description":
+            "Ask Jev to choose among your prepared actions for this exact open turn. This does not submit an action.",
+            "inputSchema": JevAdviceBody.model_json_schema()})
+    if commons_helper and {SCOPE_COMMONS_READ, SCOPE_COMMONS_WRITE}.issubset(scopes):
+        tools.extend([
+            {"name": "ae_commons_jev_view", "description": "Read the authorized Commons advice view without recording impressions or exposure.",
+             "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False}},
+            {"name": "ae_commons_jev_recommend", "description": "Recommend one prepared Commons action. Does not perform it.",
+             "inputSchema": CommonsAdviceBody.model_json_schema()},
+        ])
     return tools
 
 
@@ -310,6 +335,37 @@ async def _wait_turn(service, auth: dict[str, Any], *, after_tick: int | None,
 def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -> None:
     service = world.runtime.external
     commons = world.commons
+    from agents.selection_services import SelectionService
+    def available_tools(identity):
+        selector = SelectionService(world.gateway, service.config)
+        return _tool_definitions(set(identity["scopes"]),
+            jev_helper=selector.enabled("hermes_helper", service.store.tick + 1),
+            commons_helper=selector.enabled("commons", service.store.tick))
+
+    @app.post("/api/v2/agent/jev-advice")
+    async def jev_advice(request: Request, body: JevAdviceBody):
+        from agents.hermes_selection import recommend
+        return await recommend(service, world.gateway, auth(request, SCOPE_WORLD_ACT), **body.model_dump())
+
+    @app.get("/api/v2/agent/commons/jev-view")
+    async def commons_jev_view(request: Request):
+        from agents.commons_selection import observation
+        if not SelectionService(world.gateway, service.config).enabled("commons", service.store.tick):
+            raise ExternalAgentError(409, "Commons selection is not enabled", "helper_disabled")
+        try:
+            return observation(service, commons, auth(request, SCOPE_COMMONS_READ))
+        except CommonsError as exc:
+            _raise_commons(exc)
+
+    @app.post("/api/v2/agent/commons/jev-advice")
+    async def commons_jev_advice(request: Request, body: CommonsAdviceBody):
+        from agents.commons_selection import recommend
+        identity = auth(request, SCOPE_COMMONS_WRITE)
+        try:
+            return await recommend(service, commons, world.gateway, identity,
+                action_schema=_commons_action_schema(set(identity["scopes"])), **body.model_dump())
+        except CommonsError as exc:
+            _raise_commons(exc)
 
     @app.exception_handler(ExternalAgentError)
     async def external_agent_error(_request: Request, exc: ExternalAgentError) -> JSONResponse:
@@ -706,11 +762,11 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
             if method == "ping":
                 return _jsonrpc_result(request_id, {})
             if method == "tools/list":
-                return _jsonrpc_result(request_id, {"tools": _tool_definitions(set(identity["scopes"]))})
+                return _jsonrpc_result(request_id, {"tools": available_tools(identity)})
             if method == "tools/call":
                 name = str(params.get("name", ""))
                 arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
-                available = {item["name"] for item in _tool_definitions(set(identity["scopes"]))}
+                available = {item["name"] for item in available_tools(identity)}
                 if name not in available:
                     raise ExternalAgentError(403, "tool is not granted", "insufficient_scope")
                 if name == "ae_identity_get":
@@ -733,6 +789,18 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                              )}
                 elif name == "ae_action_submit":
                     value = service.submit_action(identity, arguments)
+                elif name == "ae_jev_recommend":
+                    from agents.hermes_selection import recommend
+                    body = JevAdviceBody.model_validate(arguments)
+                    value = await recommend(service, world.gateway, identity, **body.model_dump())
+                elif name == "ae_commons_jev_view":
+                    from agents.commons_selection import observation
+                    value = observation(service, commons, identity)
+                elif name == "ae_commons_jev_recommend":
+                    from agents.commons_selection import recommend
+                    body = CommonsAdviceBody.model_validate(arguments)
+                    value = await recommend(service, commons, world.gateway, identity,
+                        action_schema=_commons_action_schema(set(identity["scopes"])), **body.model_dump())
                 elif name == "ae_action_receipt_get":
                     value = service.receipt(identity, str(arguments.get("submission_id", "")))
                 elif name == "ae_commons_read":

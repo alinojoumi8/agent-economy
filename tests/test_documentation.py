@@ -32,6 +32,7 @@ MAINTAINED_ROOT_DOCS = (
 )
 HANDBOOK_DOCS = (
     "jev.md",
+    "jev-domains.md",
     "README.md", "getting-started.md", "civic-atlas.md", "research-guide.md",
     "architecture.md", "configuration.md", "api-reference.md",
     "operator-runbook.md", "troubleshooting.md", "development.md",

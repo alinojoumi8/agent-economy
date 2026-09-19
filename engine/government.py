@@ -81,7 +81,8 @@ class Government:
         if tick % interval == 0:
             self._pay_benefits(tick)
         election_every = int(self.p["election_interval_ticks"])
-        if election_every > 0 and tick > 0 and tick % election_every == 0:
+        if (election_every > 0 and tick > 0 and tick % election_every == 0
+                and not (getattr(self, "ballots", None) and self.ballots.active(tick))):
             self.hold_election(tick)
 
     # ── unemployment benefits ────────────────────────────────────────────────

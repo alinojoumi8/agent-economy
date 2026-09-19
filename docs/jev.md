@@ -6,6 +6,11 @@ bundle and applies all economic effects through the ledger. Existing profiles
 keep their original policy. Production adoption remains an experiment until
 actual provider measurements support it.
 
+The optional [v4 domain extension](jev-domains.md) adds founder operations,
+investment, business formation, recorded voting and other prepared decisions,
+plus bounded services and authenticated Hermes advice. It uses separate
+prospective profiles; the v1/v2/v3 pilot configurations below are unchanged.
+
 The pinned model is `typesafe/jev-1.13`. The transport calls
 `https://openrouter.ai/api/alpha/decisions`, using typed `state`, `questions` and
 `answers`, rather than the chat endpoint. The dated resolved model is recorded

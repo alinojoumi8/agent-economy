@@ -27,6 +27,42 @@ def request(**updates):
     return LLMRequest(**({"role": "citizen", "purpose": "decision", "tick": 1} | updates))
 
 
+def test_advisory_calls_use_explicit_reserve_without_changing_world_cadence(store, monkeypatch):
+    monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    config = configuration()
+    config["budget"].update(cap_usd=1, helper_reserve_usd=.8)
+    body = response()
+    calls = []
+    transport(monkeypatch, lambda req: calls.append(req) or httpx.Response(200, json=body))
+    gateway = Gateway(store, config)
+    try:
+        first = asyncio.run(gateway.evaluate(request(purpose="hermes_selection"), evaluation()))
+        repeat = asyncio.run(gateway.evaluate(request(purpose="hermes_selection"), evaluation()))
+        assert first.call_id == repeat.call_id and len(calls) == 1
+        assert gateway.governor.total_spend() == body["usage"]["cost"]
+        assert gateway.governor.world_spend() == 0
+        assert gateway.governor.level() == 0
+        assert gateway.governor._helper_spend_usd == body["usage"]["cost"]
+        assert not gateway.governor.can_spend(.8, "commons_selection")
+        assert not store.query("SELECT 1 FROM events WHERE kind LIKE 'governor%'")
+    finally:
+        gateway.close()
+    restarted = Gateway(store, config)
+    try:
+        assert restarted.governor.total_spend() == body["usage"]["cost"]
+        assert restarted.governor.world_spend() == pytest.approx(0)
+        assert restarted.governor.level() == 0
+    finally:
+        restarted.close()
+    config["budget"]["helper_reserve_usd"] = 0
+    gateway = Gateway(store, config)
+    try:
+        with pytest.raises(BudgetExceeded):
+            asyncio.run(gateway.evaluate(request(purpose="commons_selection"), evaluation()))
+    finally:
+        gateway.close()
+
+
 def test_openrouter_rejects_other_models_but_keeps_recorded_replay_and_direct_providers(store, monkeypatch):
     from llm.readiness import openrouter_route_error
 
@@ -50,6 +86,19 @@ def test_openrouter_rejects_other_models_but_keeps_recorded_replay_and_direct_pr
                                   "deepseek-flash") is None
     assert openrouter_route_error({"kind": "openai_compat", "base_url": "https://api.minimax.io/v1"},
                                   "MiniMax-M3") is None
+
+
+def test_zero_helper_reserve_blocks_even_a_zero_cost_estimate(store, monkeypatch):
+    monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    gateway = Gateway(store, configuration())
+    monkeypatch.setattr(gateway, "_estimate_cost", lambda *args: 0.0)
+    try:
+        with pytest.raises(BudgetExceeded):
+            asyncio.run(gateway.evaluate(request(purpose="hermes_selection"), evaluation()))
+        assert gateway._live_dispatch_count == 0
+        assert not store.query("SELECT * FROM llm_calls")
+    finally:
+        gateway.close()
 
 
 def test_readiness_protects_text_routes_and_historical_semantics(monkeypatch):

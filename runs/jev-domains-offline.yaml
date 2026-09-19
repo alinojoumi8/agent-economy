@@ -1,0 +1,31 @@
+# Provider-free rehearsal. No existing world/profile is changed.
+extends: jev-offline.yaml
+llm:
+  decision_policy:
+    version: bounded-economic-choice-v4
+    domains:
+      - consumption
+      - career
+      - founder_operations
+      - personal_finance
+      - investment
+      - entrepreneurship
+      - funding
+      - mergers_ip
+      - bank_policy
+      - contracts_legal
+      - regulatory
+      - politics
+      - communications
+      - learning_compute
+      - regional
+      - estates
+      - construction
+      - household_time
+      - frontier
+    services: []
+    max_candidates: 64
+    # Seven ticks retain a separate direct/scripted strategic turn per actor.
+    strategic_review_interval_ticks: 7
+    minimum_confidence: 0.0
+    on_abstain: wait

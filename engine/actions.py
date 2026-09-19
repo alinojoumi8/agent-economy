@@ -72,6 +72,7 @@ VALID_TYPES = {
     "propose_partnership", "propose_household_move", "respond_household",
     "cancel_household_proposal", "separate_household",
     "set_time_plan",
+    "cast_election_vote",
 }
 ESTATE_BID_TYPES = {
     "place_estate_property_bid", "accept_estate_property_bid", "withdraw_estate_property_bid",
@@ -100,6 +101,9 @@ def _authorization_payload(action: dict) -> str | None:
 
 
 class ActionExecutor:
+    def _do_cast_election_vote(self, tick, actor_id, action, phase):
+        return self.e.ballots.cast(tick, actor_id, action["ballot_key"], action["choice"])
+
     def _do_propose_population_movement(self, tick, actor_id, action, phase):
         result = self.e.population.propose(
             tick, actor_id, action["cause"], action["member_ids"], action["request_key"],
@@ -209,7 +213,7 @@ class ActionExecutor:
                 selected = appointment_indexes[0]
                 return [
                     self.execute_action(tick, actor_id, action, phase, seq=index)
-                    if index == selected else self._reject(
+                    if index == selected or (action.get("type") == "cast_election_vote" and self.e.ballots.active(tick)) else self._reject(
                         tick, actor_id, action,
                         "attend_civic_appointment consumes the citizen's action for this turn",
                         phase,
@@ -225,7 +229,7 @@ class ActionExecutor:
                 selected = study_indexes[0]
                 return [
                     self.execute_action(tick, actor_id, action, phase, seq=index)
-                    if index == selected else self._reject(
+                    if index == selected or (action.get("type") == "cast_election_vote" and self.e.ballots.active(tick)) else self._reject(
                         tick, actor_id, action,
                         "study_skill consumes the citizen's action for this turn", phase)
                     for index, action in enumerate(actions or [])
@@ -328,7 +332,8 @@ class ActionExecutor:
         # service. Consult it only when the run enables frontier mechanics.
         if (self.e.config.get("frontier", {}).get("version") == 1
                 and self.e.frontier.active(tick) and self.e.frontier.busy(actor_id)
-                and atype != "do_nothing"):
+                and atype != "do_nothing"
+                and not (atype == "cast_election_vote" and self.e.ballots.active(tick))):
             result = self._reject(tick, actor_id, action, "citizen is occupied by a frontier task", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
@@ -954,13 +959,17 @@ class ActionExecutor:
             if not civic_permit_required:
                 expected = getattr(
                     self.e, "_entrepreneurship_authorizations", {}).get((tick, actor_id))
-                if expected is None:
+                bounded = []
+                if (self.e.config.get("llm", {}).get("decision_policy") or {}).get("version") == "bounded-economic-choice-v4":
+                    bounded = getattr(self.e, "_startup_action_authorizations", {}).get((tick, actor_id), [])
+                if expected is None and not bounded:
                     return {
                         "ok": False,
                         "reason": "found_company is available only from a supplied entrepreneurship opportunity",
                     }
                 exact_match = (
-                    _authorization_payload(action) == _authorization_payload(expected)
+                    (expected is not None and _authorization_payload(action) == _authorization_payload(expected))
+                    or any(_authorization_payload(action) == _authorization_payload(option) for option in bounded)
                 )
                 if not exact_match:
                     return {

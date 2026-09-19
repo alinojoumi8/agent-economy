@@ -839,6 +839,11 @@ class ParticipantService:
             items.append(item)
         if frontier.get("task"):
             items = [item for item in items if item["type"] == "do_nothing"]
+        for ballot in (self.ctx.e.ballots.upcoming_choices(agent_id, self.store.tick + 1)
+                       if self.config.get("recorded_voting") else []):
+            for choice in ballot["choices"]:
+                items.append(exact_action({"type": "cast_election_vote", "ballot_key": ballot["key"],
+                    "choice": choice}, f"Vote {choice} in {ballot['key']}", f"ballot-{ballot['key']}-{choice}"))
         for item in items:
             item.setdefault("variant", "default")
             spec = action_spec(str(item["type"]))
@@ -853,7 +858,7 @@ class ParticipantService:
                 item["disabled_reason"] = "No valid options are currently available"
         return items
 
-    def _normalize_action(self, agent_id: int, action: Any) -> dict:
+    def _normalize_action(self, agent_id: int, action: Any, *, catalog: list[dict] | None = None) -> dict:
         if not isinstance(action, dict):
             raise ParticipantError(400, "action must be a JSON object")
         action_type = str(action.get("type", ""))
@@ -862,7 +867,7 @@ class ParticipantService:
         exact_bid_terms = self.engine_semantics_version >= 20 and action_type in {"place_estate_property_bid", "place_estate_unlisted_bid"}
         exact_population_terms = self.engine_semantics_version >= 21 and action_type in POPULATION_MODELS
         variant = str(action.get("variant", "default"))
-        descriptors = [item for item in self.action_catalog(agent_id)
+        descriptors = [item for item in (self.action_catalog(agent_id) if catalog is None else catalog)
                        if item["type"] == action_type and item.get("variant", "default") == variant]
         if not descriptors:
             raise ParticipantError(400, "action is not available to the controlled citizen")

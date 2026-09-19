@@ -65,6 +65,11 @@ this integration does not add paid-provider or hosted deployment evidence.
 Adjacent implemented boundaries that do not create another engine semantics
 version:
 
+- [Jev v4 domain delegation](jev-domains.md) adds prospective bounded economic
+  choices, recorded voting, optional supporting services, scoped Hermes/Commons
+  advice and same-menu evaluation. Existing stored worlds retain their policy.
+  Offline integration and replay are verified; live v4 effectiveness and hosted
+  advice rollout remain unclaimed;
 - one read-only semantic activity projection serves Living Agents and observer
   events; historical views exclude current runtime telemetry;
 - the proposal-only Builder sink creates verified immutable allowlisted bundles

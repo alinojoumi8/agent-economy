@@ -30,7 +30,7 @@ def finite_number(value: Any, low: float, high: float) -> bool:
     return type(value) in {int, float} and math.isfinite(value) and low <= value <= high
 
 
-def validate_evaluation(value: Any) -> dict:
+def validate_evaluation(value: Any, *, legacy_score_rubric: bool = False) -> dict:
     """Return a detached bounded request; reject extras before network admission."""
     if not isinstance(value, dict) or set(value) != {"state", "questions"}:
         raise ValueError("evaluation requires exactly state and questions")
@@ -52,8 +52,9 @@ def validate_evaluation(value: Any) -> dict:
                     or any(not isinstance(k, str) or not k or len(k) > 100 for k in criteria)):
                 raise ValueError("choice requires two to 255 distinct bounded option IDs")
         elif kind == "score":
-            if not isinstance(criteria, list) or not 2 <= len(criteria) <= 255:
-                raise ValueError("score requires an ordered rubric of two to 255 entries")
+            maximum = 255 if legacy_score_rubric else 10
+            if not isinstance(criteria, list) or not 2 <= len(criteria) <= maximum:
+                raise ValueError(f"score requires an ordered rubric of two to {maximum} entries")
         elif kind == "noul":
             if criteria is not None and (not isinstance(criteria, dict) or set(criteria) != {"false", "true"}):
                 raise ValueError("noul criteria must describe false and true")

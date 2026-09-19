@@ -1,0 +1,12 @@
+# Provider-free prospective rehearsal of v4 choices and recorded voting.
+# Existing worlds retain their stored policy and election mechanics.
+extends: jev-domains-offline.yaml
+engine_semantics_version: 20
+recorded_voting:
+  version: 1
+  activation_tick: 1
+llm:
+  decision_policy:
+    services: [attention, newsroom, oracle_tools, oracle_forecast, hermes_helper, commons]
+budget:
+  helper_reserve_usd: 0.0
