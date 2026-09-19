@@ -324,7 +324,11 @@ class ActionExecutor:
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
             return result
-        if self.e.frontier.active(tick) and self.e.frontier.busy(actor_id) and atype != "do_nothing":
+        # Communications-only and historical executors do not load this opt-in
+        # service. Consult it only when the run enables frontier mechanics.
+        if (self.e.config.get("frontier", {}).get("version") == 1
+                and self.e.frontier.active(tick) and self.e.frontier.busy(actor_id)
+                and atype != "do_nothing"):
             result = self._reject(tick, actor_id, action, "citizen is occupied by a frontier task", phase)
             self.store.update("action_proposals", proposal_id, validation_status="rejected",
                               result_json=json.dumps(result, sort_keys=True))
