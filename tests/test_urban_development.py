@@ -147,7 +147,8 @@ def test_schema27_additive_and_checksums(tmp_path):
     import sqlite3
     from engine.migrations.registry import registered_migrations, migration_checksum
     s=Store(str(tmp_path/'schema.db'))
-    assert s.scalar('SELECT MAX(version) FROM schema_migrations')==27
+    assert s.scalar('SELECT COUNT(*) FROM schema_migrations WHERE version=27')==1
+    assert s.scalar('SELECT MAX(version) FROM schema_migrations')==max(m.version for m in registered_migrations())
     for m in registered_migrations():
         assert m.checksum_sha256==migration_checksum(m.sql)
     assert not s.query('PRAGMA foreign_key_check')
