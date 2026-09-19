@@ -9,6 +9,9 @@ from typing import Any
 
 
 _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
+    ("construct_building", "construction", 13),
+    ("cancel_urban_construction", "construction", 13),
+    ("demolish_building", "construction", 13),
     ("do_nothing", "economic", 1),
     ("buy_goods", "economic", 1),
     ("apply_job", "employment", 1),
@@ -55,6 +58,11 @@ _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
     ("cancel_compute_plan", "compute_plan", 11),
     ("set_compute_sponsorship", "compute_plan", 11),
     ("study_skill", "skill_learning", 11),
+    ("explore_site", "frontier", 11),
+    ("found_settlement", "frontier", 11),
+    ("build_settlement", "frontier", 11),
+    ("move_settlement", "frontier", 11),
+    ("charter_region", "frontier", 11),
     ("apply_business_permit", "civic", 12),
     ("attend_civic_appointment", "civic", 12),
     ("propose_construction", "construction", 13),
@@ -62,6 +70,20 @@ _WORLD_ACTIONS: tuple[tuple[str, str, int], ...] = (
     ("contribute_construction_funding", "construction", 13),
     ("perform_construction_work", "construction", 13),
     ("cancel_construction", "construction", 13),
+    ("propose_partnership", "household", 17),
+    ("propose_household_move", "household", 17),
+    ("respond_household", "household", 17),
+    ("cancel_household_proposal", "household", 17),
+    ("separate_household", "household", 17),
+    ("set_time_plan", "daily_time", 18),
+    ("place_estate_property_bid", "finance", 20),
+    ("accept_estate_property_bid", "finance", 20),
+    ("withdraw_estate_property_bid", "finance", 20),
+    ("place_estate_unlisted_bid", "finance", 20),
+    ("accept_estate_unlisted_bid", "finance", 20),
+    ("withdraw_estate_unlisted_bid", "finance", 20),
+    ("propose_population_movement", "population", 21),
+    ("respond_population_movement", "population", 21),
 )
 
 _COMMONS_ACTIONS: tuple[tuple[str, str, bool], ...] = (

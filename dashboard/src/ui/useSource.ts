@@ -62,6 +62,8 @@ export function useSource<T>(options: {
   label?: string;
   enabled?: boolean;
   refetchInterval?: number | false;
+  /** Disable across run/fork/tick changes where old payloads would be misleading. */
+  retainPreviousData?: boolean;
 }): Source<T> {
   const { key, path, enabled = true, refetchInterval = false } = options;
   const label = options.label ?? path.split("?")[0];
@@ -71,7 +73,7 @@ export function useSource<T>(options: {
     enabled,
     refetchInterval,
     retry: false,
-    placeholderData: keepPreviousData,
+    placeholderData: options.retainPreviousData === false ? undefined : keepPreviousData,
     queryFn: async ({ signal }) => {
       const started = performance.now();
       const payload = await fetchSource<T>(path, signal);

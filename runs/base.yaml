@@ -1,6 +1,7 @@
 # Agent Economy — default world configuration (reproducibility = this file + seed + code version)
 seed: 42
 engine_semantics_version: 7       # strict credit/lifecycle/region contracts; older runs keep their version
+personal_names: {version: 1, activation_tick: 0}
 
 legal:
   enabled: true

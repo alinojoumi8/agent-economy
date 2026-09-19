@@ -166,7 +166,7 @@ def test_retirees_skip_career_wakes_and_receive_news_wakes(store):
 
 
 class _Context:
-    def build(self, agent, tick):
+    def build(self, agent, tick, *, read_only=False):
         return {"state": {}, "prices": [], "jobs": [], "listed_firms": [], "banks": []}
 
 

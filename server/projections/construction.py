@@ -5,6 +5,10 @@ import json
 from collections import defaultdict
 from typing import Any
 
+from engine.business_control import operated_firms_at
+from engine.estate_assets import residual_people_at
+from engine.project_rights import interests_at, rights_enabled, steward_at
+
 
 CONSTRUCTION_KINDS = frozenset({
     "private_home", "workplace", "public_facility",
@@ -16,6 +20,55 @@ CONSTRUCTION_STATUSES = frozenset({
 
 def _dict(row) -> dict[str, Any]:
     return {key: row[key] for key in row.keys()}
+
+
+def _public_person(store, person, tick):
+    if person is None:
+        return None
+    return store.query_one("SELECT a.id,a.name FROM agents a LEFT JOIN person_lifecycle p ON p.agent_id=a.id "
+        "WHERE a.id=? AND COALESCE(p.origin_tick,a.arrived_tick,0)<=? AND (a.pinned_core=1 OR COALESCE("
+        "(SELECT h.old_tier FROM agent_tier_history h WHERE h.agent_id=a.id AND h.tick>? ORDER BY h.tick,h.id LIMIT 1),"
+        "a.population_tier)='core')", (person, tick, tick))
+
+
+def redact_hidden_home_locations(store, agents, hidden_homes):
+    """Keep a withheld home's identity and coordinates out of sibling layers."""
+    if not hidden_homes:
+        return
+    regions = {row["id"]: row for row in store.query("SELECT id,x,y FROM regions")}
+    for agent in agents:
+        if agent.get("place_id") in hidden_homes:
+            region = regions.get(agent.get("region_id"))
+            agent.update(place_id=None, place_name=None,
+                         x=region["x"] if region else None,
+                         y=region["y"] if region else None)
+
+
+def _ownership(store, project, tick):
+    shares = interests_at(store, project["id"], tick, enabled=True)
+    steward = steward_at(store, project["id"], tick, enabled=True)
+    identities = {project["owner_id"], *(share["agent_id"] for share in shares)}
+    for share in shares:
+        if share.get("estate_custody"):
+            identities.update(residual_people_at(store, share["estate_id"], tick))
+    if steward:
+        identities.add(steward["steward_agent_id"])
+        identities.add(steward["beneficiary_id"])
+    public = {person: _public_person(store, person, tick) for person in identities if person is not None}
+    if any(person is None for person in public.values()):
+        return None
+    owners = [{**share, "name": (("Estate of " if share.get("estate_custody") else "") + public[share["agent_id"]]["name"])
+               if share["agent_id"] is not None else "System estate custody"} for share in shares]
+    operator = None
+    if steward and steward["steward_agent_id"] is not None:
+        operator = {"agent_id": steward["steward_agent_id"], "name": public[steward["steward_agent_id"]]["name"],
+                    "capacity": steward["capacity"], "beneficiary_id": steward["beneficiary_id"], "started_tick": steward["started_tick"],
+                    **({"estate_id": steward["estate_id"]} if steward.get("estate_id") is not None else {}),
+                    **({"administration_id": steward["administration_id"]} if steward.get("administration_id") is not None else {})}
+    return {"policy": "estate_project_interests_v1", "owners": owners, "operator": operator,
+        "original_owner": {"type": "agent", "id": project["owner_id"], "name": public[project["owner_id"]]["name"]},
+        "updated_tick": max([project["proposed_tick"], *(share["updated_tick"] for share in shares),
+                             steward["started_tick"] if steward else 0])}
 
 
 def _stage(work_units: int, required: int) -> str:
@@ -95,6 +148,7 @@ def _milestones(row: dict[str, Any], tick: int) -> list[dict[str, Any]]:
 
 
 def _raw_projects(store, tick: int) -> list[dict[str, Any]]:
+    succession = rights_enabled(store)
     rows = [
         _dict(row) for row in store.query(
             "SELECT p.*,r.name AS region_name,r.x AS region_x,r.y AS region_y,"
@@ -184,6 +238,11 @@ def _raw_projects(store, tick: int) -> list[dict[str, Any]]:
                 or bool(row.get("owner_pinned_core"))
             )
         )
+        ownership = _ownership(store, row, int(tick)) if succession and row["owner_type"] == "agent" else None
+        if succession and row["owner_type"] == "agent":
+            is_core_home = is_core_home and ownership is not None
+            if ownership is not None:
+                updated_tick = max(updated_tick, ownership["updated_tick"])
         exact = (
             str(row["target_place_type"]) != "private_home" or is_core_home)
         owner_name = (
@@ -193,6 +252,11 @@ def _raw_projects(store, tick: int) -> list[dict[str, Any]]:
             if row["owner_type"] == "firm"
             else row.get("agency_owner_name")
         )
+        owner = {"type": str(row["owner_type"]), "id": int(row["owner_id"]), "name": str(owner_name or "")}
+        if ownership is not None:
+            owners = ownership["owners"]
+            owner = ({"type": "agent", "id": owners[0]["agent_id"], "name": owners[0]["name"]}
+                     if len(owners) == 1 and owners[0]["agent_id"] is not None else None)
         permit_status = None
         if (
             row.get("permit_created_tick") is not None
@@ -218,11 +282,8 @@ def _raw_projects(store, tick: int) -> list[dict[str, Any]]:
             "target_place_type": str(row["target_place_type"]),
             "status": status,
             "stage": stage,
-            "owner": {
-                "type": str(row["owner_type"]),
-                "id": int(row["owner_id"]),
-                "name": str(owner_name or ""),
-            } if exact else None,
+            "owner": owner if exact else None,
+            **({"ownership": ownership} if exact and ownership is not None else {}),
             "initiator_agent_id": (
                 int(row["initiator_agent_id"]) if exact else None),
             "region": {
@@ -453,10 +514,11 @@ def build_construction_project_detail(
 
 
 def construction_projects_for_agent(
-    store, *, agent_id: int, as_of_tick: int,
+    store, *, agent_id: int, as_of_tick: int, visible_projects=None,
 ) -> list[dict[str, Any]]:
     """Return projects safely attributable to one selected agent."""
-    visible = construction_projects_as_of(store, as_of_tick=int(as_of_tick))
+    visible = (construction_projects_as_of(store, as_of_tick=int(as_of_tick))
+               if visible_projects is None else visible_projects)
     contributed = {
         int(row["project_id"])
         for row in store.query(
@@ -466,10 +528,7 @@ def construction_projects_for_agent(
         )
     }
     founded_firms = {
-        int(row["id"]) for row in store.query(
-            "SELECT id FROM firms WHERE founder_agent_id=? AND founded_tick<=?",
-            (int(agent_id), int(as_of_tick)),
-        )
+        int(row["id"]) for row in operated_firms_at(store, int(agent_id), int(as_of_tick))
     }
     staffed_agencies = {
         int(row["agency_id"]) for row in store.query(
@@ -493,6 +552,20 @@ def construction_projects_for_agent(
             owner.get("type") == "agency"
             and int(owner.get("id") or 0) in staffed_agencies
         )
+        ownership = item.get("ownership")
+        if ownership is not None:
+            owns = any(person["agent_id"] == int(agent_id) for person in ownership["owners"]) or (
+                ownership["operator"] is not None and ownership["operator"]["agent_id"] == int(agent_id))
         if owns or int(item["project_id"]) in contributed:
             selected.append(item)
     return selected
+
+
+def hidden_home_place_ids(store, tick, visible_projects=None):
+    """A hidden inherited home's site must not leak through its place/lease."""
+    if not rights_enabled(store):
+        return set()
+    visible = construction_projects_as_of(store, as_of_tick=tick) if visible_projects is None else visible_projects
+    allowed = {item["place_id"] for item in visible if item.get("place_id") is not None}
+    return {row["place_id"] for row in store.query("SELECT place_id FROM construction_projects "
+        "WHERE target_place_type='private_home' AND place_id IS NOT NULL AND completed_tick<=?", (tick,))} - allowed

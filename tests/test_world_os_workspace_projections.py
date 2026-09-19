@@ -13,6 +13,7 @@ from server.projections import (
     build_organizations_workspace,
     build_politics_law_workspace,
     build_world_workspace,
+    build_world_map_geography,
 )
 from server.projections.workspaces import _balances_as_of
 from server.v2_api import install_v2_routes
@@ -243,6 +244,58 @@ def test_workspace_builders_are_as_of_and_exclude_private_or_future_rows(economy
         item for item in at_ten["organizations"]
         if item["type"] == "firm" and item["id"] == 1
     )["status"] == "bankrupt"
+
+
+def test_map_geography_keeps_arrivals_deaths_migrations_and_acquisitions_historical(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    store.update("agents", 1, region_id=2)
+    store.update("migrations", 1, destination_region_id=2, completed_tick=7)
+    store.execute(
+        "INSERT INTO agents (id,name,kind,age,alive,arrived_tick,region_id,population_tier) "
+        "VALUES (2,'Later arrival','citizen',25,1,8,1,'periphery')")
+    store.update("mergers", 1, target_firm_id=1, acquirer_firm_id=2,
+                 closed_tick=7, status="closed")
+    before = store.conn.total_changes
+    historical = build_world_map_geography(store, as_of_tick=4)
+    assert historical["agent_regions"] == {1: 1}
+    assert [(row["population"], row["firms"]) for row in historical["regions"]] == [(1, 1), (0, 0)]
+    later = build_world_map_geography(store, as_of_tick=8)
+    assert later["agent_regions"] == {1: 2, 2: 1}
+    assert [(row["population"], row["firms"]) for row in later["regions"]] == [(1, 0), (1, 0)]
+    current = build_world_map_geography(store, as_of_tick=10)
+    assert current["agent_regions"] == {2: 1}
+    assert store.conn.total_changes == before
+
+
+def test_world_map_api_resolves_historical_population_and_private_clusters(economy):
+    _seed_workspace_history(economy)
+    store = economy.store
+    store.update("agents", 1, region_id=2)
+    store.update("migrations", 1, destination_region_id=2, completed_tick=7)
+    store.execute(
+        "INSERT INTO agents (id,name,kind,age,alive,arrived_tick,region_id,population_tier) "
+        "VALUES (2,'Private resident','citizen',25,1,0,2,'periphery')")
+    store.execute(
+        "INSERT INTO migrations (id,agent_id,origin_region_id,destination_region_id,"
+        "requested_tick,completed_tick,status) VALUES (2,2,1,2,6,8,'completed')")
+    app = FastAPI()
+    install_v2_routes(app, SimpleNamespace(store=store, config=economy.config, economy=economy),
+                      SimpleNamespace(hosted_safe=False))
+    try:
+        with TestClient(app) as client:
+            response = client.get("/api/v2/world-map", params={
+                "tick": 4, "layers": "regions,agents", "population": "clusters"})
+            assert response.status_code == 200
+            data = response.json()["data"]
+            assert [region["population"] for region in data["regions"]] == [2, 0]
+            assert [agent["id"] for agent in data["agents"]] == [1]
+            assert data["agents"][0]["region_id"] == 1
+            assert data["agents"][0]["x"] == .2
+            assert data["population_clusters"] == [{"id": "region-1-periphery",
+                "region_id": 1, "label": "North", "count": 1, "x": .2, "y": .3}]
+    finally:
+        app.state.operator_workspace.close()
 
 
 def test_workspace_api_returns_canonical_envelopes_and_rejects_bad_lineage(economy, tmp_path):

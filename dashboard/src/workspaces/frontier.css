@@ -1,0 +1,14 @@
+.frontier-panel { margin: 1rem; padding: clamp(1rem, 2vw, 1.5rem); border: 1px solid #385663; border-radius: 12px; background: #09212b; color: #e0edf0; }
+.frontier-panel header > p:first-child { font-size: .7rem; letter-spacing: .1em; color: #7fccc5; }
+.frontier-panel h2, .frontier-panel h3 { margin: .4rem 0; }
+.frontier-panel h2 { font-size: 1.5rem; line-height: 1.2; }
+.frontier-panel p { line-height: 1.6; }
+.frontier-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 1.5rem; }
+.frontier-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: .5rem; }
+.frontier-grid button { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: .3rem; min-height: 100px; padding: .75rem; border: 1px dashed #55727b; border-radius: 8px; background: #112b35; color: #dcebed; text-align: left; overflow-wrap: anywhere; }
+.frontier-grid button.discovered { border-style: solid; background: #19443e; }
+.frontier-grid button[aria-pressed="true"] { outline: 2px solid #79e1d5; outline-offset: 1px; }
+.frontier-grid button:focus-visible { outline: 3px solid #f3ce78; outline-offset: 2px; }
+.frontier-grid small { color: #b3cbcf; }
+.frontier-detail { border-left: 1px solid #385663; padding-left: 1.5rem; }
+@media (max-width: 1000px) { .frontier-layout { grid-template-columns: 1fr; } .frontier-detail { border-left: 0; padding-left: 0; } .frontier-grid button { padding: .4rem; font-size: .75rem; } }

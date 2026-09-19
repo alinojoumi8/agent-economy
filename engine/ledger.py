@@ -121,6 +121,17 @@ class Ledger:
     # ── the one write path ───────────────────────────────────────────────────
     def post(self, tick: int, kind: str, legs: list[Leg], memo: str = "") -> int:
         """Post one balanced transaction atomically. Raises if legs don't sum to 0."""
+        hook = getattr(self, "cash_receipt_hook", None)
+        if hook is None:
+            return self._post(tick, kind, legs, memo)
+        # Semantics 20: a payment and every consequent estate distribution are
+        # one transaction boundary, including calls without an outer savepoint.
+        with self.store.savepoint("ledger_with_estate_receipts"):
+            transaction = self._post(tick, kind, legs, memo)
+            hook(tick, transaction, legs)
+            return transaction
+
+    def _post(self, tick: int, kind: str, legs: list[Leg], memo: str = "") -> int:
         if not legs:
             raise LedgerError(f"empty transaction '{kind}'")
 

@@ -11,6 +11,8 @@ python-dotenv>=1.0
 Jinja2>=3.1,<4
 # Deterministic, queryable World OS research bundles (offline only).
 duckdb>=1.1,<2
+# DuckDB's Python value conversion uses pandas types; avoid repeated failed imports.
+pandas>=2.3.3,<3
 # Hosted R22 control plane, durable artifacts, and operational metrics.
 psycopg[binary,pool]>=3.2,<3.4
 boto3>=1.35,<2

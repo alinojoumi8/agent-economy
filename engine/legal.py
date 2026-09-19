@@ -103,9 +103,18 @@ class LegalInstitution:
         return party.party_id > 0
 
     def controls(self, actor_id: int, party_type: str, party_id: int) -> bool:
+        control = getattr(self, "business_control", None)
+        if control is not None and control.enabled and not self.store.scalar(
+                "SELECT alive FROM agents WHERE id=?", (actor_id,)):
+            return False
+        if control is not None and control.e.engine_semantics_version >= 21 and not control.e.population.is_available(actor_id):
+            return False
         if party_type == "agent":
             return actor_id == party_id
         if party_type == "firm":
+            control = getattr(self, "business_control", None)
+            if control is not None and control.enabled:
+                return control.controls(actor_id, party_id)
             firm = self.store.query_one(
                 "SELECT founder_agent_id, status FROM firms WHERE id=?", (party_id,))
             if not firm or firm["status"] == "bankrupt":
@@ -119,7 +128,13 @@ class LegalInstitution:
         return bool(agent and (agent["role"] or "") in {"gov_official", "regulator"})
 
     def _is_lawyer(self, actor_id: int) -> bool:
-        row = self.store.query_one("SELECT occupation, role, alive FROM agents WHERE id=?", (actor_id,))
+        row = self.store.query_one("SELECT occupation, role, alive, age FROM agents WHERE id=?", (actor_id,))
+        if row is None or not row["alive"]:
+            return False
+        control = getattr(self, "business_control", None)
+        if control is not None and control.e.engine_semantics_version >= 21:
+            if int(row['age']) < 18 or not control.e.population.is_available(actor_id):
+                return False
         return bool(row and row["alive"] and ((row["occupation"] or "").lower() == "lawyer"
                     or (row["role"] or "") in {"lawyer", "counsel"}))
 
@@ -326,6 +341,9 @@ class LegalInstitution:
             phase="EXECUTION", subject_type="contract", subject_id=int(obligation["contract_id"]),
             importance=1.5)
         self._mark_contract_performed_if_complete(int(obligation["contract_id"]), tick)
+        representation = getattr(self, "representation", None)
+        if representation is not None and representation.enabled:
+            representation.reconcile(tick)
         return {"ok": True, "obligation_id": obligation_id, "transaction_id": txn_id}
 
     def _mark_contract_performed_if_complete(self, contract_id: int, tick: int) -> None:
@@ -357,14 +375,34 @@ class LegalInstitution:
         return {"ok": True, "notice_id": notice_id}
 
     def file_claim(self, tick: int, actor_id: int, claim: dict[str, Any]) -> dict[str, Any]:
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            from .estates import EstateError
+            try:
+                with self.store.savepoint("estate_claim_filing"):
+                    result = self._file_claim(tick, actor_id, claim)
+                    if result.get("ok"):
+                        awards.e.wage_awards.register(tick, self.store.query_one("SELECT * FROM legal_matters WHERE id=?", (result["matter_id"],)))
+                    return result
+            except EstateError as error:
+                return {"ok": False, "reason": str(error)}
+        return self._file_claim(tick, actor_id, claim)
+
+    def _file_claim(self, tick: int, actor_id: int, claim: dict[str, Any]) -> dict[str, Any]:
         try:
             claimant = Party.parse(dict(claim.get("claimant", {})))
             respondent = Party.parse(dict(claim.get("respondent", {})))
         except (TypeError, ValueError, ValidationError) as exc:
             return {"ok": False, "reason": str(exc)}
         counsel = claim.get("counsel_agent_id")
-        represented = self.controls(actor_id, claimant.party_type, claimant.party_id)
-        if counsel is not None and int(counsel) == actor_id and self._is_lawyer(actor_id):
+        representation = getattr(self, "representation", None)
+        modern = representation is not None and representation.enabled
+        proof = representation.authorize(tick, actor_id, {
+            "claimant_type": claimant.party_type, "claimant_id": claimant.party_id,
+            "respondent_type": respondent.party_type, "respondent_id": respondent.party_id},
+            "file_claim", "claimant", allow_counsel=False) if modern else None
+        represented = proof is not None if modern else self.controls(actor_id, claimant.party_type, claimant.party_id)
+        if not modern and counsel is not None and int(counsel) == actor_id and self._is_lawyer(actor_id):
             represented = True
         if not represented:
             return {"ok": False, "reason": "actor cannot file for claimant"}
@@ -372,6 +410,7 @@ class LegalInstitution:
         if contract_id is not None and not self.store.query_one(
                 "SELECT 1 FROM contracts WHERE id=?", (int(contract_id),)):
             return {"ok": False, "reason": "contract missing"}
+        authority_event = representation.begin(proof) if modern else None
         matter_id = self.store.insert(
             "legal_matters", matter_type=str(claim.get("matter_type", "civil"))[:60],
             venue=str(claim.get("venue", "Northstar Civil Tribunal"))[:100], status="filed",
@@ -380,23 +419,51 @@ class LegalInstitution:
             respondent_type=respondent.party_type, respondent_id=respondent.party_id,
             claim_type=str(claim.get("claim_type", "breach"))[:80], filed_tick=tick,
             response_due_tick=tick + self.default_response_ticks,
-            counsel_agent_id=int(counsel) if counsel is not None else (actor_id if self._is_lawyer(actor_id) else None),
+            counsel_agent_id=None if modern else int(counsel) if counsel is not None else (actor_id if self._is_lawyer(actor_id) else None),
             requested_remedy_json=json.dumps(claim.get("requested_remedy", {}), sort_keys=True),
             metadata_json=json.dumps(claim.get("metadata", {}), sort_keys=True))
-        self.store.log_event(tick, "legal_matter_filed", {"matter_id": matter_id,
+        event_id = self.store.log_event(tick, "legal_matter_filed", {"matter_id": matter_id,
             "claim_type": claim.get("claim_type", "breach"), "contract_id": contract_id},
             phase="EXECUTION", subject_type="legal_matter", subject_id=matter_id, importance=2.5)
-        return {"ok": True, "matter_id": matter_id, "status": "filed"}
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            awards.e.estate_disputes.register(tick, self.store.query_one("SELECT * FROM legal_matters WHERE id=?", (matter_id,)))
+        result = {"ok": True, "matter_id": matter_id, "status": "filed"}
+        if modern:
+            representation.record(matter_id, proof, authority_event, event_id)
+            representation.reconcile(tick)
+            if counsel is not None and int(counsel) != actor_id:
+                requested = representation.request(tick, actor_id, {"matter_id": matter_id, "side": "claimant",
+                    "counsel_agent_id": counsel, "scopes": ["submit_filing", "propose_settlement"]})
+                if not requested["ok"]:
+                    raise ValueError(requested["reason"])
+                result["counsel_request_id"] = requested["request_id"]
+        return result
 
     def submit_filing(self, tick: int, actor_id: int, filing: dict[str, Any]) -> dict[str, Any]:
+        representation = getattr(self, "representation", None)
+        if representation is not None and representation.enabled:
+            with representation.e.estate_cases._batch():
+                return self._submit_filing(tick, actor_id, filing)
+        return self._submit_filing(tick, actor_id, filing)
+
+    def _submit_filing(self, tick: int, actor_id: int, filing: dict[str, Any]) -> dict[str, Any]:
         matter_id = int(filing.get("matter_id", 0))
         matter = self.store.query_one("SELECT * FROM legal_matters WHERE id=?", (matter_id,))
         if not matter or matter["status"] not in {"filed", "pleading", "hearing", "settlement_offered"}:
             return {"ok": False, "reason": "matter is not open"}
         filer_type = str(filing.get("filer_type", "agent"))
         filer_id = int(filing.get("filer_id", actor_id))
-        authorized = self.controls(actor_id, filer_type, filer_id)
-        if int(matter["counsel_agent_id"] or 0) == actor_id and self._is_lawyer(actor_id):
+        representation = getattr(self, "representation", None)
+        modern = representation is not None and representation.enabled
+        proof = None
+        if modern:
+            sides = [s for s in ("claimant", "respondent") if representation.party(matter, s) == (filer_type, filer_id)]
+            if len(sides) != 1:
+                return {"ok": False, "reason": "filer must be one named party to the matter"}
+            proof = representation.authorize(tick, actor_id, matter, "submit_filing", sides[0])
+        authorized = proof is not None if modern else self.controls(actor_id, filer_type, filer_id)
+        if not modern and int(matter["counsel_agent_id"] or 0) == actor_id and self._is_lawyer(actor_id):
             authorized = True
         if not authorized:
             return {"ok": False, "reason": "actor is not authorized to file"}
@@ -409,6 +476,7 @@ class LegalInstitution:
             return {"ok": False, "reason": "filing references missing evidence events"}
         filing_type = str(filing.get("filing_type", "brief"))[:60]
         admitted = 1 if filing_type in {"evidence", "stipulation"} else 0
+        authority_event = representation.begin(proof) if modern else None
         filing_id = self.store.insert(
             "legal_filings", matter_id=matter_id, tick=tick, filer_type=filer_type,
             filer_id=filer_id, filing_type=filing_type, body=str(filing.get("body", ""))[:5000],
@@ -416,41 +484,76 @@ class LegalInstitution:
             model_call_id=filing.get("model_call_id"),
             rationale_summary=str(filing.get("rationale_summary", ""))[:500])
         self.store.update("legal_matters", matter_id, status="hearing" if admitted else "pleading")
-        self.store.log_event(tick, "legal_filing_submitted", {"matter_id": matter_id,
+        event_id = self.store.log_event(tick, "legal_filing_submitted", {"matter_id": matter_id,
             "filing_id": filing_id, "filing_type": filing_type, "admitted": bool(admitted)},
             phase="EXECUTION", subject_type="legal_matter", subject_id=matter_id, importance=1.2)
+        if modern:
+            representation.record(matter_id, proof, authority_event, event_id)
+            representation.reconcile(tick)
         return {"ok": True, "filing_id": filing_id, "admitted": bool(admitted)}
 
     def propose_settlement(self, tick: int, actor_id: int, matter_id: int,
                            terms: dict[str, Any]) -> dict[str, Any]:
+        representation = getattr(self, "representation", None)
+        if representation is not None and representation.enabled:
+            with representation.e.estate_cases._batch():
+                return self._propose_settlement(tick, actor_id, matter_id, terms)
+        return self._propose_settlement(tick, actor_id, matter_id, terms)
+
+    def _propose_settlement(self, tick: int, actor_id: int, matter_id: int,
+                            terms: dict[str, Any]) -> dict[str, Any]:
         matter = self.store.query_one("SELECT * FROM legal_matters WHERE id=?", (matter_id,))
         if not matter or matter["status"] in {"decided", "dismissed", "settled"}:
             return {"ok": False, "reason": "matter is not settleable"}
-        side = self._matter_side(actor_id, matter)
-        if side is None and int(matter["counsel_agent_id"] or 0) != actor_id:
+        representation = getattr(self, "representation", None)
+        modern = representation is not None and representation.enabled
+        proof = representation.authorize(tick, actor_id, matter, "propose_settlement") if modern else None
+        side = proof["side"] if proof else None if modern else self._matter_side(actor_id, matter)
+        if side is None and (modern or int(matter["counsel_agent_id"] or 0) != actor_id):
             return {"ok": False, "reason": "actor is not authorized to settle"}
         remedy = dict(terms.get("remedy", terms))
         error = self._validate_remedy(matter, remedy)
         if error:
             return {"ok": False, "reason": error}
+        authority_event = representation.begin(proof) if modern else None
         offer = {"status": "offered", "proposer_actor_id": actor_id, "proposer_side": side or "claimant",
                  "offered_tick": tick, "remedy": remedy}
         self.store.update("legal_matters", matter_id, status="settlement_offered",
                           settlement_json=json.dumps(offer, sort_keys=True))
-        self.store.log_event(tick, "settlement_offered", {"matter_id": matter_id,
+        event_id = self.store.log_event(tick, "settlement_offered", {"matter_id": matter_id,
             "remedy_type": remedy.get("type", "none")}, phase="EXECUTION",
             subject_type="legal_matter", subject_id=matter_id, importance=1.8)
+        if modern:
+            offer["authority_id"] = representation.record(matter_id, proof, authority_event, event_id)
+            self.store.update("legal_matters", matter_id, settlement_json=json.dumps(offer, sort_keys=True))
         return {"ok": True, "matter_id": matter_id, "status": "settlement_offered"}
 
     def accept_settlement(self, tick: int, actor_id: int, matter_id: int) -> dict[str, Any]:
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            with awards.e.estate_cases._batch():
+                return self._accept_settlement(tick, actor_id, matter_id)
+        return self._accept_settlement(tick, actor_id, matter_id)
+
+    def _accept_settlement(self, tick: int, actor_id: int, matter_id: int) -> dict[str, Any]:
         matter = self.store.query_one("SELECT * FROM legal_matters WHERE id=?", (matter_id,))
         if not matter or matter["status"] != "settlement_offered":
             return {"ok": False, "reason": "no settlement is open"}
         offer = json.loads(matter["settlement_json"] or "{}")
-        side = self._matter_side(actor_id, matter)
+        representation = getattr(self, "representation", None)
+        modern = representation is not None and representation.enabled
+        proof = representation.authorize(tick, actor_id, matter, "accept_settlement") if modern else None
+        side = proof["side"] if proof else None if modern else self._matter_side(actor_id, matter)
         if side is None or side == offer.get("proposer_side"):
             return {"ok": False, "reason": "opposing party must accept settlement"}
-        result = self._enforce_remedy(tick, matter, dict(offer.get("remedy", {})), matter_id)
+        if modern:
+            original = self.store.query_one("SELECT * FROM legal_action_authorities WHERE id=? AND matter_id=? AND action='propose_settlement'",
+                (offer.get("authority_id"), matter_id))
+            current = representation.authorize(tick, offer["proposer_actor_id"], matter, "propose_settlement", offer["proposer_side"])
+            if original is None or current is None or representation._anchor(current) != representation._anchor(json.loads(original["proof_json"])):
+                return {"ok": False, "reason": "settlement offer lost its recorded party authority"}
+        authority_event = representation.begin(proof) if modern else None
+        result = self._enforce_remedy(tick, matter, dict(offer.get("remedy", {})), matter_id, basis="settlement")
         offer.update({"status": "accepted", "accepted_tick": tick, "accepted_by": actor_id,
                       "enforcement": result})
         self.store.update("legal_matters", matter_id, status="settled", resolved_tick=tick,
@@ -458,9 +561,22 @@ class LegalInstitution:
         event_id = self.store.log_event(tick, "matter_settled", {"matter_id": matter_id,
             "enforcement": result}, phase="EXECUTION", subject_type="legal_matter",
             subject_id=matter_id, importance=3.0)
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            awards.e.estate_disputes.resolve(tick, matter_id, event_id)
+        if modern:
+            representation.record(matter_id, proof, authority_event, event_id)
+            representation.reconcile(tick)
         return {"ok": True, "matter_id": matter_id, "event_id": event_id, "enforcement": result}
 
     def issue_decision(self, tick: int, actor_id: int, decision: dict[str, Any]) -> dict[str, Any]:
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            with awards.e.estate_cases._batch():
+                return self._issue_decision(tick, actor_id, decision)
+        return self._issue_decision(tick, actor_id, decision)
+
+    def _issue_decision(self, tick: int, actor_id: int, decision: dict[str, Any]) -> dict[str, Any]:
         actor = self.store.query_one("SELECT role FROM agents WHERE id=? AND alive=1", (actor_id,))
         if not actor or (actor["role"] or "") not in DECISION_ROLES:
             return {"ok": False, "reason": "only a judge or authorized regulator may decide"}
@@ -480,6 +596,12 @@ class LegalInstitution:
             return {"ok": False, "reason": "matter is not ready for decision"}
         if self.store.query_one("SELECT 1 FROM legal_decisions WHERE matter_id=?", (matter_id,)):
             return {"ok": False, "reason": "matter already has a decision"}
+        authority = getattr(self, "authority", None)
+        assessment = None
+        if authority is not None and authority.enabled:
+            assessment = authority.assess(tick, actor_id, matter)
+            if not assessment["eligible"]:
+                return authority.reject(tick, actor_id, matter_id, assessment)
         outcome = str(decision.get("outcome", "")).lower()
         if outcome not in {"claimant", "respondent", "dismissed"}:
             return {"ok": False, "reason": "invalid outcome"}
@@ -504,6 +626,7 @@ class LegalInstitution:
                 "matter_id": matter_id, "actor_id": actor_id, "errors": errors}, phase="EXECUTION",
                 subject_type="legal_matter", subject_id=matter_id, importance=2.0)
             return {"ok": False, "reason": "; ".join(errors), "repairable": True, "errors": errors}
+        proof = authority.begin(matter_id, assessment) if assessment is not None else None
         enforcement = self._enforce_remedy(tick, matter, remedy, matter_id)
         event_id = self.store.log_event(tick, "legal_decision_enforced", {
             "matter_id": matter_id, "outcome": outcome, "remedy": remedy,
@@ -517,9 +640,17 @@ class LegalInstitution:
             model_call_id=decision.get("model_call_id"),
             rationale_summary=str(decision.get("rationale_summary", ""))[:500],
             enforcement_event_id=event_id)
+        if proof is not None:
+            authority.record(decision_id, proof)
         self.store.update("legal_matters", matter_id,
                           status="dismissed" if outcome in {"respondent", "dismissed"} else "decided",
                           resolved_tick=tick)
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            awards.e.estate_disputes.resolve(tick, matter_id, event_id)
+        representation = getattr(self, "representation", None)
+        if representation is not None and representation.enabled:
+            representation.reconcile(tick)
         return {"ok": True, "decision_id": decision_id, "matter_id": matter_id,
                 "enforcement": enforcement, "event_id": event_id}
 
@@ -548,15 +679,23 @@ class LegalInstitution:
             requested_amount = int(requested.get("amount_cents", self.max_damages_cents))
             if amount <= 0 or amount > min(self.max_damages_cents, requested_amount):
                 return "damages exceed requested or ruleset limit"
+            awards = getattr(self, "awards", None)
+            if awards is not None and awards.enabled:
+                error = awards.validate(matter, remedy)
+                if error:
+                    return error
         if remedy_type == "terminate_contract" and not matter["contract_id"]:
             return "termination remedy requires a contract"
         return None
 
-    def _enforce_remedy(self, tick: int, matter, remedy: dict[str, Any], matter_id: int) -> dict[str, Any]:
+    def _enforce_remedy(self, tick: int, matter, remedy: dict[str, Any], matter_id: int, *, basis: str = "decision") -> dict[str, Any]:
         remedy_type = str(remedy.get("type", "none"))
         if remedy_type in {"none", "dismissal"}:
             return {"type": remedy_type}
         if remedy_type == "damages":
+            awards = getattr(self, "awards", None)
+            if awards is not None and awards.enabled:
+                return awards.issue(tick, matter, remedy, basis=basis)
             source = self._entity_account(matter["respondent_type"], int(matter["respondent_id"]))
             target = self._entity_account(matter["claimant_type"], int(matter["claimant_id"]))
             if source is None or target is None:
@@ -572,6 +711,10 @@ class LegalInstitution:
                     "unpaid_cents": award - paid, "transaction_id": txn_id}
         if remedy_type == "terminate_contract":
             contract_id = int(matter["contract_id"])
+            awards = getattr(self, "awards", None)
+            if awards is not None and awards.enabled:
+                for obligation in self.store.query("SELECT id FROM obligations WHERE contract_id=? AND status='pending' ORDER BY id", (contract_id,)):
+                    awards.e.estate_cases.release_obligation(tick, obligation["id"])
             self.store.update("contracts", contract_id, status="terminated", terminated_tick=tick)
             self.store.execute(
                 "UPDATE obligations SET status='cancelled' WHERE contract_id=? AND status='pending'",
@@ -609,6 +752,13 @@ class LegalInstitution:
     # ------------------------------------------------------------------
     # Nightly state transitions and projections
     def run_nightly(self, tick: int) -> None:
+        awards = getattr(self, "awards", None)
+        if awards is not None and awards.enabled:
+            with self.store.savepoint("estate_legal_nightly"):
+                return self._run_nightly(tick)
+        return self._run_nightly(tick)
+
+    def _run_nightly(self, tick: int) -> None:
         if not self.enabled:
             return
         self.store.execute(
@@ -632,6 +782,10 @@ class LegalInstitution:
             "AND status IN ('offered','negotiating','executed','active') ORDER BY id", (tick,))
         for row in expiring:
             contract_id = int(row["id"])
+            awards = getattr(self, "awards", None)
+            if awards is not None and awards.enabled:
+                for obligation in self.store.query("SELECT id FROM obligations WHERE contract_id=? AND status='pending' ORDER BY id", (contract_id,)):
+                    awards.e.estate_cases.release_obligation(tick, obligation["id"], reason="contract_expired")
             self.store.update("contracts", contract_id, status="expired", terminated_tick=tick)
             self.store.execute(
                 "UPDATE obligations SET status='cancelled' WHERE contract_id=? AND status='pending'",

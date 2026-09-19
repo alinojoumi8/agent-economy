@@ -44,6 +44,29 @@ function envelope(path: string, url: URL, data: unknown, projection = `workspace
   };
 }
 
+function priceLabData(url: URL) {
+  const tick = url.searchParams.get("tick") === "3" ? 3 : 6;
+  const firm = Number(url.searchParams.get("firm_id") || 1);
+  const firms = [{ id: 1, name: "Northstar Foods", sector: "food", currency_code: "CAD" },
+    { id: 2, name: "City Tools", sector: "manufacturing", currency_code: "CAD" }];
+  const observation = (value: number | null, evidence: Array<{ type: string; id: number }> = []) => ({
+    value, reason: value === null ? "no_execution" : null, evidence, observed_tick: value === null ? null : 3,
+    age_ticks: value === null ? null : tick - 3,
+  });
+  const goods = firm === 1 ? 200 : 300;
+  return { contract: "price-lab-projection-v1", firms, firms_truncated: false,
+    selected_firm: firms[firm - 1], tick, start_tick: 0, window_ticks: Number(url.searchParams.get("window") || 30),
+    observation: { firm_id: firm, tick, start_tick: 0, currency: "CAD", limitations: ["Within-firm comparable product units."],
+      goods: { posted_price: observation(goods + 10), executed_price: observation(goods, [{ type: "event", id: 9 }]),
+        last_execution: observation(goods), quantity: 4, sale_count: 1, demand: { reason: "intended_and_unmet_demand_not_recorded" } },
+      equities: { last_execution: observation(null), executed_price: observation(null), quantity: 0, trade_count: 0,
+        excluded_self_trade_ids: [], book: { status: "unavailable", reason: "historical_book_state_not_recorded",
+          best_bid_cents: null, best_ask_cents: null, spread_cents: null, bid_quantity: null, ask_quantity: null } },
+      series: { points: [{ tick: 2, goods_vwap: null, goods_volume: 0, goods_reason: "no_execution", equity_vwap: null, equity_volume: 0 },
+        { tick: 3, goods_vwap: goods, goods_volume: 4, goods_reason: null, equity_vwap: null, equity_volume: 0 }] },
+    } };
+}
+
 async function mockWorkspaceApis(
   page: Page,
   servedBodies: string[] = [],
@@ -59,6 +82,9 @@ async function mockWorkspaceApis(
     }
     if (path === "/api/v2/operator/investigations" && request.method() === "GET") {
       return route.fulfill({ json: { items: [] } });
+    }
+    if (path === "/api/v2/operator/city-observations" && request.method() === "GET") {
+      return route.fulfill({ json: { context: JSON.parse(url.searchParams.get("context")!), version: 0, entries: [] } });
     }
     let body: unknown;
     if (path === "/api/v2/mode") {
@@ -108,6 +134,8 @@ async function mockWorkspaceApis(
         contracts: [{ id: 1, title: "Public charter", contract_type: "charter", jurisdiction: "North", offered_tick: 2, status: "executed" }],
         disclosures: [{ id: 1, tick: 3, firm_id: 1, disclosure_type: "earnings", facts: { revenue_cents: 100 } }],
       });
+    } else if (path === "/api/v2/workspaces/price-lab") {
+      body = envelope("price_lab", url, priceLabData(url));
     } else if (path === "/api/v2/workspaces/markets") {
       body = envelope("markets", url, historical ? {
         orders: [], trades: [], fx_orders: [], fx_trades: [], circuit_breakers: [], currencies: [],
@@ -199,6 +227,7 @@ async function mockWorkspaceApis(
     status: "paused", running: false,
   } }));
   await page.route("**/api/llm/runtime", route => route.fulfill({ json: {
+    context: { run_id: "run-demo", fork_id: null, tick: "live" },
     live_only: true, global: { capacity: 1, in_flight: 0, queue_depth: 0, peak_in_flight: 0, peak_queue_depth: 0, logical_deadline_s: 90 },
     simulated_days: { samples: 0, p50_wall_ms: null, p95_wall_ms: null }, providers: [],
   } }));
@@ -221,6 +250,60 @@ async function setup(page: Page) {
   return { consoleErrors, requestFailures, bodies, historicalBodies };
 }
 
+test("estate money follows the selected day on desktop and mobile", async ({ page }, testInfo) => {
+  const diagnostics = await setup(page);
+  const monetaryRequests: number[] = [];
+  await page.route("**/api/v2/workspaces/politics-law**", async route => {
+    const url = new URL(route.request().url());
+    const selected = Number(url.searchParams.get("tick") || 6);
+    monetaryRequests.push(selected);
+    const early = selected === 3;
+    const data = { politics: { enabled: false }, legal: { enabled: true }, matters: [
+      { id: 1, matter_type: "civil", claim_type: "contract_payment", venue: "City Tribunal", filed_tick: 1,
+        status: early ? "filed" : "resolved", monetary_relief: { visibility: "public", as_of_tick: selected,
+          award: early ? null : { id: 1, currency_code: "CAD", awarded_cents: 12000, credited_cents: 3000,
+            paid_cents: 6000, outstanding_cents: 3000 }, estate_reserve: { id: 1, currency_code: "CAD",
+            held_cents: early ? 10000 : 0, status: early ? "pending" : "resolved" } } },
+      { id: 2, matter_type: "civil", claim_type: "contract_payment", filed_tick: 1,
+        monetary_relief: { visibility: "withheld", award: { id: 99, awarded_cents: 999999, body: PRIVATE_CANARY } } },
+      ...(!early ? [{ id: 3, matter_type: "labor", claim_type: "unpaid_wages", filed_tick: 2,
+        monetary_relief: { visibility: "public", estate_reserve: null, award: {
+          id: 3, currency_code: "USD", payment_basis: "gross_wages", awarded_cents: 3000,
+          credited_cents: 0, paid_cents: 3000, tax_cents: 600, net_received_cents: 2400, outstanding_cents: 0 } } }] : []),
+    ] };
+    return route.fulfill({ json: { ...envelope("politics-law", url, data), semantics_version: 20 } });
+  });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto("/runs/run-demo/politics-law?view=legal&tick=3");
+    const table = page.getByRole("region", { name: "Payments and estate reserves", exact: true });
+    await table.scrollIntoViewIfNeeded();
+    await expect(table.getByText("Awaiting decision", { exact: true })).toBeVisible();
+    await expect(table.getByText("100.00 CAD · pending", { exact: true })).toBeVisible();
+    await expect(table).not.toContainText("120.00 CAD");
+    await table.screenshot({ path: testInfo.outputPath(`legal-held-${width}.png`) });
+    await page.goto("/runs/run-demo/politics-law?view=legal&tick=6");
+    await table.scrollIntoViewIfNeeded();
+    await expect(table.getByText("120.00 CAD", { exact: true })).toBeVisible();
+    await expect(table.getByText("60.00 CAD", { exact: true })).toBeVisible();
+    await expect(table.getByText("30.00 CAD", { exact: true })).toHaveCount(2);
+    await expect(table.getByText("0.00 CAD · resolved", { exact: true })).toBeVisible();
+    await expect(table.getByText("Financial details withheld", { exact: true })).toBeVisible();
+    const wages = table.getByRole("article", { name: "Matter 3 financial details", exact: true });
+    await expect(wages.getByText("Paid on award (gross)", { exact: true })).toBeVisible();
+    await expect(wages.getByText("6.00 USD", { exact: true })).toBeVisible();
+    await expect(wages.getByText("24.00 USD", { exact: true })).toBeVisible();
+    await expect(table).not.toContainText(PRIVATE_CANARY);
+    await expect(table).not.toContainText("9999.99");
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await table.screenshot({ path: testInfo.outputPath(`legal-collected-${width}.png`) });
+  }
+  expect(monetaryRequests).toContain(3);
+  expect(monetaryRequests).toContain(6);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
 test("workspace rail exposes every canonical destination with observer context", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/overview?fork=fork-1&tick=3");
@@ -228,11 +311,10 @@ test("workspace rail exposes every canonical destination with observer context",
   const navigation = page.getByRole("navigation", { name: "Civic Atlas workspaces" });
   const destinations = [
     ["Pulse", "overview"],
-    ["City", "live-city"],
+    ["City", "world"],
     ["People", "people"],
     ["Commons", "commons"],
     ["Evidence Lab", "investigations"],
-    ["City evidence", "world"],
     ["Institutions", "organizations"],
     ["Markets", "markets"],
     ["Politics & Law", "politics-law"],
@@ -260,7 +342,7 @@ test("workspace rail exposes every canonical destination with observer context",
 test("all canonical workspace routes navigate with observer context and validated details", async ({ page }) => {
   const diagnostics = await setup(page);
   await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
-  await expect(page.getByRole("heading", { name: "City evidence", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
   await expect(page.getByText("Historical tick 3", { exact: true }).first()).toBeVisible();
 
   for (const [routeName, heading] of [
@@ -434,7 +516,7 @@ test("world selection removes unresolved region and place URL parameters", async
   const diagnostics = await setup(page);
   for (const parameter of ["region", "place"]) {
     await page.goto(`/runs/run-demo/world?${parameter}=999&fork=fork-1&tick=3`);
-    await expect(page.getByRole("heading", { name: "City evidence", exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "City", exact: true })).toBeVisible();
     await expect.poll(() => new URL(page.url()).searchParams.has(parameter)).toBe(false);
     const current = new URL(page.url());
     expect(current.searchParams.get("fork")).toBe("fork-1");
@@ -561,4 +643,742 @@ test("command navigation reaches canonical routes and unknown paths redirect onc
   expect(await page.evaluate(() => history.length)).toBe(historyBeforeRedirect + 1);
   expect(diagnostics.consoleErrors).toEqual([]);
   expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("price lab gives goods and equities the same historical scope and preserves inspector links", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const priceRequests: URL[] = [];
+  const writes: string[] = [];
+  page.on("request", request => {
+    if (request.url().includes("/workspaces/price-lab")) priceRequests.push(new URL(request.url()));
+    if (request.method() === "POST") writes.push(request.url());
+  });
+  await page.goto("/runs/run-demo/markets?view=prices&fork=fork-1&tick=3");
+  await expect(page.getByRole("heading", { name: "Follow a business from goods to shares" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Goods", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Equities", exact: true })).toBeVisible();
+  await expect(page.getByText("No equity executions to plot in this window.")).toBeVisible();
+  await expect(page.getByText("Historical order-book state is unavailable. Current quotes are not shown here.")).toBeVisible();
+  await page.getByLabel("Measurement window").selectOption("7");
+  await page.getByLabel("Business", { exact: true }).selectOption("2");
+  await expect(page.getByLabel("Business", { exact: true })).toHaveValue("2");
+  await expect(page.getByRole("link", { name: "Inspect business" })).toHaveAttribute("href", "/runs/run-demo/organizations/firm/2?fork=fork-1&tick=3");
+  const last = priceRequests.at(-1)!;
+  expect(last.searchParams.get("tick")).toBe("3");
+  expect(last.searchParams.get("fork_id")).toBe("fork-1");
+  expect(last.searchParams.get("window")).toBe("7");
+  expect(last.searchParams.get("firm_id")).toBe("2");
+  const count = priceRequests.length;
+  await page.waitForTimeout(3200);
+  expect(priceRequests).toHaveLength(count);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByText("Daily execution data and missing observations", { exact: true }).click();
+  await expect(page.getByRole("table", { name: "Daily price observations" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.getByText("1 sale evidence records", { exact: true }).click();
+  await expect(page.getByRole("link", { name: "Sale event #9" })).toHaveAttribute("href", "/runs/run-demo/investigations?fork=fork-1&tick=3&event=9");
+  expect(writes).toEqual([]);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("price lab hides a response from another cursor or instrument", async ({ page }) => {
+  await setup(page);
+  await page.route("**/api/v2/workspaces/price-lab?*", route => {
+    const url = new URL(route.request().url());
+    const data = priceLabData(url);
+    data.observation.tick = 99;
+    data.observation.goods.executed_price.value = 999999;
+    return route.fulfill({ json: envelope("price_lab", url, data) });
+  });
+  await page.goto("/runs/run-demo/markets?view=prices&tick=3");
+  await expect(page.getByRole("alert")).toHaveText("Price data does not match the selected run, fork, tick or instrument.");
+  await expect(page.getByRole("heading", { name: "Goods", exact: true })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("999,999");
+});
+
+test("city business selection and camera survive price inspection and return", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const writes: string[] = [];
+  page.on("request", request => { if (request.method() === "POST") writes.push(request.url()); });
+  await page.route("**/api/v2/world-map?*", route => route.fulfill({ json: envelope("map", new URL(route.request().url()), {
+    regions: [], agents: [{ id: 1, name: "Supplier Officer", x: 0.2, y: 0.3, employer_id: 1 }],
+    organizations: [{ id: 1, name: "Northstar Foods", sector: "food", status: "listed", x: 0.4, y: 0.6,
+      place_id: 1, place_name: "Northstar workplace" }],
+    places: [{ id: 1, name: "Northstar workplace", kind: "workplace", owner_type: "firm", owner_id: 1,
+      x: 0.4, y: 0.6, capacity: 10 }], presence: [],
+  }, "world.map") }));
+  await page.goto("/runs/run-demo/world?fork=fork-1&tick=3");
+  await page.getByRole("button", { name: "Select business Northstar Foods" }).click();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await expect(page.getByRole("heading", { name: "Northstar Foods", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "2.5D Diorama", exact: true }).click();
+  const scene = page.getByTestId("civic-diorama");
+  await expect(scene).toBeVisible();
+  await page.getByRole("button", { name: "Focus selection", exact: true }).click();
+  await page.getByRole("button", { name: "Zoom into city", exact: true }).click();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await page.reload();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await page.getByRole("link", { name: "Inspect goods and equity prices" }).click();
+  await expect(page.getByRole("heading", { name: "Goods", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Equities", exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("tick")).toBe("3");
+  expect(new URL(page.url()).searchParams.get("price_firm")).toBe("1");
+  const businessLink = new URL(await page.getByRole("link", { name: "Inspect business" }).getAttribute("href") || "", page.url());
+  expect(new URLSearchParams(businessLink.searchParams.get("city") || "").get("camera")).toBe("40,60,3.4");
+  await page.getByRole("link", { name: "Explore the city" }).click();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await page.getByRole("button", { name: "Atlas", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Select business Northstar Foods" })).toHaveAttribute("aria-pressed", "true");
+  await page.goBack();
+  await expect(scene).toHaveAttribute("data-camera", "40,60,3.4");
+  await page.getByRole("button", { name: "Inspect workplace", exact: true }).click();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("place:1");
+  await page.getByRole("button", { name: "Inspect owning business", exact: true }).click();
+  await expect(page.getByLabel("Keyboard explorer")).toHaveValue("firm:1");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByLabel("Keyboard explorer")).toBeVisible();
+  await page.getByRole("button", { name: "Open selected evidence" }).click();
+  await expect(page.getByRole("heading", { name: "Northstar Foods", exact: true })).toBeInViewport();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(writes).toEqual([]);
+  expect(diagnostics.consoleErrors).toEqual([]);
+});
+
+const studyId = "a".repeat(32);
+const studyHash = "b".repeat(64);
+
+function comparisonFixture(fork: string | null = null) {
+  return { contract: "operator-study-comparison-v1", id: studyId,
+    context: { run_id: "run-demo", fork_id: fork, tick: "live" },
+    title: "Goods and equity pilot", hypothesis: "Declared cost intervention", limitations: ["Synthetic small sample"],
+    arms: [{ key: "base", label: "Baseline", role: "baseline" }, { key: "cost", label: "Higher cost", role: "treatment" }],
+    measurement_window: [1, 8], verification_sha256: "c".repeat(64), manifest_sha256: "d".repeat(64),
+    source_identity: { git_commit: "e".repeat(40) },
+    outcomes: [
+      { key: "goods", domain: "goods", label: "Goods execution VWAP", purpose: "primary", unit: "cents_per_unit", currency: "CAD", aggregation: "window_vwap", formula: "Notional / units", missingness: "No sale is unavailable", metric_version: "goods-sales-vwap-v1" },
+      { key: "equity", domain: "equities", label: "Equity execution price", purpose: "exploratory", unit: "cents_per_share", currency: "CAD", aggregation: "terminal", formula: "Last qualified execution", missingness: "No trade is unavailable", metric_version: "qualified-last-execution-v1" },
+    ],
+    summary: { baseline_arm: "base", exclusions: [], coverage: {
+      base: { assigned: 2, started: 2, completed: 2, eligible: 2 },
+      cost: { assigned: 2, started: 2, completed: 1, eligible: 1 },
+    }, metrics: {
+      goods: { base: { mean: 200 }, cost: { mean: 200, paired_effect: { mean_difference: 0, ci95_bootstrap: null, n_pairs: 1, assigned_pairs: 2, pair_exclusions: [{ seed: 2, reason: "incomplete_horizon" }] } } },
+      equity: { base: { mean: null }, cost: { mean: null, paired_effect: { mean_difference: null, ci95_bootstrap: null, n_pairs: 0, assigned_pairs: 2, pair_exclusions: [] } } },
+    } },
+    attempts: [
+      { arm: "base", seed: 1, ticks: 8, expected_ticks: 8, execution_status: "completed", eligibility: { status: "eligible", reasons: [] } },
+      { arm: "cost", seed: 2, ticks: 3, expected_ticks: 8, execution_status: "paused", eligibility: { status: "ineligible", reasons: ["incomplete_horizon"] } },
+    ],
+    measurements: { goods: [{ arm: "base", seed: 1, value: 200, status: "complete", age_ticks: null }],
+      equity: [{ arm: "base", seed: 1, value: 150, status: "complete", age_ticks: 7 }] },
+    verification: { status: "verified", result_sha256: studyHash, declared_context: "verified", issues: [],
+      operations: { status: "partial", provider_calls: null, provider_spend_usd: null } },
+  };
+}
+
+async function mockStudyLibrary(page: Page, mismatch = false) {
+  const requests: Array<{ path: string; method: string }> = [];
+  await page.route("**/api/v2/operator/research/**", route => {
+    const url = new URL(route.request().url());
+    requests.push({ path: url.pathname, method: route.request().method() });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    if (url.pathname.endsWith("/export")) return route.fulfill({ json: { token: "archive", sha256: "f".repeat(64) } });
+    if (url.pathname.includes("/exports/")) return route.fulfill({ contentType: "application/zip", body: "bundle-fixture" });
+    if (url.pathname.endsWith("/studies")) return route.fulfill({ json: {
+      contract: "operator-study-catalog-v1", context: { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" },
+      items: [{ id: studyId, title: "Goods and equity pilot", domains: ["goods", "equities"], result_sha256: studyHash }], truncated: false, omitted: 0,
+    } });
+    const data = comparisonFixture(url.searchParams.get("fork_id"));
+    if (mismatch) { data.context.run_id = "other-run"; data.hypothesis = "WRONG-STUDY-CANARY"; }
+    return route.fulfill({ json: data });
+  });
+  return requests;
+}
+
+test("saved price studies show equal domains, coverage, missing values and private download", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests = await mockStudyLibrary(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&fork=fork-1");
+  await page.getByLabel("Saved study", { exact: true }).selectOption(studyId);
+  await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+  const goods = page.getByRole("article", { name: "Goods study comparison" });
+  const equities = page.getByRole("article", { name: "Equities study comparison" });
+  await expect(goods.getByText("0", { exact: true })).toBeVisible();
+  await expect(equities.getByText("Unavailable", { exact: true }).first()).toBeVisible();
+  await expect(page.getByRole("table", { name: "Study attempt coverage" })).toBeVisible();
+  await equities.getByText("Values and execution age by seed", { exact: true }).click();
+  await expect(equities.getByRole("table", { name: "Outcome evidence for Equity execution price" })).toContainText("7");
+  await page.getByText("Attempt and exclusion evidence", { exact: true }).click();
+  await expect(page.getByRole("table", { name: "Preserved study attempts" })).toContainText("incomplete horizon");
+  await page.getByText("Protocol, costs and limitations", { exact: true }).click();
+  await expect(page.getByText("partial", { exact: true })).toBeVisible();
+  expect(requests.filter(request => request.method === "POST")).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toBeVisible();
+  const downloaded = page.waitForEvent("download");
+  await page.getByRole("button", { name: "Download private evidence" }).click();
+  expect((await downloaded).suggestedFilename()).toBe(`study-${studyId}.zip`);
+  await expect(page.getByText(/Download ready. SHA-256:/)).toBeVisible();
+  expect(requests.filter(request => request.method === "POST").map(request => request.path)).toEqual([`/api/v2/operator/research/studies/${studyId}/export`]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("historical price-study navigation does not fetch local study artifacts", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLibrary(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&tick=3&study=${studyId}`);
+  await expect(page.getByRole("heading", { name: "Saved studies use the current operator workspace" })).toBeVisible();
+  expect(requests).toEqual([]);
+});
+
+test("study comparison refuses a response for a different run", async ({ page }) => {
+  await setup(page);
+  await mockStudyLibrary(page, true);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("alert")).toContainText("Study evidence does not match");
+  await expect(page.locator("body")).not.toContainText("WRONG-STUDY-CANARY");
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toHaveCount(0);
+});
+
+const draftId = "d".repeat(32);
+const jobId = "e".repeat(32);
+const draftHash = "9".repeat(64);
+
+function launchFixture(fork: string | null, request: any = {}) {
+  return { contract: "operator-study-draft-v1", id: draftId, context: { run_id: "run-demo", fork_id: fork, tick: "live" },
+    draft_sha256: draftHash, origin: "fresh_genesis", executed: false, job_id: null,
+    request: { preset: "G2", seeds: [1, 2], horizon: 8, intervention_tick: 3, goods_firm_id: 2, equity_firm_id: 1, max_wall_seconds: 180, max_disk_mib: 128, ...request },
+    estimate: { worlds: 4, source_and_replay_ticks: 64, disk_bytes: 41943040, disk_bytes_limit: 134217728, wall_seconds_limit: 180, method: "Uncalibrated planning allowance" },
+    source_identity: { source_tree_sha256: "8".repeat(64) },
+    spec: { title: "Dual-domain pilot", hypothesis: "A declared treatment may change observed prices.", time: { measurement_start: 3, measurement_end: 8 },
+      arms: [{ key: "base", role: "baseline", label: "Unchanged baseline", changes: { shocks: [] } },
+        { key: "treatment", role: "treatment", label: "Declared shock", changes: { shocks: [{ tick: 3, kind: "oil", multiplier: 1.5 }] } }],
+      limitations: ["Exploratory only; no empirical fit is established."] } };
+}
+
+async function mockStudyLaunch(page: Page, mode: "complete" | "stale" | "wrong" | "interrupted" = "complete") {
+  const requests: Array<{ path: string; method: string; body?: any }> = [];
+  let draft = launchFixture(null), released = false;
+  await mockStudyLibrary(page);
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    if (path.includes("/studies") || path.includes("/exports")) return route.fallback();
+    const method = route.request().method();
+    const body = method === "POST" && route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null, launch_blocked: false, resume: true,
+      pause_phases: ["NIGHT_CLOSE", "MORNING", "EXECUTION", "MARKET", "NEWSROOM", "EVENING", "MEMORY", "FINALIZE"] } });
+    if (path.endsWith("/validate")) { draft = launchFixture(context.fork_id, body); return route.fulfill({ json: draft }); }
+    const job = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
+      context, title: "Dual-domain pilot", status: mode === "interrupted" ? "interrupted" : "completed", origin: "fresh_genesis",
+      expected_cells: 4, finished_cells: 4, eligible_cells: 4, recoverable: mode === "interrupted" && !released,
+      ...(mode !== "interrupted" ? { study_id: studyId, result_sha256: studyHash } : {}),
+      cells: [{ arm: "base", seed: 1, execution_status: "completed", eligibility: { status: "eligible", reasons: [] }, ticks: 8 }] };
+    if (path.endsWith("/launch")) {
+      if (mode === "stale") return route.fulfill({ status: 409, json: { detail: "Source changed after validation; validate a new draft." } });
+      if (mode === "wrong") { job.context.run_id = "wrong-run"; job.title = "WRONG-LAUNCH-CANARY"; }
+      return route.fulfill({ status: 202, json: job });
+    }
+    if (path.endsWith("/recover")) { released = true; return route.fulfill({ json: { ...job, recoverable: false } }); }
+    if (path.includes("/jobs/")) return route.fulfill({ json: job });
+    if (path.includes("/drafts/")) return route.fulfill({ json: { ...draft, context } });
+    return route.fulfill({ status: 404, json: {} });
+  });
+  return requests;
+}
+
+test("operator validates an equity pilot, reviews limits, launches deliberately and opens comparison", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create&fork=fork-1");
+  await page.getByLabel("Research question").selectOption("F2");
+  await page.getByLabel("World seeds").fill("3, 5");
+  await expect(page.getByRole("button", { name: "Run independent study" })).toHaveCount(0);
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  await expect(page.getByRole("heading", { name: "Review the validated study" })).toBeVisible();
+  expect(requests.filter(row => row.path.endsWith("/validate"))[0].body).toMatchObject({ preset: "F2", seeds: [3, 5] });
+  await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("40.0 MiB / 128.0 MiB");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Run independent study" })).toBeEnabled();
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+  await page.getByRole("button", { name: "Run independent study" }).click();
+  await expect(page.getByRole("region", { name: "Study job status" })).toContainText("4 / 4 world attempts reported");
+  const starts = requests.filter(row => row.path.endsWith("/launch"));
+  expect(starts).toHaveLength(1);
+  expect(starts[0].body).toEqual({ draft_sha256: draftHash, idempotency_key: draftId });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open verified comparison" })).toBeVisible();
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(1);
+  await page.getByRole("button", { name: "Open verified comparison" }).click();
+  await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("fork")).toBe("fork-1");
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("historical study creation makes no operator artifact requests or launches", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&tick=3&study_job=${jobId}`);
+  await expect(page.getByRole("heading", { name: "Study creation needs the Live workspace" })).toBeVisible();
+  expect(requests).toEqual([]);
+  await expect(page.getByRole("button", { name: "Run independent study" })).toHaveCount(0);
+});
+
+for (const mode of ["stale", "wrong"] as const) {
+  test(`study launch rejects ${mode} context without showing another job`, async ({ page }) => {
+    await setup(page);
+    await mockStudyLaunch(page, mode);
+    await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&study_draft=${draftId}`);
+    await page.getByRole("button", { name: "Run independent study" }).click();
+    await expect(page.getByRole("alert")).toContainText(mode === "stale" ? "Source changed" : "does not match");
+    await expect(page.locator("body")).not.toContainText("WRONG-LAUNCH-CANARY");
+    await expect(page.getByRole("button", { name: "Open verified comparison" })).toHaveCount(0);
+    expect(new URL(page.url()).searchParams.has("study_job")).toBe(false);
+  });
+}
+
+test("interrupted study recovery is explicit and never starts another job", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLaunch(page, "interrupted");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&study_job=${jobId}`);
+  await expect(page.getByRole("button", { name: "Release interrupted job slot" })).toBeVisible();
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  await page.getByRole("button", { name: "Release interrupted job slot" }).click();
+  await expect(page.getByRole("button", { name: "Release interrupted job slot" })).toHaveCount(0);
+  expect(requests.filter(row => row.method === "POST").map(row => row.path)).toEqual([`${BASE_LAUNCH}/jobs/${jobId}/recover`]);
+});
+
+const BASE_LAUNCH = "/api/v2/operator/research";
+
+async function mockCheckpointStudy(page: Page, wrongCatalog = false) {
+  const requests = await mockStudyLaunch(page);
+  const sources = [1, 2].map(seed => ({ id: String(seed).repeat(32), seed, run_id: `saved-world-${seed}`, tick: 2,
+    bytes: 2097152, database_sha256: String(seed).repeat(64), receipt_sha256: String(seed + 2).repeat(64) }));
+  const origin = { kind: "verified_checkpoints", tick: 2, independent_worlds: 2, continuation_window: [3, 5], sources };
+  let reviewed: any = null, resumed = false;
+  const child = "f".repeat(32);
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    const method = route.request().method(), body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context,
+      launch_blocked: false, checkpoint_fork: true, checkpoint_source_mib: 16, resume: true, pause_phases: ["MARKET"] } });
+    if (path.endsWith("/checkpoints")) return route.fulfill({ json: { contract: "operator-checkpoint-catalog-v1",
+      context: wrongCatalog ? { ...context, run_id: "wrong-run" } : context,
+      items: wrongCatalog ? [{ ...sources[0], run_id: "WRONG-CHECKPOINT-CANARY" }] : sources,
+      truncated: false, omitted: { oversized: 2, unavailable_or_incompatible: 0 } } });
+    if (path.endsWith("/validate")) {
+      reviewed = { ...launchFixture(context.fork_id, body), origin: "verified_checkpoints", origin_details: origin };
+      reviewed.spec = { ...reviewed.spec, randomness: { seeds: [1, 2] }, time: { measurement_start: 4, measurement_end: 5 } };
+      reviewed.spec.arms[1].changes.shocks = [body.preset === "F2"
+        ? { tick: body.intervention_tick, kind: "scandal", firm_id: 1 }
+        : { tick: body.intervention_tick, kind: "oil", multiplier: 1.5 }];
+      reviewed.estimate.source_and_replay_ticks = 24;
+      return route.fulfill({ json: reviewed });
+    }
+    if (path.endsWith("/resume")) resumed = true;
+    if (path.endsWith("/launch") || path.includes("/jobs/")) {
+      const phase = reviewed?.request.pause_after_phase;
+      return route.fulfill({ status: method === "POST" ? 202 : 200, json: {
+        contract: "operator-study-job-status-v1", context, id: resumed ? child : jobId, draft_id: draftId, draft_sha256: draftHash,
+        ...(resumed ? { parent_job_id: jobId } : {}), status: resumed ? "completed" : "paused", resumable: !resumed,
+        origin: "verified_checkpoints", origin_details: origin, expected_cells: 4, finished_cells: resumed ? 4 : 0,
+        remaining_wall_seconds: 160, progress_sha256: studyHash, resume_check_sha256: "6".repeat(64),
+        study_id: studyId, result_sha256: studyHash,
+        cells: [{ arm: "base", seed: 1, ticks: resumed ? 5 : phase ? 2 : 3, execution_status: resumed ? "completed" : "paused",
+          eligibility: { status: resumed ? "eligible" : "pending", reasons: [] },
+          ...(!resumed && phase ? { position: { completed_tick: 2, active_tick: 3, next_phase: "NEWSROOM" } } : {}) }],
+      } });
+    }
+    if (path.includes("/drafts/")) return route.fulfill({ json: { ...reviewed, context } });
+    if (path.endsWith(`/studies/${studyId}`)) return route.fulfill({ json: { ...comparisonFixture(context.fork_id), origin_details: origin } });
+    return route.fallback();
+  });
+  return requests;
+}
+
+for (const preset of ["G2", "F2"]) {
+  test(`saved-world ${preset} selection is reviewed, explicitly resumed and shown in comparison`, async ({ page }) => {
+    const diagnostics = await setup(page);
+    const requests = await mockCheckpointStudy(page);
+    await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create&fork=fork-1");
+    await page.getByLabel("Initial conditions").selectOption("verified_checkpoints");
+    await page.getByLabel("Research question").selectOption(preset);
+    await page.getByRole("checkbox", { name: /Seed 1 · saved day 2/ }).check();
+    await page.getByRole("checkbox", { name: /Seed 2 · saved day 2/ }).check();
+    await expect(page.getByLabel("World seeds")).toHaveCount(0);
+    await page.getByLabel("Horizon (days)").fill("5");
+    await page.getByLabel("Intervention day").fill("4");
+    await page.getByLabel("Additional warmup (days)").fill("1");
+    if (preset === "F2") await page.getByLabel("Pause after a step (optional)").selectOption("MARKET");
+    else await page.getByLabel("Pause after saved days (optional)").fill("1");
+    expect(requests.filter(row => row.method === "POST")).toHaveLength(0);
+    await page.getByRole("button", { name: "Validate draft" }).click();
+    const review = page.getByRole("region", { name: "Validated study protocol" });
+    await expect(review).toContainText("2 independent initial worlds · saved day 2 · new execution days 3–5");
+    const submitted = requests.find(row => row.path.endsWith("/validate"))!.body;
+    expect(submitted).toMatchObject({ preset, origin: "verified_checkpoints", seeds: null, warmup_ticks: 1 });
+    expect(submitted.checkpoints).toHaveLength(2);
+    expect(Object.keys(submitted.checkpoints[0]).sort()).toEqual(["database_sha256", "id", "receipt_sha256"]);
+    expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+    await review.getByText("Selected source identities", { exact: true }).click();
+    await expect(review).toContainText("saved-world-1");
+    if (preset === "G2" && process.env.AE_CAPTURE_CHECKPOINT_UI === "1") {
+      await page.setViewportSize({ width: 1280, height: 1400 });
+      await review.screenshot({ path: "../docs/research/assets/study-checkpoint-review-desktop.png" });
+    }
+    await page.setViewportSize({ width: 390, height: 844 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+    if (preset === "G2" && process.env.AE_CAPTURE_CHECKPOINT_UI === "1") {
+      await page.setViewportSize({ width: 390, height: 2400 });
+      await review.screenshot({ path: "../docs/research/assets/study-checkpoint-review-mobile.png" });
+      await page.setViewportSize({ width: 390, height: 844 });
+    }
+    await page.getByRole("button", { name: "Run saved-world study" }).click();
+    await expect(page.getByRole("button", { name: "Resume saved study" })).toBeEnabled();
+    if (preset === "F2") await expect(page.getByRole("region", { name: "Study job status" })).toContainText("Day 3 · next: News publication");
+    await page.getByRole("button", { name: "Resume saved study" }).click();
+    await page.getByRole("button", { name: "Open verified comparison" }).click();
+    await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Declared initial conditions" })).toContainText("new execution days 3–5");
+    await expect(page.getByRole("article", { name: "Goods study comparison" })).toBeVisible();
+    await expect(page.getByRole("article", { name: "Equities study comparison" })).toBeVisible();
+    expect(new URL(page.url()).searchParams.get("fork")).toBe("fork-1");
+    expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(1);
+    expect(requests.filter(row => row.path.endsWith("/resume"))).toHaveLength(1);
+    expect(diagnostics.consoleErrors).toEqual([]);
+    expect(diagnostics.requestFailures).toEqual([]);
+  });
+}
+
+test("a foreign checkpoint catalog cannot reveal choices or validate a study", async ({ page }) => {
+  await setup(page);
+  const requests = await mockCheckpointStudy(page, true);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByLabel("Initial conditions").selectOption("verified_checkpoints");
+  await expect(page.getByRole("alert")).toContainText("does not match");
+  await expect(page.locator("body")).not.toContainText("WRONG-CHECKPOINT-CANARY");
+  await expect(page.getByRole("checkbox")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Validate draft" })).toBeDisabled();
+  expect(requests.filter(row => row.method === "POST")).toHaveLength(0);
+});
+
+async function mockWorkingStudy(page: Page, mode: "ready" | "incompatible" | "wrong-parent" | "running" | "phase" = "ready") {
+  const requests = await mockStudyLaunch(page);
+  const childId = "f".repeat(32);
+  let resumed = false;
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname;
+    if (!path.includes("/jobs/") && !path.endsWith("/studies") && !path.endsWith(`/studies/${studyId}`)) return route.fallback();
+    const method = route.request().method(), body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    expect(route.request().headers()["x-csrf-token"]).toBe("test");
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    const attempts = [1, 2].flatMap(seed => ["base", "cost"].map(arm => ({ seed, arm, ticks: mode !== "phase" && seed === 1 && arm === "base" ? 1 : 0,
+      expected_ticks: 8, execution_status: seed === 1 && arm === "base" ? "paused" : "planned", eligibility: { status: "pending", reasons: [] },
+      ...(mode === "phase" && seed === 1 && arm === "base" ? { position: { completed_tick: 0, active_tick: 1, next_phase: "NEWSROOM" } } : {}) })));
+    const parent = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash,
+      context, title: "Dual-domain pilot", status: "paused", expected_cells: 4, finished_cells: 0, eligible_cells: 0,
+      study_id: studyId, result_sha256: studyHash, cells: attempts, resumable: !resumed && mode !== "incompatible",
+      progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), remaining_wall_seconds: 170,
+      ...(resumed ? { continuation_job_id: childId } : {}),
+      ...(mode === "incompatible" ? { resume_unavailable_reason: "source_checkout_changed" } : {}) };
+    const child = { ...parent, id: childId, parent_job_id: jobId, status: "completed", resumable: false, finished_cells: 4, eligible_cells: 4,
+      cells: attempts.map(row => ({ ...row, ticks: 8, execution_status: "completed", eligibility: { status: "eligible", reasons: [] } })) };
+    if (path.endsWith("/resume")) {
+      if (mode === "wrong-parent") return route.fulfill({ status: 202, json: { ...child, parent_job_id: "other", title: "WRONG-RESUME-CANARY" } });
+      resumed = true;
+      return route.fulfill({ status: 202, json: child });
+    }
+    if (path.includes("/jobs/")) return route.fulfill({ json: path.endsWith(childId) ? child : parent });
+    if (path.endsWith("/studies")) return route.fulfill({ json: { contract: "operator-study-catalog-v1", context,
+      items: [{ id: studyId, title: "Dual-domain pilot", domains: ["goods", "equities"], result_sha256: studyHash, kind: resumed ? "finalized" : "working" }], truncated: false, omitted: 0 } });
+    const complete = comparisonFixture(context.fork_id);
+    if (resumed) return route.fulfill({ json: complete });
+    const { summary, outcomes, measurements, ...common } = complete;
+    return route.fulfill({ json: { ...common, contract: "operator-working-study-v1", state: mode === "running" ? "running" : "paused",
+      attempts, comparison_available: false, export_available: mode !== "running", operator_job: parent,
+      verification: { ...common.verification, status: mode === "running" ? "not_verified" : "verified", publication: "working", eligibility: "pending" },
+      budget: { max_wall_seconds: 180, active_wall_seconds: 10, max_disk_bytes: 134217728 } } });
+  });
+  return { requests, childId };
+}
+
+test("planned study pause is reviewed before any world starts", async ({ page }) => {
+  await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByLabel("Pause after saved days (optional)").fill("2");
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("After 2 saved days in the first world");
+  expect(requests.filter(row => row.path.endsWith("/validate"))[0].body.pause_after_ticks).toBe(2);
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+});
+
+test("phase pause is reviewed and an unfinished day cannot become a price comparison", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const requests = await mockStudyLaunch(page);
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByLabel("Pause after saved days (optional)").fill("2");
+  await page.getByLabel("Pause after a step (optional)").selectOption("MARKET");
+  await expect(page.getByLabel("Pause after saved days (optional)")).toHaveValue("");
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  await expect(page.getByRole("region", { name: "Validated study protocol" })).toContainText("After Market settlement in the first world");
+  expect(requests.filter(row => row.path.endsWith("/validate"))[0].body).toMatchObject({ pause_after_phase: "MARKET", pause_after_ticks: null });
+  expect(requests.filter(row => row.path.endsWith("/launch"))).toHaveLength(0);
+  await mockWorkingStudy(page, "phase");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  const progress = page.getByRole("region", { name: "Working study progress" });
+  await expect(progress).toContainText("Day 1 · next: News publication");
+  await expect(progress.getByRole("cell", { name: "0 / 8", exact: true })).toHaveCount(4);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  if (process.env.AE_CAPTURE_PHASE_UI === "1") await progress.screenshot({ path: "../docs/research/assets/study-phase-progress-desktop.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  const bounds = await progress.boundingBox();
+  expect(bounds!.x).toBeGreaterThanOrEqual(0);
+  expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(390);
+  const scroll = progress.locator(".world-os-workspace-table-wrap");
+  await scroll.evaluate(element => { element.scrollLeft = element.scrollWidth; });
+  const lastColumn = await progress.getByRole("columnheader", { name: "Eligibility", exact: true }).boundingBox();
+  expect(lastColumn!.x + lastColumn!.width).toBeLessThanOrEqual(390);
+  if (process.env.AE_CAPTURE_PHASE_UI === "1") await progress.screenshot({ path: "../docs/research/assets/study-phase-progress.png" });
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+test("working library keeps unfinished assignments pending and resumes only on explicit action", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const { requests, childId } = await mockWorkingStudy(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}&fork=fork-1`);
+  const progress = page.getByRole("region", { name: "Working study progress" });
+  await expect(progress).toContainText("Study eligibility is pending");
+  await expect(page.getByRole("table", { name: "Saved study days" }).getByRole("row")).toHaveCount(5);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  await expect(page.getByLabel("Treatment arm")).toHaveCount(0);
+  if (process.env.AE_CAPTURE_STUDY_UI === "1") await progress.screenshot({ path: "../docs/research/assets/study-working-progress.png" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  await page.getByRole("button", { name: "Open study controls" }).click();
+  await expect(page.getByRole("button", { name: "Resume saved study" })).toBeEnabled();
+  await expect(page.getByRole("region", { name: "Study job status" })).toContainText("170.0 seconds remain");
+  if (process.env.AE_CAPTURE_STUDY_UI === "1") await page.getByRole("region", { name: "Study job status" }).screenshot({ path: "../docs/research/assets/study-resume-controls.png" });
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Resume saved study" })).toBeVisible();
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  await page.getByRole("button", { name: "Resume saved study" }).click();
+  await expect(page.getByRole("button", { name: "Open verified comparison" })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("study_job")).toBe(childId);
+  expect(new URL(page.url()).searchParams.get("fork")).toBe("fork-1");
+  await page.reload();
+  await expect(page.getByRole("button", { name: "Open verified comparison" })).toBeVisible();
+  const posts = requests.filter(row => row.method === "POST");
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toMatchObject({ path: `${BASE_LAUNCH}/jobs/${jobId}/resume`, body: {
+    progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), idempotency_key: jobId } });
+  await page.getByRole("button", { name: "Open verified comparison" }).click();
+  await expect(page.getByText("Evidence verified", { exact: true })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Equities study comparison" })).toBeVisible();
+  expect(diagnostics.consoleErrors).toEqual([]);
+  expect(diagnostics.requestFailures).toEqual([]);
+});
+
+for (const mode of ["incompatible", "wrong-parent"] as const) {
+  test(`paused study ${mode} cannot show a successful continuation`, async ({ page }) => {
+    await setup(page);
+    const { requests } = await mockWorkingStudy(page, mode);
+    await page.goto(`/runs/run-demo/experiments?view=price-studies&study_mode=create&study_job=${jobId}`);
+    if (mode === "incompatible") {
+      await expect(page.getByText(/Resume unavailable: source checkout changed/)).toBeVisible();
+      await expect(page.getByRole("button", { name: "Resume saved study" })).toHaveCount(0);
+      expect(requests.filter(row => row.method === "POST")).toEqual([]);
+    } else {
+      await page.getByRole("button", { name: "Resume saved study" }).click();
+      await expect(page.getByRole("alert")).toContainText("does not match");
+      await expect(page.locator("body")).not.toContainText("WRONG-RESUME-CANARY");
+      expect(new URL(page.url()).searchParams.get("study_job")).toBe(jobId);
+    }
+    await expect(page.getByRole("button", { name: "Open verified comparison" })).toHaveCount(0);
+  });
+}
+
+test("active working evidence cannot be exported or compared", async ({ page }) => {
+  await setup(page);
+  const { requests } = await mockWorkingStudy(page, "running");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("region", { name: "Working study progress" })).toContainText("checkpoint has not been verified");
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toBeDisabled();
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+});
+
+async function mockPolicyStudy(page: Page, mode: "comparison" | "working" | "launch" | "wrong-contract" = "comparison") {
+  const requests = await mockStudyLaunch(page);
+  const designId = "2".repeat(32), childId = "3".repeat(32);
+  let resumed = mode === "comparison" || mode === "wrong-contract";
+  let request: any = { preset: "POLICY", seeds: [1, 2], horizon: 8, model_replicates: ["draw1", "draw2"],
+    design: { id: designId, sha256: "4".repeat(64) }, max_provider_calls: 500, max_tokens: 1000000,
+    max_spend_usd: 1, max_wall_seconds: 300, max_disk_mib: 256, pause_after_phase: "MORNING" };
+  const policies = [{ key: "base", family: "scripted", provider: null, model: null, temperature: null, repair_temperature: .2, preflight_temperature: 0, prompt_sha256: null },
+    { key: "cost", family: "live_llm", provider: "fixture", model: "demo-model", temperature: .4, repair_temperature: .2, preflight_temperature: 0, prompt_sha256: "5".repeat(64) }];
+  const tariffs = [{ provider: "fixture", model: "demo-model", max_input_tokens: 200000, max_output_tokens: 10000, input_usd_per_million_tokens: .01, output_usd_per_million_tokens: .02 }];
+  await page.route("**/api/v2/operator/research/**", async route => {
+    const url = new URL(route.request().url()), path = url.pathname, method = route.request().method();
+    if (path.endsWith("/export") || path.includes("/exports/")) return route.fallback();
+    const body = route.request().postData() ? route.request().postDataJSON() : undefined;
+    requests.push({ path, method, body });
+    const context = { run_id: "run-demo", fork_id: url.searchParams.get("fork_id"), tick: "live" };
+    if (path.endsWith("/validate")) request = body;
+    const design = { policies, tariffs, independent_worlds: 2, model_replicates: request.model_replicates,
+      assigned_cells: 2 * policies.length * request.model_replicates.length, aggregation: "complete-paired-block-mean-v1" };
+    const limits = { max_provider_calls: request.max_provider_calls, max_tokens: request.max_tokens,
+      max_spend_usd: request.max_spend_usd, max_wall_seconds: request.max_wall_seconds, max_disk_bytes: request.max_disk_mib * 1048576 };
+    const allowance = { limits, verified: true, preflight_ready: true, usage: { provider_calls: resumed ? 150 : 10,
+      reported_tokens: resumed ? 18000 : 1200, encumbered_tokens: resumed ? 18000 : 1200,
+      reported_cost_usd: resumed ? .00021 : .000014, encumbered_usd: resumed ? .00021 : .000014,
+      unresolved_calls: 0, unknown_usage_calls: 0, breached_calls: 0, sealed: resumed } };
+    const attempts = [1, 2].flatMap(seed => request.model_replicates.flatMap((draw: string) => ["base", "cost"].map(arm => ({ seed, arm,
+      cell_key: `${seed}-${arm}-${draw}`, policy: arm, model_replicate: draw, ticks: resumed ? 8 : 0, expected_ticks: 8,
+      execution_status: resumed ? "completed" : seed === 1 && arm === "base" && draw === "draw1" ? "paused" : "planned",
+      eligibility: { status: resumed ? "eligible" : "pending", reasons: [] } }))));
+    const complete: any = { ...comparisonFixture(context.fork_id), contract: mode === "wrong-contract" ? "operator-study-comparison-v1" : "operator-policy-study-comparison-v1",
+      title: "Decision policy comparison", policy_design: design, provider_allowance: allowance, attempts,
+      world_coverage: Object.fromEntries(["base", "cost"].map(arm => [arm, { assigned: 2, started: 2, completed: 2, eligible: 2 }])),
+      cell_coverage: Object.fromEntries(["base", "cost"].map(arm => [arm, { assigned: 4, started: 4, completed: 4, eligible: 4 }])) };
+    complete.measurements = Object.fromEntries(["goods", "equity"].map(outcome => [outcome, attempts.map(row => ({ ...row, value: outcome === "goods" ? 200 : 150, status: "complete", age_ticks: outcome === "equity" ? 7 : null }))]));
+    complete.outcomes = complete.outcomes.map((row: any) => ({ ...row, purpose: "primary" }));
+    const parent = { contract: "operator-study-job-status-v1", id: jobId, draft_id: draftId, draft_sha256: draftHash, context,
+      title: complete.title, status: "paused", expected_cells: attempts.length, finished_cells: 0, cells: attempts,
+      policy_design: design, provider_allowance: allowance, study_id: studyId, result_sha256: studyHash,
+      resumable: !resumed, progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), remaining_wall_seconds: 280 };
+    const child = { ...parent, id: childId, parent_job_id: jobId, status: "completed", finished_cells: attempts.length, resumable: false };
+    if (path.endsWith("/capabilities")) return route.fulfill({ json: { contract: "operator-study-launch-capabilities-v1", context, active_job: null,
+      launch_blocked: false, live_models: true, resume: true, pause_phases: ["MORNING", "MARKET"],
+      policy_designs: { contract: "operator-policy-design-catalog-v1", items: [{ ...request.design, title: "Scripted / demo model", policies, tariffs }],
+        limits: { max_provider_calls: 5000, max_tokens: 10000000, max_spend_usd: 5, max_wall_seconds: 600, max_disk_mib: 1024 } } } });
+    if (path.endsWith("/launch")) return route.fulfill({ status: 202, json: parent });
+    if (path.endsWith("/resume")) { resumed = true; return route.fulfill({ status: 202, json: child }); }
+    if (path.includes("/jobs/")) return route.fulfill({ json: path.endsWith(childId) ? child : parent });
+    if (path.includes("/drafts/")) {
+      const draft = launchFixture(context.fork_id, request);
+      return route.fulfill({ json: { ...draft, policy_design: design,
+        provider_allowance: { ...allowance, verified: false, preflight_ready: null, usage: Object.fromEntries(Object.keys(allowance.usage).map(key => [key, null])) },
+        estimate: { ...draft.estimate, worlds: attempts.length, disk_bytes_limit: limits.max_disk_bytes, wall_seconds_limit: limits.max_wall_seconds },
+        spec: { ...draft.spec, title: complete.title, arms: complete.arms.map((arm: any) => ({ ...arm, policy: arm.key })) } } });
+    }
+    if (path.endsWith("/studies")) return route.fulfill({ json: { contract: "operator-study-catalog-v1", context,
+      items: [{ id: studyId, title: complete.title, domains: ["goods", "equities"], protocol_version: "research-study-v3",
+        kind: resumed ? "finalized" : "working", result_sha256: studyHash }], truncated: false, omitted: 0 } });
+    if (resumed) return route.fulfill({ json: complete });
+    const { summary, outcomes, measurements, ...common } = complete;
+    return route.fulfill({ json: { ...common, contract: "operator-policy-working-study-v1", state: "paused",
+      comparison_available: false, export_available: true, operator_job: parent,
+      verification: { ...common.verification, publication: "working", eligibility: "pending" },
+      budget: { max_wall_seconds: limits.max_wall_seconds, active_wall_seconds: 20, max_disk_bytes: limits.max_disk_bytes } } });
+  });
+  return { requests, designId, childId };
+}
+
+test("policy comparison preserves every draw, equal domains and precise charges on desktop and mobile", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const { requests } = await mockPolicyStudy(page);
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toBeVisible();
+  await expect(page.getByRole("article", { name: "Equities study comparison" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "World replication coverage" })).toBeVisible();
+  await expect(page.getByRole("table", { name: "Model execution coverage" })).toBeVisible();
+  await page.getByText("Attempt and exclusion evidence", { exact: true }).click();
+  const rows = page.getByRole("table", { name: "Preserved study attempts" }).getByRole("row");
+  await expect(rows).toHaveCount(9);
+  await page.getByLabel("Evidence model draw", { exact: true }).selectOption("draw2");
+  await expect(rows).toHaveCount(5);
+  expect(new URL(page.url()).searchParams.get("study_draw")).toBe("draw2");
+  const allowance = page.getByRole("region", { name: "Decision policies and original allowance" });
+  await expect(allowance).toContainText("$0.00021");
+  if (process.env.AE_CAPTURE_POLICY_UI === "1") {
+    await page.setViewportSize({ width: 1280, height: 1200 });
+    await allowance.evaluate(element => element.scrollIntoView({ block: "center" }));
+    await allowance.screenshot({ path: "../tmp/policy-operator-desktop.png" });
+  }
+  await page.reload();
+  await expect(page.getByLabel("Evidence model draw", { exact: true })).toHaveValue("draw2");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  if (process.env.AE_CAPTURE_POLICY_UI === "1") {
+    await page.setViewportSize({ width: 390, height: 1600 });
+    await allowance.evaluate(element => element.scrollIntoView({ block: "center" }));
+    await allowance.screenshot({ path: "../tmp/policy-operator-mobile.png" });
+  }
+  expect(requests.filter(row => row.method === "POST")).toEqual([]);
+  expect(diagnostics.consoleErrors).toEqual([]);
+});
+
+test("policy launch binds deliberate approval to the reviewed draft and recovers original allowance", async ({ page }) => {
+  const diagnostics = await setup(page);
+  const { requests, designId, childId } = await mockPolicyStudy(page, "launch");
+  await page.goto("/runs/run-demo/experiments?view=price-studies&study_mode=create");
+  await page.getByRole("combobox", { name: "Research question", exact: true }).selectOption("POLICY");
+  await page.getByRole("combobox", { name: "Configured policy design", exact: true }).selectOption(designId);
+  await page.getByRole("button", { name: "Refresh policy designs" }).click();
+  await expect(page.getByRole("combobox", { name: "Configured policy design", exact: true })).toHaveValue("");
+  await expect(page.getByRole("button", { name: "Validate draft" })).toBeDisabled();
+  await page.getByRole("combobox", { name: "Configured policy design", exact: true }).selectOption(designId);
+  await page.getByLabel("Model draw labels", { exact: true }).fill("draw1, draw2");
+  await page.getByLabel("Pause after a step (optional)").selectOption("MORNING");
+  await page.getByRole("button", { name: "Validate draft" }).click();
+  const launch = page.getByRole("button", { name: "Run reviewed policy study" });
+  await expect(launch).toBeDisabled();
+  expect(requests.filter(row => row.method === "POST")).toHaveLength(1);
+  await page.getByRole("checkbox", { name: /I approve live inference/ }).check();
+  await expect(launch).toBeEnabled();
+  await page.reload();
+  await expect(launch).toBeDisabled();
+  const approval = page.getByRole("checkbox", { name: /I approve live inference/ });
+  await approval.focus();
+  await page.keyboard.press("Space");
+  await expect(launch).toBeEnabled();
+  await launch.click();
+  const job = page.getByRole("region", { name: "Study job status" });
+  await expect(job).toContainText("$0.000014");
+  await expect(job).toContainText("280.0 seconds remain");
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Resume saved study" }).click();
+  await expect(job.getByRole("heading", { name: "completed", exact: true })).toBeVisible();
+  expect(new URL(page.url()).searchParams.get("study_job")).toBe(childId);
+  const launchBody = requests.find(row => row.path.endsWith("/launch"))?.body;
+  expect(launchBody).toEqual({ draft_sha256: draftHash, idempotency_key: draftId, approve_live_inference: true });
+  const resumeBody = requests.find(row => row.path.endsWith("/resume"))?.body;
+  expect(resumeBody).toEqual({ progress_sha256: studyHash, resume_check_sha256: "6".repeat(64), idempotency_key: jobId });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
+  expect(diagnostics.consoleErrors).toEqual([]);
+});
+
+test("policy working evidence filters pending draws and rejects a legacy comparison contract", async ({ page }) => {
+  await setup(page);
+  await mockPolicyStudy(page, "working");
+  await page.goto(`/runs/run-demo/experiments?view=price-studies&study=${studyId}`);
+  await expect(page.getByRole("region", { name: "Working study progress" })).toContainText("Study eligibility is pending");
+  await page.getByLabel("Evidence model draw", { exact: true }).selectOption("draw2");
+  await expect(page.getByRole("table", { name: "Saved study days" }).getByRole("row")).toHaveCount(5);
+  await expect(page.getByRole("article", { name: "Goods study comparison" })).toHaveCount(0);
+  await mockPolicyStudy(page, "wrong-contract");
+  await page.reload();
+  await expect(page.getByRole("alert")).toContainText("Study evidence does not match");
+  await expect(page.getByRole("region", { name: "Decision policies and original allowance" })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Download private evidence" })).toHaveCount(0);
 });

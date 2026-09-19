@@ -1,0 +1,11 @@
+<!doctype html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Frontier test</title></head>
+<body style="margin:0;background:#08151f"><div id="root"></div><script type="module">
+import React from 'react';
+import {createRoot} from 'react-dom/client';
+import {FrontierPanel} from '/src/workspaces/FrontierPanel.tsx';
+const sites=[];
+for(let y=-1;y<=1;y++) for(let x=-1;x<=1;x++) sites.push({id:sites.length+1,x,y,discovered_tick:x===0&&y===0?37:null,...(x===0&&y===0?{terrain:'plain',resource:'established infrastructure',capacity:1000}:{}),discovered_by:null});
+const data={tick:37,required_work:3,sites,settlements:[{id:1,site_id:5,name:'Northstar',founder_id:null,founded_tick:37,completed_tick:37,charter_tick:37,work_units:3,region_id:1,residents:[1,2,3]}],tasks:[]};
+createRoot(document.getElementById('root')).render(React.createElement(FrontierPanel,{data}));
+</script></body></html>

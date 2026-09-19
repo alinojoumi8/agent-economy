@@ -29,6 +29,7 @@ from pathlib import Path
 from typing import Callable, Optional
 
 import psutil
+from llm.completion_guard import CompletionGuard
 
 from engine.core import Economy
 from engine.checkpoint_manifest import (
@@ -43,6 +44,8 @@ from engine.ledger import (
     SYS_INFLOW,
 )
 from engine.semantics import semantics_version
+from engine.population_scenario import PopulationScenario, parse_schedule
+from engine.keyed_random import daily_draw, daily_seed, person_key
 from engine.store import Store, load_json
 from llm.gateway import Gateway, BudgetExceeded, GatewayInterrupted, ProviderUnavailable
 from agents.runtime import AgentRuntime
@@ -54,6 +57,7 @@ from .genesis import Genesis
 from .metrics import Metrics
 from .newsroom import Newsroom, Conversations
 from .commons import CommonsService
+from .startup_authorizations import capture_startup_authorizations, restore_startup_authorizations
 from .recovery import recovery_settings
 from .shocks import Shocks
 from .phases import (
@@ -72,10 +76,12 @@ logger = get_logger("world")
 
 
 class World:
-    def __init__(self, store: Store, config: dict, *, replay: bool = False):
+    def __init__(self, store: Store, config: dict, *, replay: bool = False,
+                 completion_guard: CompletionGuard | None = None):
         self.store = store
         self.config = config
         self.engine_semantics_version = semantics_version(config, default=2)
+        population_schedule = parse_schedule(config, self.engine_semantics_version)
         self.phases = phase_names_for_semantics(self.engine_semantics_version)
         seed = int(config.get("seed", 42))
         self.engine_prng = random.Random(seed)
@@ -85,7 +91,9 @@ class World:
         cfg = dict(config)
         cfg["replay"] = replay
         self.economy = Economy(store, config, self.engine_prng, self.lifecycle_prng)
-        self.gateway = Gateway(store, cfg)
+        self.population_scenario = (PopulationScenario(self.economy, population_schedule)
+                                    if self.engine_semantics_version >= 21 else None)
+        self.gateway = Gateway(store, cfg, completion_guard=completion_guard)
         self.runtime = AgentRuntime(self.economy, self.gateway, config)
         self.commons = CommonsService(self.economy, self.runtime.mem)
         self.communication_delivery = CommunicationDelivery(store, config)
@@ -117,8 +125,12 @@ class World:
     def initialize(self) -> None:
         """Genesis for a fresh run (no-op if already initialised)."""
         if self.store.scalar("SELECT COUNT(*) FROM agents", default=0):
-            if self.engine_semantics_version >= 12:
+            if 12 <= self.engine_semantics_version < 20:
+                # Preserve legacy replay. New semantics resume the committed
+                # city; recalculating it here can apply later ownership to the
+                # previous day's work and occupancy.
                 self.economy.city.initialize(self.store.tick)
+                self.economy.urban.initialize(self.store.tick)
                 self.store.commit()
             operational_log(logger, logging.DEBUG, "world.initialize.skipped",
                             run_id=self.gateway.run_id, tick=self.store.tick)
@@ -140,8 +152,13 @@ class World:
         if self.config.get("spec_closure_fixture", {}).get("enabled"):
             from world.spec_closure_fixture import SpecClosureFixtureSeeder
             SpecClosureFixtureSeeder(self.economy, self.config).seed()
+        from engine.personal_names import assign_personal_names
+        assign_personal_names(self.store, self.config, 0)
+        self.economy.frontier.run_nightly(0)
         self.economy.cognition.seed_world(0)
         self.shocks.load_from_config()
+        if self.population_scenario is not None:
+            self.population_scenario.declare()
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
             raise ReconciliationError(f"genesis does not reconcile: {diag}")
@@ -161,7 +178,9 @@ class World:
         self.gateway.close()
         self.store.close()
 
-    async def run(self, max_ticks: Optional[int] = None) -> None:
+    async def run(self, max_ticks: Optional[int] = None, *, pause_after_phase: str | None = None) -> None:
+        if pause_after_phase is not None and pause_after_phase not in self.phases:
+            raise ValueError("unknown pause phase")
         self.status = "running"
         self.store.set_meta(status="running")
         start_tick = self.store.tick
@@ -181,7 +200,8 @@ class World:
                     break
                 if self._pause_requested:
                     break
-                summary = await self.step()
+                summary = (await self.step(pause_after_phase=pause_after_phase)
+                           if pause_after_phase is not None else await self.step())
                 if summary.get("paused"):
                     break
                 if self.speed_delay_s > 0:
@@ -357,13 +377,21 @@ class World:
         self.store.commit()
 
     # ── one tick ─────────────────────────────────────────────────────────────
-    async def step(self) -> dict:
+    async def step(self, *, pause_after_phase: str | None = None) -> dict:
+        if self.population_scenario is not None:
+            self.population_scenario.check_progress()
+        if pause_after_phase is not None and pause_after_phase not in self.phases:
+            raise ValueError("unknown pause phase")
         meta = self.store.get_meta()
         tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
         phase = str(meta["next_phase"] or "NIGHT_CLOSE")
         if phase not in self.phases:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
+        startup_settings = self.config.get('entrepreneurship', {})
+        save_startup_menus = (self.engine_semantics_version >= 21
+            and bool(startup_settings.get('enabled', False))
+            and tick >= max(0, int(startup_settings.get('activation_tick', 0))))
         if meta["active_tick"] is None:
             if self.engine_semantics_version >= 9:
                 await self.runtime.external.collect_online_turns(tick)
@@ -406,9 +434,15 @@ class World:
                     if self.engine_semantics_version >= 9:
                         self.runtime.external.restore_replay_after_morning(tick)
                     state["decisions"] = decisions
+                    if save_startup_menus:
+                        state['startup_authorizations'] = capture_startup_authorizations(
+                            tick, getattr(self.economy, '_startup_action_authorizations', {}))
                     decisions_count = len(decisions)
                 elif phase == "EXECUTION":
                     with self.store.savepoint(f"tick_{tick}_execution"):
+                        if save_startup_menus:
+                            self.economy._startup_action_authorizations = restore_startup_authorizations(
+                                tick, state.get('startup_authorizations'))
                         self.runtime.execute_decisions(tick, state.get("decisions", []))
                 elif phase == "MARKET":
                     with self.store.savepoint(f"tick_{tick}_market"):
@@ -452,6 +486,19 @@ class World:
                     self._save_prng_state()
                     self.store.commit()
 
+                if phase == pause_after_phase:
+                    # Pause only after the atomic phase and its next frontier
+                    # are committed. Queued decisions remain owned by that day.
+                    self.request_pause()
+                    if self.store.active_tick is not None:
+                        return {"tick": self.store.tick, "active_tick": tick,
+                                "phase": self.store.next_phase, "paused": "phase_boundary"}
+
+            if self.engine_semantics_version >= 21 and self.config.get('replay_source_path'):
+                # Include the closed source's final between-day inputs without
+                # advancing another economic day. The next step rechecks this
+                # prefix idempotently before NIGHT_CLOSE.
+                self.runtime.external.restore_population_inputs(tick + 1)
             summary = {"tick": tick, "wall_s": round(time.time() - t0, 3),
                        "decisions": decisions_count,
                        "governor": self.gateway.governor.status()}
@@ -592,7 +639,7 @@ class World:
         # applied before payroll/production at the configured untouched tick.
         self._apply_supply_recovery_recapitalization(tick)
         self._enforce_workforce_recovery_job_floor(tick)
-        if self.engine_semantics_version >= 12:
+        if 12 <= self.engine_semantics_version < 18:
             # Fixed-slot presence is resolved before production. An office
             # appointment removes a worker from output, but not from payroll.
             e.city.run_nightly(tick)
@@ -601,11 +648,16 @@ class World:
         # Loan payments + defaults.
         e.bank.process_due_loans(tick)
         # Payroll.
-        e.firms.process_payroll(tick)
+        if self.engine_semantics_version < 18:
+            e.firms.process_payroll(tick)
         # Production.
-        e.firms.produce(tick)
+        if self.engine_semantics_version < 18:
+            e.firms.produce(tick)
         # Lifecycle draws (illness, deaths + estates, aging, retirement, births).
         e.lifecycle.run_nightly(tick)
+        if self.engine_semantics_version >= 21:
+            self.population_scenario.apply(tick)
+            e.population.run_nightly(tick)
         # Government: unemployment benefits + periodic elections (P1 R12).
         e.gov.run_nightly(tick)
         # VC portfolio sweep: write-offs + stale pitches (P1 R13).
@@ -617,14 +669,35 @@ class World:
             e.politics.run_nightly(tick)
             if self.engine_semantics_version >= 5:
                 e.regions.run_nightly(tick)
+        if self.engine_semantics_version >= 17:
+            e.families.run_nightly(tick)
         if self.engine_semantics_version >= 11:
             e.cognition.run_nightly(tick)
         # Arrivals due today (stable population).
         self._spawn_due_arrivals(tick)
+        from engine.personal_names import assign_personal_names
+        assign_personal_names(self.store, self.config, tick)
+        e.frontier.run_nightly(tick)
         # Bank liquidity check: any open bank below required reserves seeks support.
-        self._bank_liquidity_sweep(tick)
+        if self.engine_semantics_version < 18:
+            self._bank_liquidity_sweep(tick)
         # Shock evaluation.
         self.shocks.evaluate(tick)
+        if self.engine_semantics_version >= 15:
+            e.households.register_new_people(tick)
+            e.households.reconcile_residence(tick)
+            e.households.reconcile_custody(tick)
+        if self.engine_semantics_version >= 20:
+            e.legal_representation.reconcile(tick)
+            e.business_control.refresh_custody(tick)
+            e.project_rights.refresh(tick)
+        if self.engine_semantics_version >= 18:
+            # Resolve population and location before allocating this day's time.
+            e.city.run_nightly(tick)
+            e.daily_time.prepare_day(tick)
+            e.firms.process_payroll(tick)
+            e.firms.produce(tick)
+            self._bank_liquidity_sweep(tick)
         if self.engine_semantics_version < 2:
             # Markerless historical databases retain their original tick contract.
             self.metrics.snapshot(tick)
@@ -800,6 +873,16 @@ class World:
         if self.engine_semantics_version >= 12:
             # Civic maintenance stays inside the existing single-writer phase.
             self.economy.city.finalize(tick)
+        if self.engine_semantics_version >= 15:
+            self.economy.households.register_new_people(tick)
+            self.economy.households.reconcile_residence(tick)
+            self.economy.households.reconcile_custody(tick)
+            from engine.households import HouseholdError
+            try:
+                self.economy.households.record_census(tick)
+            except HouseholdError as error:
+                raise ReconciliationError(f"tick {tick} FINALIZE: {error}") from error
+        self.economy.urban.finalize(tick)
         # Tick-T metrics describe the completed day, including its settled actions.
         self.metrics.snapshot(tick)
         # Predictions resolve against completed-day state.
@@ -822,6 +905,36 @@ class World:
             )
 
     def _assert_reconciled(self, tick: int, phase: str) -> None:
+        if self.engine_semantics_version >= 20:
+            from engine.business_control import BusinessControlError
+            try:
+                self.economy.business_control.check_invariants()
+            except BusinessControlError as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
+        if self.engine_semantics_version >= 19:
+            from engine.estates import EstateError
+            try:
+                self.economy.cash_estates.check_invariants()
+                if self.engine_semantics_version >= 20:
+                    self.economy.estate_cases.check_invariants()
+                    self.economy.project_rights.check_invariants()
+                    self.economy.legal_awards.check_invariants()
+            except EstateError as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
+        if self.engine_semantics_version >= 18:
+            from engine.daily_time import TimeBudgetError
+            from engine.earned_wages import WageClaimError
+            try:
+                self.economy.daily_time.check_invariants()
+                self.economy.earned_wages.check_invariants()
+            except (TimeBudgetError, WageClaimError) as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
+        if self.engine_semantics_version >= 15:
+            from engine.households import HouseholdError
+            try:
+                self.economy.households.check_invariants(tick)
+            except HouseholdError as error:
+                raise ReconciliationError(f"tick {tick} {phase}: {error}") from error
         ok, diag = self.economy.ledger.reconcile()
         if not ok:
             dump_path = Path(self.store.path).with_suffix(f".halt_t{tick}.json")
@@ -873,6 +986,7 @@ class World:
                     self.economy.bank.fail_bank(tick, bid)
 
     def _phase_market(self, tick: int) -> None:
+        self.economy.households.provision_children(tick)
         for f in self.store.query("SELECT id FROM firms WHERE status='listed'"):
             self.economy.exchange.match_firm(tick, int(f["id"]))
         self.economy.exchange.expire_session(tick)
@@ -898,12 +1012,22 @@ class World:
         if not due_ids:
             return
         banks = [int(r["id"]) for r in self.store.query("SELECT id FROM banks WHERE status='open'")]
+        if self.engine_semantics_version >= 16:
+            banks.sort()
         if not banks:
             return
         outlets = self.config.get("outlets", [{"id": 1}, {"id": 2}])
         outlet_ids = configured_outlet_ids(outlets)
         for sched_id in due_ids:
-            if self.engine_semantics_version >= 7:
+            arrival_key = None
+            if self.engine_semantics_version >= 16:
+                arrival_key = self.store.scalar(
+                    "SELECT json_extract(payload_json,'$.random_key') FROM events WHERE id=?", (sched_id,))
+                if not arrival_key:
+                    raise ValueError("Semantics 16 arrival schedule lacks its random identity")
+                p = sample_arrival_persona(random.Random(daily_seed(
+                    int(self.config.get("seed", 42)), "arrival.persona", tick, arrival_key)), outlet_ids)
+            elif self.engine_semantics_version >= 7:
                 p = sample_arrival_persona(self.persona_prng, outlet_ids)
             else:
                 p = sample_persona(self.persona_prng, n_outlets=len(outlets))
@@ -918,8 +1042,10 @@ class World:
                 else p.occupation)
             region_id = self.economy.regions.region_for_new_citizen() \
                 if self.economy.regions.enabled else None
-            bank_id = self.economy.regions.bank_for_region(banks, region_id) \
-                if self.economy.regions.enabled else self.engine_prng.choice(banks)
+            bank_rng = (random.Random(daily_seed(int(self.config.get("seed", 42)),
+                        "arrival.bank", tick, arrival_key)) if arrival_key else self.engine_prng)
+            bank_id = self.economy.regions.bank_for_region(banks, region_id, rng=bank_rng) \
+                if self.economy.regions.enabled else bank_rng.choice(banks)
             currency = self.economy.regions.currency_for_region(region_id)
             baseline_core = (
                 self.engine_semantics_version >= 7
@@ -957,6 +1083,8 @@ class World:
                     savings_account_id=sav)
             else:
                 self.store.update("agents", agent_id, checking_account_id=chk)
+            if arrival_key:
+                self.economy.households.register_person(tick, agent_id, "arrival", random_key=arrival_key)
             self.economy.cognition.seed_agent(agent_id, tick)
             # A new adult immediately takes on a visible move-in/rent cost. The
             # system housing account keeps the payment conserved and auditable.
@@ -977,10 +1105,24 @@ class World:
             # Social ties to a few residents + starting beliefs.
             residents = [int(r["id"]) for r in self.store.query(
                 "SELECT id FROM agents WHERE alive=1 AND id<>? ORDER BY id", (agent_id,))]
-            for other in self.engine_prng.sample(residents, min(3, len(residents))):
+            if self.engine_semantics_version >= 21:
+                residents = [other for other in residents
+                             if self.economy.population.is_available(other)
+                             and self.economy.population.is_local(other, tick)]
+            if arrival_key:
+                seed = int(self.config.get("seed", 42))
+                resident_keys = {other: person_key(self.store, other) for other in residents}
+                contacts = sorted(residents, key=lambda other: (
+                    daily_seed(seed, "arrival.contact", tick, arrival_key, resident_keys[other]),
+                    resident_keys[other]))[:3]
+            else:
+                contacts = self.engine_prng.sample(residents, min(3, len(residents)))
+            for other in contacts:
                 lo, hi = min(agent_id, other), max(agent_id, other)
+                weight = (0.2 + 0.5 * daily_draw(seed, "arrival.tie_weight", tick,
+                          arrival_key, resident_keys[other]) if arrival_key else self.engine_prng.uniform(0.2, 0.7))
                 self.store.insert("social_ties", agent_a=lo, agent_b=hi,
-                                  weight=round(self.engine_prng.uniform(0.2, 0.7), 3))
+                                  weight=round(weight, 3))
             for bid in banks:
                 self.store.insert("beliefs", agent_id=agent_id, key=f"trust:bank:{bid}",
                                   value=0.6, updated_tick=tick)
@@ -1003,6 +1145,7 @@ class World:
                 })
             self.store.log_event(tick, "arrival", arrival_payload, phase="NIGHT_CLOSE",
                 subject_type="agent", subject_id=agent_id, importance=2.0)
+            self.economy.households.register_person(tick, agent_id, "arrival")
 
     # ── checkpoints (SQLite backup + PRNG state, TECH-SPEC §13) ──────────────
     def _checkpoint_prepare(self, tick: int) -> tuple[Path, str]:

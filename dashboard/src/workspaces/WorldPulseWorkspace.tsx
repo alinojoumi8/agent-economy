@@ -58,6 +58,7 @@ type PulseWorldProjection = {
   construction_projects?: unknown[];
   summary?: {
     trade_count?: number;
+    known_living_outside?: number;
     migration_count?: number;
     construction_projects?: number;
   };
@@ -252,6 +253,7 @@ export function WorldPulseWorkspace() {
           <button type="button" onClick={() => control("/api/run/start")} disabled={controlsUnavailable || run.data?.running === true}>Run</button>
           <button type="button" onClick={() => control("/api/run/pause")} disabled={controlsUnavailable || run.data?.running !== true}>Pause</button>
           <button type="button" onClick={() => control("/api/run/step")} disabled={controlsUnavailable || run.data?.running === true}>Step</button>
+          <button type="button" onClick={() => control("/api/run/stop")} disabled={controlsUnavailable} title="Finish this run and generate its report">Stop + report</button>
         </div> : <Link className="world-pulse-return-live" to={workspaceUrl(runId, "overview", { ...observerState, tick: "live" })}>Return to live</Link>}
         {live && !run.isLoading && !hasAuthoritativeRunStatus && <p className="world-pulse-control-error" role="status">
           Run controls unavailable until authoritative status arrives.
@@ -270,6 +272,8 @@ export function WorldPulseWorkspace() {
     >
       <dl className="world-pulse-summary" aria-label="World Pulse summary">
         <div><dt>Residents</dt><dd>{formatNumber(world.population)}</dd></div>
+        {projection.data?.summary?.known_living_outside != null &&
+          <div><dt>Known outside</dt><dd>{formatNumber(projection.data.summary.known_living_outside)}</dd></div>}
         <div><dt>Organizations</dt><dd>{formatNumber(world.activeOrganizations)}</dd></div>
         <div><dt>Regions</dt><dd>{formatNumber(world.regions.length)}</dd></div>
         <div><dt>Salient events</dt><dd>{Array.isArray(snapshot.data?.data.alerts) ? formatNumber(snapshot.data.data.alerts.length) : "—"}</dd></div>

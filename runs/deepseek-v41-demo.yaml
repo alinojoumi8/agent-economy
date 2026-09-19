@@ -1,0 +1,12 @@
+# Local 100-tick demonstration with regularly active citizens.
+# Start with --ticks 100 --serve --preflight-live --approve-live-inference.
+extends: live-smoke-deepseek.yaml
+
+behavior:
+  act_every: 3
+
+llm:
+  live_only: true
+  require_preflight_live: true
+
+speed_delay_s: 0.1

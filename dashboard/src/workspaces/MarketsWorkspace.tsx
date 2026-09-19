@@ -2,6 +2,7 @@ import { useRef } from "react";
 import { Link, useSearchParams } from "react-router";
 import { MARKET_WINDOW, filterMarketRows, normalizeMarketsWorkspace } from "./marketsWorkspaceModel.js";
 import { organizationWorkspaceUrl } from "./workspaceRouteState.js";
+import { PriceLab } from "./PriceLab";
 import {
   WorkspaceHeader,
   WorkspaceState,
@@ -21,7 +22,7 @@ type MarketsProjection = {
   orders?: MarketRow[]; trades?: MarketRow[]; fx_orders?: MarketRow[]; fx_trades?: MarketRow[];
   circuit_breakers?: MarketRow[]; currencies?: Array<Record<string, unknown>>;
 };
-type MarketView = "orders" | "trades" | "fx" | "circuits";
+type MarketView = "prices" | "orders" | "trades" | "fx" | "circuits";
 
 function text(value: unknown, fallback = "—") {
   return value === null || value === undefined || value === "" ? fallback : String(value).replaceAll("_", " ");
@@ -36,7 +37,7 @@ export function MarketsWorkspace() {
   const [searchParams, setSearchParams] = useSearchParams();
   const model = normalizeMarketsWorkspace(projection.data || {});
   const requestedView = searchParams.get("view");
-  const view: MarketView = ["orders", "trades", "fx", "circuits"].includes(String(requestedView))
+  const view: MarketView = ["prices", "orders", "trades", "fx", "circuits"].includes(String(requestedView))
     ? requestedView as MarketView : "orders";
   const filters = { side: searchParams.get("side") || "", status: searchParams.get("status") || "" };
   const searchRevision = searchParams.toString();
@@ -80,13 +81,15 @@ export function MarketsWorkspace() {
       </p>}
       <div className="world-os-market-toolbar">
         <div className="world-os-view-switch" role="group" aria-label="Market evidence view">
-          {(["orders", "trades", "fx", "circuits"] as MarketView[]).map(item => <button key={item} type="button" aria-pressed={view === item} onClick={() => patch("view", item)}>{item === "circuits" ? "Circuit breakers" : text(item)}</button>)}
+          {(["prices", "orders", "trades", "fx", "circuits"] as MarketView[]).map(item => <button key={item} type="button" aria-pressed={view === item} onClick={() => patch("view", item)}>{item === "prices" ? "Price lab" : item === "circuits" ? "Circuit breakers" : text(item)}</button>)}
         </div>
         {(view === "orders" || view === "fx") && <div className="world-os-filters">
           <label>Side <select value={filters.side} onChange={event => patch("side", event.target.value)}><option value="">All</option><option value="buy">Buy</option><option value="sell">Sell</option></select></label>
           <label>Status <select value={filters.status} onChange={event => patch("status", event.target.value)}><option value="">All</option><option value="open">Open</option><option value="partial">Partial</option><option value="filled">Filled</option></select></label>
         </div>}
       </div>
+
+      {view === "prices" && <PriceLab />}
 
       {view === "orders" && <article className="world-os-workspace-card">
         <header><div><p className="world-os-kicker">Equity order book</p><h3>Orders</h3></div></header>

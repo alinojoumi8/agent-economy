@@ -117,6 +117,7 @@ python run.py --config runs/v2-institutional-rehearsal.yaml
 | Regions, contracts, law, and politics | [`runs/v2-institutional-rehearsal.yaml`](runs/v2-institutional-rehearsal.yaml) | None |
 | Manually control one citizen | [`runs/participant.yaml`](runs/participant.yaml) | None |
 | Local or paid model cognition | [Provider configuration](docs/configuration.md) | Profile-dependent; preflight and budget required |
+| 1,000-agent MiniMax M3 world | [`runs/v2-live-minimax.yaml`](runs/v2-live-minimax.yaml) | Live core and shared services, deterministic periphery; $150 cap |
 
 > **Choose a profile explicitly.** `python run.py` without `--config` selects the live production
 > profile. Before paid inference, run `--preflight-live`, review the resolved
@@ -265,3 +266,13 @@ authorization. Later evidence and limits live in the implementation-status ledge
 the [dashboard notices](dashboard/public/THIRD_PARTY_NOTICES.txt), and relevant
 source manifests. The generated cover is conceptual artwork; the city preview
 is an existing application capture, not a generated interface.
+
+## City 3D
+
+Run `python run.py --config runs/simcity.yaml --serve` for a provider-free city.
+Choose **3D city** in Live City to explore recorded citizens, workplaces and banks.
+The viewer adds housing blocks, street frontages, sidewalks and trees around
+recorded places. These are illustrative scenery: a housing block represents a
+district, and its streets do not claim simulated traffic or individual homes.
+The 2D atlas remains available. See the [city guide](city/README.md) and
+[construction contract](docs/urban-development.md).

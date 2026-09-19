@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -60,12 +61,14 @@ def test_experiment_harness_treatment_vs_control(tmp_path, caplog):
     ev = out["summary"]["events"]["deposit_move"]
     assert ev["treatment"]["mean"] >= ev["control"]["mean"]
     # Report artifacts exist.
-    assert (tmp_path / "out" / "experiment_mini_rumor.html").exists()
-    assert (tmp_path / "out" / "experiment_mini_rumor.md").exists()
-    assert (tmp_path / "out" / "experiment_mini_rumor.json").exists()
+    report_root = Path(out["batch"]["report_dir"])
+    assert (report_root / "experiment_mini_rumor.html").exists()
+    assert (report_root / "experiment_mini_rumor.md").exists()
+    assert (report_root / "experiment_mini_rumor.json").exists()
     # Same-seed arms differ ONLY by the shock: run dbs are per-arm.
-    assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_treatment.db").exists()
-    assert (tmp_path / "data" / "mini_rumor" / "mini_rumor_s1_control.db").exists()
+    assert len({row["source_database"] for row in results}) == 10
+    assert all(Path(row["source_database"]).is_file() for row in results)
+    assert all(row["eligibility"]["status"] == "eligible" for row in results), results
     log_events = [getattr(record, "event_name", "") for record in caplog.records]
     assert log_events.count("experiment.arm.completed") == 10
     assert "experiment.started" in log_events and "experiment.completed" in log_events

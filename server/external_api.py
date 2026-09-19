@@ -72,6 +72,10 @@ class ActionSubmissionBody(_StrictBody):
     rationale_summary: str = Field(default="", max_length=500)
 
 
+class LocalTurnRenewalBody(_StrictBody):
+    target_tick: int = Field(ge=1)
+
+
 class CommonsActionBody(_StrictBody):
     action: dict[str, Any]
 
@@ -606,6 +610,12 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         return await _wait_turn(service, identity, after_tick=after_tick,
                                 wait_seconds=wait_seconds)
 
+    @app.post("/api/v2/agent/turn/renew")
+    async def renew_local_agent_turn(request: Request, body: LocalTurnRenewalBody):
+        if hosted_safe:
+            raise ExternalAgentError(404, "local turn renewal is unavailable", "not_found")
+        return service.renew_local_turn(auth(request, SCOPE_WORLD_ACT), target_tick=body.target_tick)
+
     @app.post("/api/v2/agent/actions", status_code=202)
     async def submit_agent_action(request: Request, body: ActionSubmissionBody):
         identity = auth(request, SCOPE_WORLD_ACT)
@@ -639,7 +649,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
         if identity.get("actor_id") is None:
             raise HTTPException(status_code=409, detail={"code": "actor_pending"})
         try:
-            return commons.feed(int(identity["actor_id"]), kind=kind,
+            return commons.feed_for_agent(int(identity["actor_id"]), kind=kind,
                                 community_id=community_id, limit=limit)
         except CommonsError as exc:
             _raise_commons(exc)
@@ -728,7 +738,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
                 elif name == "ae_commons_read":
                     if identity.get("actor_id") is None:
                         raise ExternalAgentError(409, "dedicated actor is pending", "actor_pending")
-                    value = commons.feed(
+                    value = commons.feed_for_agent(
                         int(identity["actor_id"]), kind=str(arguments.get("kind", "chronological")),
                         community_id=arguments.get("community_id"),
                         limit=int(arguments.get("limit", 30)))

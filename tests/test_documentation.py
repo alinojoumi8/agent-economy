@@ -37,8 +37,13 @@ HANDBOOK_DOCS = (
     "implementation-status.md", "live-provider-validation.md",
     "live-run-f7c6238bf5.md", "v2-guide.md", "implementation-status.html",
     "buzz-derived-architecture.md", "branch-lifecycle.md",
+    "research/model-description.md",
+    "research/price-lab.md",
+    "plans/2026-09-07-policy-operator-workflow.md",
+    "plans/2026-09-07-city-society-lenses.md",
+    "research/market-benchmarks.md",
     "documentation-maintenance.md", "reproducibility-release-profile.md",
-    "semantics14-external-turn-attendance.md", "adr/README.md",
+    "semantics14-external-turn-attendance.md", "semantics15-households.md", "adr/README.md",
     "adr/0001-owner-run-citizens-use-external-runtimes.md",
     "adr/0002-offline-owner-run-citizens-are-not-impersonated.md",
     "adr/0003-owner-run-citizen-profiles-are-generated-per-city.md",
@@ -306,7 +311,7 @@ def test_current_release_status_has_one_authoritative_ledger():
     lowered = status.lower()
     assert "single maintained release-status" in lowered
     assert "ledger" in lowered
-    assert "schema 20 / semantics 14" in lowered
+    assert "schema 21 / semantics 16" in lowered
     assert "semantics 8 / schema 12" in lowered
     assert "**released deterministic causal baseline**" in lowered
     assert "semantics 9 / schema 13" in lowered
@@ -315,6 +320,8 @@ def test_current_release_status_has_one_authoritative_ledger():
     assert "semantics 11 / schema 15" in lowered
     assert "semantics 12 / schema 17" in lowered
     assert "semantics 14 / schema 20" in lowered
+    assert "semantics 15 / schema 21" in lowered
+    assert "semantics 16 / schema 21" in lowered
     assert "historical semantics-7 closure matrix" in lowered
 
     status_indexes = {
@@ -360,12 +367,12 @@ def test_buzz_derived_architecture_documents_authority_and_history_boundaries():
 
 def test_full_suite_ci_uses_deterministic_cross_platform_shards():
     workflow = (ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8")
-    assert '"shard":[0,1,2,3,4,5,6,7]' in workflow
+    assert '"shard":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15]' in workflow
     assert "matrix: ${{ fromJSON(inputs.full_suite_matrix) }}" in workflow
     assert "python -m pytest tests/ -q" in workflow
     assert "-p scripts.pytest_shard" in workflow
     assert "--ci-shard-index ${{ matrix.shard }}" in workflow
-    assert "--ci-shard-count 8" in workflow
+    assert "--ci-shard-count 16" in workflow
     assert workflow.count("persist-credentials: false") == workflow.count(
         "uses: actions/checkout@v7")
 

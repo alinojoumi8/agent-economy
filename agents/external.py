@@ -14,6 +14,7 @@ from urllib.parse import urlsplit
 from uuid import uuid4
 
 from engine.core import Economy
+from engine.local_participation import residence_changed_after, is_local
 from engine.store import load_json, open_read_only_connection
 from world.event_visibility import (
     PUBLIC_REPORTABLE_EVENT_KINDS,
@@ -100,6 +101,29 @@ class ExternalAgentService:
     runtime's existing ``ActionExecutor``.
     """
 
+    def _local_actor(self, actor_id: int) -> bool:
+        if self.economy.engine_semantics_version < 21:
+            return True
+        actor = self.store.query_one("SELECT id,alive,kind,age FROM agents WHERE id=?", (actor_id,))
+        return bool(actor and actor["alive"] and actor["kind"] == "citizen" and actor["age"] >= 18
+                    and is_local(self.economy, actor_id))
+
+    def _turn_actor(self, actor_id: int) -> bool:
+        if self.economy.engine_semantics_version < 21:
+            return True
+        actor = self.store.query_one('SELECT id,alive,kind,age FROM agents WHERE id=?', (actor_id,))
+        return self.participant._controllable(actor)
+
+    def _close_obsolete_residence_turns(self, connection_id: str, actor_id: int) -> None:
+        if self.economy.engine_semantics_version < 21:
+            return
+        for turn in self.store.query(
+                "SELECT target_tick,event_cursor FROM external_agent_turns "
+                "WHERE connection_id=? AND status IN ('open','submitted') ORDER BY target_tick",
+                (connection_id,)):
+            if residence_changed_after(self.economy, actor_id, int(turn["event_cursor"])):
+                self._close_pending(connection_id, "residence_changed", target_tick=int(turn["target_tick"]))
+
     def __init__(self, economy: Economy, participant: ParticipantService, config: dict):
         self.economy = economy
         self.store = economy.store
@@ -126,6 +150,10 @@ class ExternalAgentService:
         tier = str(tier)
         if tier not in TIER_SCOPES:
             raise ExternalAgentError(400, "invalid permission tier", "invalid_tier")
+        if (tier != 'observer' and self.economy.engine_semantics_version >= 21
+                and self.store.active_tick is not None):
+            raise ExternalAgentError(409, 'actor arrival requests require a committed day boundary',
+                                     'external_input_boundary')
         allowed = set(TIER_SCOPES[tier]) | {SCOPE_MODERATION}
         requested = _clean_scopes(scopes if scopes is not None else TIER_SCOPES[tier])
         if not set(requested).issubset(allowed):
@@ -544,10 +572,16 @@ class ExternalAgentService:
             "SELECT m.name,m.value FROM metrics m JOIN (SELECT name,MAX(tick) AS tick FROM metrics "
             "GROUP BY name) latest ON latest.name=m.name AND latest.tick=m.tick "
             f"{metric_filter}ORDER BY m.name LIMIT 100")}
+        firm_statuses = ("operating", "listed")
+        quote_metadata = ""
+        if self.economy.engine_semantics_version >= 21:
+            firm_statuses = ("private", "listed")
+            quote_metadata = ",f.currency_code,f.region_id,'posted_quote' AS price_basis"
         prices = [dict(row) for row in self.store.query(
             "SELECT f.id AS firm_id,f.name,f.sector,f.inventory,"
-            "json_extract(f.product_json,'$.unit_price_cents') AS unit_price_cents "
-            "FROM firms f WHERE f.status IN ('operating','listed') ORDER BY f.id LIMIT 100")]
+            "json_extract(f.product_json,'$.unit_price_cents') AS unit_price_cents"
+            f"{quote_metadata} FROM firms f WHERE f.status IN (?,?) ORDER BY f.id LIMIT 100",
+            firm_statuses)]
         public_events = [
             {"id": int(row["id"]), "tick": int(row["tick"]), "kind": str(row["kind"]),
             "subject_type": row["subject_type"], "subject_id": row["subject_id"],
@@ -556,8 +590,15 @@ class ExternalAgentService:
                 "SELECT id,tick,kind,subject_type,subject_id,importance FROM events "
                 f"WHERE kind IN ({_PUBLIC_EVENT_KIND_PARAMS}) ORDER BY id DESC LIMIT 50",
                 _PUBLIC_EVENT_KINDS)]
-        return {"completed_tick": self.store.tick, "actor": actor, "accounts": accounts,
-                "metrics": metrics, "market": prices, "recent_public_events": public_events}
+        result = {"completed_tick": self.store.tick, "actor": actor, "accounts": accounts,
+                  "metrics": metrics, "market": prices, "recent_public_events": public_events}
+        if actor_id is not None:
+            frontier = self.economy.frontier.context(actor_id, self.store.tick + 1)
+            if frontier is not None:
+                result["frontier"] = frontier
+        if self.economy.engine_semantics_version >= 21 and actor_id is not None:
+            result['population_boundary'] = self.economy.population.action_context(actor_id, self.store.tick + 1)
+        return result
 
     def _next_wake_tick(self, auth: dict[str, Any], earliest: int) -> int:
         """First tick at or after ``earliest`` on which this connection decides."""
@@ -571,10 +612,64 @@ class ExternalAgentService:
         offset = (int(earliest) - created) % interval
         return int(earliest) + ((interval - offset) % interval)
 
+    def renew_local_turn(self, auth: dict[str, Any], *, target_tick: int) -> dict[str, Any]:
+        """Explicit operational recovery for the paused semantics-11 local cohort.
+
+        A normal poll must never reopen a closed mailbox. The local operator
+        may renew an expired, unconsumed window, with its previous lease audited.
+        """
+        if not {SCOPE_WORLD_READ, SCOPE_WORLD_ACT}.issubset(set(auth["scopes"])):
+            raise ExternalAgentError(403, "world.read and world.act required", "insufficient_scope")
+        meta = self.store.get_meta()
+        if (self.economy.engine_semantics_version != 11 or meta["active_tick"] is not None
+                or meta["status"] not in {"created", "paused"}
+                or target_tick != self.store.tick + 1):
+            raise ExternalAgentError(409, "renewal requires the next day of a paused local semantics-11 world", "renewal_boundary")
+        current = self.turn(auth)  # validates residency, scope and next wake
+        if int(current["target_tick"]) != target_tick:
+            raise ExternalAgentError(409, "not this citizen's next wake", "renewal_boundary")
+        prior = self.store.query_one(
+            "SELECT id FROM external_action_submissions WHERE connection_id=? AND target_tick=? "
+            "AND status IN ('queued','executed') LIMIT 1", (auth["id"], target_tick))
+        if prior is not None or self._fallback_event_recorded(target_tick, str(auth["id"])):
+            raise ExternalAgentError(409, "the decision has already been consumed or submitted", "renewal_consumed")
+        if current["turn_status"] == "open" and _parse_time(current["deadline"]) > _now():
+            return current
+        if current["turn_status"] not in {"open", "fallback"}:
+            raise ExternalAgentError(409, "this decision window cannot be renewed", "renewal_closed")
+        observations = self.observe(auth)
+        catalog = self.participant.action_catalog(int(auth["actor_id"]))
+        renewed = {**current, "observations": observations, "action_catalog": catalog,
+            "projection_hash": _canonical_hash(observations), "action_catalog_version": _canonical_hash(catalog),
+            "deadline": _iso(_now() + timedelta(seconds=max(self.decision_seconds, 300))), "turn_status": "open"}
+        # Only operational turn metadata changes; rejected/stale receipts and
+        # committed simulation state remain intact. Keep the old lease as evidence.
+        self.store.execute("SAVEPOINT local_turn_renewal")
+        try:
+            self._audit(str(auth["id"]), "turn_renewed", "changed", {
+                "turn_id": current["turn_id"], "target_tick": target_tick,
+                "previous_deadline": current["deadline"], "previous_status": current["turn_status"],
+                "previous_projection_hash": current["projection_hash"], "deadline": renewed["deadline"]})
+            self.store.execute(
+                "UPDATE external_agent_turns SET deadline_at=?,status='open',projection_hash=?,"
+                "action_catalog_version=?,envelope_json=?,updated_at=? WHERE id=?",
+                (renewed["deadline"], renewed["projection_hash"], renewed["action_catalog_version"],
+                 _canonical(renewed), _iso(), current["turn_id"]))
+            self.store.execute("RELEASE SAVEPOINT local_turn_renewal")
+        except BaseException:
+            self.store.execute("ROLLBACK TO SAVEPOINT local_turn_renewal")
+            self.store.execute("RELEASE SAVEPOINT local_turn_renewal")
+            raise
+        return renewed
+
     def turn(self, auth: dict[str, Any]) -> dict[str, Any]:
         if SCOPE_WORLD_READ not in auth["scopes"]:
             raise ExternalAgentError(403, "world.read scope required", "insufficient_scope")
         actor_id = int(auth["actor_id"]) if auth.get("actor_id") is not None else None
+        if actor_id is not None and not self._turn_actor(actor_id):
+            raise ExternalAgentError(409, "actor is not a living adult resident", "actor_unavailable")
+        if actor_id is not None:
+            self._close_obsolete_residence_turns(str(auth["id"]), actor_id)
         completed_tick = self.store.tick
         meta = self.store.get_meta()
         # While a tick is in progress its decision mailbox has already closed
@@ -653,6 +748,9 @@ class ExternalAgentService:
         if int(self.config.get("engine_semantics_version", 1)) < 9:
             return
         if self.config.get("replay_source_path"):
+            if self.economy.engine_semantics_version >= 21:
+                self.restore_population_inputs(tick)
+                return
             self._restore_replay_actor_requests(tick)
             # Live clients submit between ticks, before NIGHT_CLOSE begins. Copy
             # recorded submissions at that same boundary so their CONTROL event
@@ -660,20 +758,22 @@ class ExternalAgentService:
             # exact without contacting the external agent.
             if self._replay_commons_precedes_control(tick):
                 self._restore_replay_commons(tick)
-                self._replay_decisions(tick)
+                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
             else:
-                self._replay_decisions(tick)
+                self._replay_decisions(tick, before_night=self.economy.engine_semantics_version >= 21)
                 self._restore_replay_commons(tick)
             return
         while True:
             now = _now()
             rows = self.store.query(
-                "SELECT t.id,t.connection_id,t.deadline_at,t.status "
+                "SELECT t.id,t.connection_id,t.deadline_at,t.status,t.event_cursor,c.actor_id "
                 "FROM external_agent_turns t JOIN external_agent_connections c "
                 "ON c.id=t.connection_id JOIN agents a ON a.id=c.actor_id "
                 "WHERE t.target_tick=? AND t.status='open' AND c.status='active' "
                 "AND c.tier='actor' AND a.alive=1 AND c.lease_expires_at>? "
                 "ORDER BY c.actor_id,c.id", (int(tick), _iso(now)))
+            rows = [row for row in rows if self._turn_actor(int(row["actor_id"]))
+                    and not residence_changed_after(self.economy, int(row["actor_id"]), int(row["event_cursor"]))]
             if not rows:
                 break
             pending = [row for row in rows if _parse_time(row["deadline_at"]) > now]
@@ -687,11 +787,19 @@ class ExternalAgentService:
             await asyncio.sleep(delay)
         now = _now()
         open_rows = self.store.query(
-            "SELECT t.id,t.connection_id,c.actor_id,c.lease_expires_at "
+            "SELECT t.id,t.connection_id,t.event_cursor,c.actor_id,c.lease_expires_at "
             "FROM external_agent_turns t JOIN external_agent_connections c "
             "ON c.id=t.connection_id WHERE t.target_tick=? AND t.status='open'",
             (int(tick),))
         for row in open_rows:
+            if row["actor_id"] is not None:
+                actor = int(row["actor_id"])
+                if not self._turn_actor(actor):
+                    self._close_pending(str(row["connection_id"]), "actor_not_local")
+                    continue
+                if residence_changed_after(self.economy, actor, int(row["event_cursor"])):
+                    self._close_pending(str(row["connection_id"]), "residence_changed", target_tick=int(tick))
+                    continue
             reason = ("decision_window_expired" if row["lease_expires_at"] is not None
                       and _parse_time(row["lease_expires_at"]) > now
                       else "offline")
@@ -705,8 +813,13 @@ class ExternalAgentService:
 
     def restore_replay_after_morning(self, tick: int) -> None:
         """Restore control-plane writes recorded after MORNING but before EXECUTION."""
-        if self.config.get("replay_source_path"):
+        if self.config.get("replay_source_path") and self.economy.engine_semantics_version < 21:
             self._restore_replay_actor_requests(int(tick) + 1)
+
+    def restore_population_inputs(self, tick: int) -> None:
+        if self.config.get('replay_source_path') and self.economy.engine_semantics_version >= 21:
+            from world.commons_replay import restore_population_inputs
+            restore_population_inputs(self, tick)
 
     def _replay_commons_precedes_control(self, tick: int) -> bool:
         """Preserve the source order of between-tick Commons and action writes."""
@@ -714,7 +827,7 @@ class ExternalAgentService:
         completed_tick = int(tick) - 1
         if completed_tick < 0 or not source_path or not Path(str(source_path)).exists():
             return False
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             row = conn.execute(
                 "SELECT "
@@ -735,12 +848,12 @@ class ExternalAgentService:
         finally:
             conn.close()
 
-    def _restore_replay_actor_requests(self, tick: int) -> None:
+    def _restore_replay_actor_requests(self, tick: int, *, request_ids=None, validate_only=False) -> None:
         """Recreate external-citizen arrivals at their recorded spawn boundary."""
         source_path = self.config.get("replay_source_path")
         if not source_path or not Path(str(source_path)).exists():
             return
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             required = {"external_agent_connections", "external_actor_requests", "events"}
             tables = {
@@ -760,6 +873,13 @@ class ExternalAgentService:
                 ",c.passport_id" if "passport_id" in connection_columns
                 else ",NULL AS passport_id"
             )
+            selection = 'r.spawned_tick=?'
+            parameters = (int(tick),)
+            if request_ids is not None:
+                if not request_ids:
+                    return
+                selection = 'r.id IN (' + ','.join('?' for _ in request_ids) + ')'
+                parameters = tuple(sorted(request_ids))
             rows = conn.execute(
                 "SELECT r.*,c.tenant_id,c.owner_id_hash,c.display_name,"
                 "c.biography AS connection_biography,"
@@ -769,12 +889,13 @@ class ExternalAgentService:
                 + passport_select + " "
                 "FROM external_actor_requests r "
                 "JOIN external_agent_connections c ON c.id=r.connection_id "
-                "WHERE r.spawned_tick=? ORDER BY r.id",
-                (int(tick),),
+                'WHERE ' + selection + ' ORDER BY r.id', parameters,
             ).fetchall()
+            if request_ids is not None and len(rows) != len(request_ids):
+                raise RuntimeError('recorded external arrival request is missing')
             for row in rows:
                 connection_id = str(row["source_connection_id"])
-                if self.store.query_one(
+                if not validate_only and self.store.query_one(
                     "SELECT id FROM external_agent_connections WHERE id=?",
                     (connection_id,),
                 ) is not None:
@@ -788,6 +909,8 @@ class ExternalAgentService:
                     raise RuntimeError(
                         "recorded external actor request has no arrival_scheduled event"
                     )
+                if validate_only:
+                    continue
                 self.store.execute(
                     "INSERT INTO external_agent_connections("
                     "id,tenant_id,owner_id_hash,display_name,biography,"
@@ -847,11 +970,17 @@ class ExternalAgentService:
 
     def _restore_replay_commons(self, tick: int) -> None:
         """Replay recorded external Commons writes and feed deliveries offline."""
+        if self.economy.engine_semantics_version >= 21:
+            self.restore_population_inputs(tick)
+        else:
+            self._restore_replay_commons_inputs(tick)
+
+    def _restore_replay_commons_inputs(self, tick: int) -> None:
         source_path = self.config.get("replay_source_path")
         completed_tick = int(tick) - 1
         if completed_tick < 0 or not source_path or not Path(str(source_path)).exists():
             return
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             required = {
                 "commons_entries", "commons_feed_impressions", "commons_reactions",
@@ -880,12 +1009,23 @@ class ExternalAgentService:
                 "ORDER BY entry_id,agent_id,reaction",
                 (completed_tick,),
             ).fetchall()
-            if not entry_rows and not impression_groups and not reaction_rows:
-                return
-
             from world.commons import CommonsService
 
             commons = CommonsService(self.economy)
+            if self.economy.engine_semantics_version >= 21:
+                # Inspect every actor before creating even the first entry or
+                # impression. A later invalid input must not leave a partial
+                # imported batch. Passive authors/owners are not acting here.
+                actors = {int(row["author_agent_id"]) for row in entry_rows}
+                actors.update(int(row["viewer_agent_id"]) for row in impression_groups)
+                actors.update(int(row["agent_id"]) for row in reaction_rows)
+                actors.update(int(row["subject_id"]) for row in conn.execute(
+                    "SELECT subject_id FROM events WHERE tick=? AND phase='COMMONS' "
+                    "AND subject_type='agent' AND subject_id IS NOT NULL", (completed_tick,)))
+                for actor_id in sorted(actors):
+                    commons._local_agent(actor_id)
+            if not entry_rows and not impression_groups and not reaction_rows:
+                return
 
             def source_entry(source_entry_id: int):
                 source_entry = conn.execute(
@@ -1025,6 +1165,14 @@ class ExternalAgentService:
             (auth["id"], key))
         if prior is not None:
             return self.receipt(auth, str(prior["id"]))
+        if self.economy.engine_semantics_version >= 21 and self.store.active_tick is not None:
+            raise ExternalAgentError(409, 'external actions require a committed day boundary',
+                                     'external_input_boundary')
+        if int(self.config.get("engine_semantics_version", 1)) >= 21:
+            requested_tick = submission.get("target_tick")
+            if type(requested_tick) is not int or not 1 <= requested_tick <= 2**63 - 1:
+                raise ExternalAgentError(400, "target_tick must be a positive integer",
+                                         "invalid_submission")
         actor_id = int(auth["actor_id"]) if auth.get("actor_id") is not None else None
         if actor_id is None:
             raise ExternalAgentError(409, "dedicated actor is not available", "actor_pending")
@@ -1184,16 +1332,30 @@ class ExternalAgentService:
             "ON a.id=c.actor_id WHERE c.actor_id IS NOT NULL ORDER BY c.actor_id,c.id")
         for row in rows:
             actor_id = int(row["actor_id"])
+            local_actor = self._local_actor(actor_id)
+            if not self._turn_actor(actor_id):
+                self._close_pending(str(row["id"]), "actor_not_local")
+                continue
+            self._close_obsolete_residence_turns(str(row["id"]), actor_id)
             interval = int(row["wake_interval_ticks"])
             if (tick - int(row["created_tick"])) % interval != 0:
                 continue
-            controlled.add(actor_id)
+            if local_actor:
+                controlled.add(actor_id)
             action_row = None
             if row["status"] == "active" and row["tier"] == "actor" and bool(row["alive"]):
                 action_row = self.store.query_one(
                     "SELECT * FROM external_action_submissions WHERE connection_id=? AND actor_id=? "
                     "AND target_tick=? AND status='queued' ORDER BY created_at,id LIMIT 1",
                     (str(row["id"]), actor_id, tick))
+            if not local_actor:
+                if action_row is None:
+                    continue
+                action = load_json(action_row['action_json'], {})
+                if not self.economy.population.outside_action_allowed(actor_id, action, tick=tick):
+                    self._close_pending(str(row['id']), 'outside_action_unavailable', target_tick=tick)
+                    continue
+                controlled.add(actor_id)
             if action_row is not None:
                 action = load_json(action_row["action_json"], {"type": "do_nothing"})
                 self._record_turn_attendance(
@@ -1296,11 +1458,13 @@ class ExternalAgentService:
                                 "agent": dict(agent) if agent else None,
                                 "accounts": accounts})
 
-    def _replay_decisions(self, tick: int) -> list[dict[str, Any]]:
+    def _replay_decisions(self, tick: int, *, before_night: bool = False,
+                          submission_ids=None, validate_only=False,
+                          restore_turns=True) -> list[dict[str, Any]]:
         source_path = self.config.get("replay_source_path")
         if not source_path or not Path(str(source_path)).exists():
             return []
-        conn = open_read_only_connection(str(source_path))
+        conn = open_read_only_connection(str(source_path), require_closed=self.config.get("replay_source_closed") is True)
         try:
             table = conn.execute(
                 "SELECT 1 FROM sqlite_master WHERE type='table' "
@@ -1322,7 +1486,67 @@ class ExternalAgentService:
                 "SELECT t.*,c.actor_id FROM external_agent_turns t "
                 "JOIN external_agent_connections c ON c.id=t.connection_id "
                 "WHERE t.target_tick=? ORDER BY c.actor_id,t.id", (tick,)).fetchall()
-            for turn_row in turn_rows:
+            submission_filter = "s.status='executed'"
+            if self._attendance_enabled() and attendance_table is not None:
+                # Validation-time rejections never attended the wake. A queued
+                # submission that attended can nevertheless end rejected after
+                # deterministic execution, and must still be replayed.
+                submission_filter = (
+                    "s.status IN ('executed','rejected') AND EXISTS ("
+                    "SELECT 1 FROM external_turn_attendance a "
+                    "WHERE a.submission_id=s.id "
+                    "AND a.attendance_status='submitted')"
+                )
+            parameters = (tick,)
+            if submission_ids is not None:
+                if not submission_ids:
+                    return []
+                submission_filter = 's.id IN (' + ','.join('?' for _ in submission_ids) + ')'
+                parameters += tuple(sorted(submission_ids))
+            rows = conn.execute(
+                "SELECT s.*,c.tenant_id,c.display_name,c.biography,c.preferred_occupation,c.tier,"
+                "c.scopes_json,c.actor_id,c.created_tick,c.created_at,c.wake_interval_ticks,"
+                "t.completed_tick AS source_completed_tick,"
+                "t.projection_hash AS source_turn_projection_hash,"
+                "t.action_catalog_version AS source_action_catalog_version,"
+                "t.envelope_json AS source_envelope_json,"
+                "t.event_cursor AS source_event_cursor,"
+                "t.deadline_at AS source_deadline_at,"
+                "t.status AS source_turn_status,"
+                "t.created_at AS source_turn_created_at"
+                + passport_select + " "
+                "FROM external_action_submissions s JOIN external_agent_connections c "
+                "ON c.id=s.connection_id JOIN external_agent_turns t ON t.id=s.turn_id "
+                "WHERE s.target_tick=? AND " + submission_filter + " "
+                "ORDER BY s.actor_id,s.id", parameters).fetchall()
+            if submission_ids is not None and len(rows) != len(submission_ids):
+                raise RuntimeError('recorded external submission is missing')
+            missed_rows = []
+            if not before_night and self._attendance_enabled() and attendance_table is not None:
+                # New arrivals and returns become local in NIGHT. Their missed
+                # wakes are validated at MORNING, after residence is recorded.
+                missed_rows = conn.execute(
+                    "SELECT connection_id,actor_id,decision_policy "
+                    "FROM external_turn_attendance WHERE target_tick=? "
+                    "AND attendance_status='missed' ORDER BY actor_id,connection_id,id",
+                    (int(tick),),
+                ).fetchall()
+            # Validate the whole imported decision batch before copying turns,
+            # retrieving memories or appending any recorded input or receipt.
+            # A closed offer without attendance may legitimately predate an exit.
+            unavailable = any(not self._local_actor(int(row['actor_id'])) for row in missed_rows)
+            for row in rows:
+                actor_id = int(row['actor_id'])
+                if (not self._local_actor(actor_id) and not (self._turn_actor(actor_id)
+                        and self.economy.population.outside_action_allowed(
+                            actor_id, load_json(row['action_json'], {})))):
+                    unavailable = True
+            if unavailable:
+                raise ExternalAgentError(409, "recorded external decision has no local adult actor",
+                                         "replay_actor_unavailable")
+            if validate_only:
+                return []
+            for turn_row in turn_rows if restore_turns else ():
                 actor_id = int(turn_row["actor_id"])
                 actor = self.store.query_one(
                     "SELECT alive FROM agents WHERE id=?", (actor_id,))
@@ -1347,33 +1571,6 @@ class ExternalAgentService:
                      str(turn_row["envelope_json"]), int(turn_row["event_cursor"]),
                      str(turn_row["deadline_at"]), str(turn_row["status"]),
                      str(turn_row["created_at"]), _iso()))
-            submission_filter = "s.status='executed'"
-            if self._attendance_enabled() and attendance_table is not None:
-                # Validation-time rejections never attended the wake. A queued
-                # submission that attended can nevertheless end rejected after
-                # deterministic execution, and must still be replayed.
-                submission_filter = (
-                    "s.status IN ('executed','rejected') AND EXISTS ("
-                    "SELECT 1 FROM external_turn_attendance a "
-                    "WHERE a.submission_id=s.id "
-                    "AND a.attendance_status='submitted')"
-                )
-            rows = conn.execute(
-                "SELECT s.*,c.tenant_id,c.display_name,c.biography,c.preferred_occupation,c.tier,"
-                "c.scopes_json,c.actor_id,c.created_tick,c.created_at,c.wake_interval_ticks,"
-                "t.completed_tick AS source_completed_tick,"
-                "t.projection_hash AS source_turn_projection_hash,"
-                "t.action_catalog_version AS source_action_catalog_version,"
-                "t.envelope_json AS source_envelope_json,"
-                "t.event_cursor AS source_event_cursor,"
-                "t.deadline_at AS source_deadline_at,"
-                "t.status AS source_turn_status,"
-                "t.created_at AS source_turn_created_at"
-                + passport_select + " "
-                "FROM external_action_submissions s JOIN external_agent_connections c "
-                "ON c.id=s.connection_id JOIN external_agent_turns t ON t.id=s.turn_id "
-                "WHERE s.target_tick=? AND " + submission_filter + " "
-                "ORDER BY s.actor_id,s.id", (tick,)).fetchall()
             out = []
             for row in rows:
                 actor = self.store.query_one("SELECT alive FROM agents WHERE id=?", (int(row["actor_id"]),))
@@ -1435,13 +1632,6 @@ class ExternalAgentService:
                             "replay_source_submission_id": str(row["id"])})
             if self._attendance_enabled():
                 if attendance_table is not None:
-                    missed_rows = conn.execute(
-                        "SELECT connection_id,actor_id,decision_policy "
-                        "FROM external_turn_attendance WHERE target_tick=? "
-                        "AND attendance_status='missed' "
-                        "ORDER BY actor_id,connection_id,id",
-                        (int(tick),),
-                    ).fetchall()
                     for attendance in missed_rows:
                         actor_id = int(attendance["actor_id"])
                         connection_id = str(attendance["connection_id"])
@@ -1470,7 +1660,8 @@ class ExternalAgentService:
                     ))
             if out:
                 self.store.set_meta(external_agent_influenced=1)
-            self._copy_replay_attendance(conn, tick)
+            if not before_night:
+                self._copy_replay_attendance(conn, tick)
             return out
         finally:
             conn.close()
