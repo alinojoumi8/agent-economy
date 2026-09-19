@@ -442,5 +442,10 @@ before merge; the full cross-platform matrix remains a manual workflow
 dispatch. Each OS/Python pair uses all 16 full-suite shards (indices 0–15),
 with a 30-minute limit per job. A focused matrix override provides partial
 coverage until every shard in the pair has a successful result.
+The policy recovery and saved-world recovery suites each run across four
+deterministic shards, retaining every test and the ten-minute job limit. Verbose
+test names, duration summaries and a 90-second traceback make slow executions
+diagnosable. Run research suites from an unchanged checkout: their manifests bind
+the complete code identity, so edits during execution correctly invalidate them.
 Pull requests should state behavior, tests, live calls/cost,
 compatibility impact, and remaining risk. See [CONTRIBUTING.md](../CONTRIBUTING.md).
