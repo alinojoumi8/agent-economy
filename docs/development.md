@@ -447,5 +447,9 @@ deterministic shards, retaining every test and the ten-minute job limit. Verbose
 test names, duration summaries and a 90-second traceback make slow executions
 diagnosable. Run research suites from an unchanged checkout: their manifests bind
 the complete code identity, so edits during execution correctly invalidate them.
+Failed dashboard checks retain Playwright traces and screenshots for seven days.
+Hosted integration and Compose use the pinned MinIO server and client releases
+from the publisher's `quay.io/minio` registry; changing the registry does not
+upgrade the stored-data format or runtime version.
 Pull requests should state behavior, tests, live calls/cost,
 compatibility impact, and remaining risk. See [CONTRIBUTING.md](../CONTRIBUTING.md).
