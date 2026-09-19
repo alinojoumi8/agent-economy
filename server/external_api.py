@@ -337,7 +337,8 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
     commons = world.commons
     from agents.selection_services import SelectionService
     def available_tools(identity):
-        selector = SelectionService(world.gateway, service.config)
+        # Discovery only inspects policy; ordinary transports need no gateway.
+        selector = SelectionService(None, service.config)
         return _tool_definitions(set(identity["scopes"]),
             jev_helper=selector.enabled("hermes_helper", service.store.tick + 1),
             commons_helper=selector.enabled("commons", service.store.tick))
@@ -350,7 +351,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
     @app.get("/api/v2/agent/commons/jev-view")
     async def commons_jev_view(request: Request):
         from agents.commons_selection import observation
-        if not SelectionService(world.gateway, service.config).enabled("commons", service.store.tick):
+        if not SelectionService(None, service.config).enabled("commons", service.store.tick):
             raise ExternalAgentError(409, "Commons selection is not enabled", "helper_disabled")
         try:
             return observation(service, commons, auth(request, SCOPE_COMMONS_READ))

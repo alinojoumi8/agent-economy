@@ -239,6 +239,13 @@ def test_rest_and_mcp_outside_reads_are_observations_and_writes_are_rejected(com
     before = science()
     with TestClient(app) as client:
         client.headers['Authorization'] = 'Bearer ' + credential['token']
+        listed = client.post('/mcp', json={'jsonrpc': '2.0', 'id': 1,
+            'method': 'tools/list'}).json()
+        tool_names = {tool['name'] for tool in listed['result']['tools']}
+        assert 'ae_commons_read' in tool_names
+        assert not any('jev' in name for name in tool_names)
+        disabled = client.get('/api/v2/agent/commons/jev-view')
+        assert disabled.status_code == 409 and 'helper_disabled' in disabled.text
         read = client.get('/api/v2/agent/commons')
         assert read.status_code == 200, read.text
         assert read.json()['observation_only'] is True
