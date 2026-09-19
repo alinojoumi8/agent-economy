@@ -147,6 +147,9 @@ test('construction before and after states preserve City context through linked 
   await construction.getByRole('link',{name:'Event #8',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Evidence in City'})).toBeVisible();
   await page.getByRole('button',{name:'Back to City · Esc'}).click();
+  // Returning remounts the 3D viewport; wait for its readiness before checking
+  // the restored selection so a busy CI renderer cannot exhaust that assertion.
+  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true',{timeout:15000});
   await expect(page.getByLabel('Keyboard explorer')).toHaveValue('firm:1');
   await expect(page.getByRole('button',{name:'3D · experimental',exact:true})).toHaveAttribute('aria-pressed','true');
   await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-camera3d',camera);
