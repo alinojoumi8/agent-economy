@@ -19,7 +19,7 @@ from llm.adapters import AdapterResult
 from engine.store import Store
 from llm.gateway import BudgetExceeded, Gateway, LLMRequest, PriorityProviderGate, RoutePlan, RouteTarget
 from research.provider_budget import (
-    BudgetLedgerError, ProviderBudget, ProviderBudgetContract, TokenTariff,
+    BudgetLedgerError, GatewayBinding, GatewayTarget, ProviderBudget, ProviderBudgetContract, TokenTariff,
     gateway_config_identity,
 )
 
@@ -39,6 +39,68 @@ def contract(cfg=None, **changes):
         **({"max_provider_calls": 4, "max_tokens": 40_000, "max_spend_nano_usd": 400_000,
             "tariffs": (TokenTariff(provider="fixture", model="test-model", max_input_tokens=4096,
                 max_output_tokens=1024, input_nano_usd_per_token=10, output_nano_usd_per_token=20),)} | changes))
+
+
+def typed_contract(cfg):
+    values = contract(cfg).model_dump()
+    values.pop("gateway_config_sha256")
+    values.update(protocol_version="typed-provider-budget-v1", gateway_bindings=(GatewayBinding(
+        key="world", config_sha256=gateway_config_identity(cfg),
+        targets=(GatewayTarget(provider="fixture", model="test-model"),)),))
+    return ProviderBudgetContract.model_validate(values)
+
+
+@pytest.mark.parametrize("defaults", [
+    {"stream": False, "thinking": {"type": "disabled"}}, {"reasoning_split": True},
+])
+@pytest.mark.parametrize("limit_field", ["max_tokens", "max_completion_tokens"])
+def test_typed_budget_preserves_safe_controls_and_reserved_wire_limit(tmp_path, monkeypatch, defaults, limit_field):
+    import httpx
+    from llm.adapters import OpenAICompatAdapter
+    cfg = config()
+    cfg["llm"]["providers"]["fixture"].update(request_defaults=defaults, max_tokens_field=limit_field)
+    budget = ProviderBudget.create(tmp_path / "typed.db", typed_contract(cfg), scope="world", binding_key="world")
+    budget.validate_config(cfg)
+    requests = []
+    original = httpx.AsyncClient
+    def respond(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        assert body[limit_field] == 100
+        assert all(body[key] == value for key, value in defaults.items())
+        assert body["model"] == "test-model"
+        return httpx.Response(200, json={"choices": [{"message": {"content": '{"ok":true}'}}],
+            "usage": {"prompt_tokens": 10, "completion_tokens": 5}})
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: original(
+        **kwargs, transport=httpx.MockTransport(respond)))
+    adapter = OpenAICompatAdapter(cfg["llm"]["providers"]["fixture"])
+    asyncio.run(complete(budget, adapter))
+    with sqlite3.connect(budget.path) as db:
+        assert db.execute("SELECT reserved_output,state FROM reservations").fetchone() == (100, "settled")
+    assert len(requests) == budget.snapshot()["provider_calls"] == 1
+
+
+@pytest.mark.parametrize("defaults", [
+    {"max_tokens": 100000}, {"max_completion_tokens": 100000}, {"model": "other"},
+    {"messages": []}, {"tools": []}, {"stream": True}, {"stream": 0},
+    {"thinking": {"type": "enabled"}}, {"thinking": {"type": "disabled", "budget_tokens": 100}},
+    {"reasoning_split": 1}, {"reasoning_split": True, "max_tokens": 100000},
+])
+def test_typed_budget_still_rejects_request_and_token_overrides(tmp_path, defaults):
+    cfg = config()
+    cfg["llm"]["providers"]["fixture"]["request_defaults"] = defaults
+    budget = ProviderBudget.create(tmp_path / "typed.db", typed_contract(cfg), scope="world", binding_key="world")
+    with pytest.raises(BudgetLedgerError, match="extras"):
+        budget.validate_config(cfg)
+    assert budget.snapshot()["provider_calls"] == 0
+
+
+def test_research_budget_retains_strict_defaults_restriction(tmp_path):
+    cfg = config()
+    cfg["llm"]["providers"]["fixture"]["request_defaults"] = {"stream": False}
+    budget = ProviderBudget.create(tmp_path / "research.db", contract(cfg), scope="world")
+    with pytest.raises(BudgetLedgerError, match="extras"):
+        budget.validate_config(cfg)
 
 
 class FixtureAdapter:

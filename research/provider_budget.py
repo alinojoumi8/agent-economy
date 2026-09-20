@@ -360,8 +360,17 @@ class ProviderBudget:
             typed_routing = (self.contract.protocol_version == "typed-provider-budget-v1"
                 and isinstance(extras, dict) and set(extras) == {"provider"}
                 and extras["provider"] == {"only": ["OpenAI"], "allow_fallbacks": False})
+            # These pinned controls neither replace the request nor enlarge its
+            # token ceiling. Keep routing, messages, tools and all token-limit
+            # fields forbidden, including alternate output-limit field names.
+            safe_controls = {"stream": False, "thinking": {"type": "disabled"},
+                             "reasoning_split": True}
+            typed_controls = (self.contract.protocol_version == "typed-provider-budget-v1"
+                and isinstance(extras, dict) and set(extras) <= set(safe_controls)
+                and all(type(value) is type(safe_controls[key]) and value == safe_controls[key]
+                        for key, value in extras.items()))
             if provider.get("kind") == "openai_compat" and (
-                    (extras and not typed_routing)
+                    (extras and not (typed_routing or typed_controls))
                     or provider.get("max_tokens_field", "max_tokens") not in {"max_tokens", "max_completion_tokens"}):
                 raise BudgetLedgerError("research adapter extras can change the declared request or token ceiling")
         self.snapshot()
