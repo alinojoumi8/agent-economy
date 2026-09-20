@@ -164,13 +164,15 @@ test('construction before and after states preserve City context through linked 
   const construction=page.getByRole('region',{name:'City construction',exact:true});
   await expect(construction).toContainText('1 under construction · 0 completed');
   await expect(construction.getByRole('button',{name:'Cancel · full refund'})).toBeDisabled();
+  const originalCanvas=await page.getByTestId('city-canvas').elementHandle();
   await construction.getByRole('link',{name:'Event #8',exact:true}).click();
   await expect(page.getByRole('dialog',{name:'Evidence in City'})).toBeVisible();
+  expect(await originalCanvas!.evaluate(node=>node.isConnected)).toBe(true);
+  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-camera3d',camera);
   await page.getByRole('button',{name:'Back to City · Esc'}).click();
   await expect(page.getByRole('dialog',{name:'Evidence in City'})).toBeHidden();
-  // Returning remounts the 3D viewport; wait for its readiness before checking
-  // the restored selection so a busy CI renderer cannot exhaust that assertion.
-  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true',{timeout:15000});
+  expect(await originalCanvas!.evaluate(node=>node.isConnected)).toBe(true);
+  await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-ready','true');
   await expect(page.getByLabel('Keyboard explorer')).toHaveValue('firm:1');
   await expect(page.getByRole('button',{name:'3D · experimental',exact:true})).toHaveAttribute('aria-pressed','true');
   await expect(page.getByTestId('city-canvas')).toHaveAttribute('data-camera3d',camera);

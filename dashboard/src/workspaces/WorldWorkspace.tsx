@@ -1,9 +1,10 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useNavigate, useSearchParams } from 'react-router';
 import { projectionApi, workspaceApi } from '../app/api';
 import { cityActivityMarkers, cityRuntimeMatches, loadCityConversations, loadCityProjection } from '../app/cityProjection.js';
 import { cityEvidenceParams, cityWorkspaceHref } from '../app/cityNavigation.js';
+import { parseObserverViewState } from '../app/observerViewState';
 import { CivicCity } from '../components/CivicCity';
 import { useModalFocus } from '../components/useModalFocus';
 import { CityActivityPanel, useCityActivity } from '../city/CityActivityPanel';
@@ -35,14 +36,23 @@ function CityDetailPanel({title,children,onClose}:{title:string;children:ReactNo
 export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNode}) {
   const projection=useWorkspaceProjection<{frontier?:FrontierState}>('workspace.world','/api/v2/workspaces/world');
   const {observerState,runId}=projection;
+  // Detail routes have their own view/filter parameters. Keep the underlying
+  // City on its bookmark so opening a panel does not dispose the 3D renderer.
+  const cityState=useMemo(()=>panel?{
+    ...parseObserverViewState(new URLSearchParams(observerState.city||'')),
+    fork:observerState.fork,tick:observerState.tick,event:observerState.event,
+  }:observerState,[panel,observerState]);
+  const updateCity=useCallback<typeof projection.setObserverState>((...args)=>{
+    if(!panel)projection.setObserverState(...args);
+  },[panel,projection.setObserverState]);
   const navigate=useNavigate();
   const [params,setParams]=useSearchParams();
   useEffect(()=>{if(!panel&&params.has('region')){const next=new URLSearchParams(params);next.delete('region');setParams(next,{replace:true});}},[panel,params,setParams]);
   const [proposal,setProposal]=useState<CityProposal>(null);
   const tick=observerState.tick;
   const city=useQuery({
-    queryKey:['world-os',runId,observerState.fork,'world-city',tick,observerState.population],
-    queryFn:({signal})=>loadCityProjection({...observerState,runId},path=>projectionApi(path,signal)),
+    queryKey:['world-os',runId,observerState.fork,'world-city',tick,cityState.population],
+    queryFn:({signal})=>loadCityProjection({...cityState,runId},path=>projectionApi(path,signal)),
     retry:false,
     refetchInterval:query=>tick==='live'&&!TERMINAL.has(String(query.state.data?.overview.data.summary?.status||'').toLowerCase())?3000:false,
   });
@@ -53,9 +63,9 @@ export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNo
   const conversations=useQuery({
     queryKey:['world-os',runId,observerState.fork,'city-conversations',frame?.snapshot_version],
     queryFn:({signal})=>loadCityConversations(frame,path=>projectionApi(path,signal)),
-    enabled:observerState.view==='recorded'&&Boolean(frame),retry:false,
+    enabled:cityState.view==='recorded'&&Boolean(frame),retry:false,
   });
-  const pollRuntime=tick==='live'&&observerState.view!=='recorded'&&Boolean(frame)&&!TERMINAL.has(String(summary?.status));
+  const pollRuntime=tick==='live'&&cityState.view!=='recorded'&&Boolean(frame)&&!TERMINAL.has(String(summary?.status));
   const runtime=useQuery({
     queryKey:['llm-runtime',runId,observerState.fork],
     queryFn:({signal})=>workspaceApi<any>('/api/llm/runtime',{signal}),
@@ -81,7 +91,7 @@ export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNo
         runtime={currentRuntime} runId={runId} tick={tick} phase={summary?.phase} status={summary?.status}
         loading={city.isLoading} error={city.error instanceof Error?city.error.message:''}
         connected={projection.transport.status==='live'} historical={tick!=='live'}
-        variant="world-os" observerState={observerState} onObserverStateChange={projection.setObserverState} suspendSelectionRepair={Boolean(panel)}
+        variant="world-os" observerState={cityState} onObserverStateChange={updateCity} suspendSelectionRepair={Boolean(panel)}
         hideActivityDock activityActorIds={actorScope} activityDay={activity.data?.data}
         recordedAvailable={Boolean(city.data?.map.presence?.length)}
         conversations={!conversations.error&&conversations.data?.mapSnapshot===frame?.snapshot_version?conversations.data?.data:null}
@@ -91,8 +101,8 @@ export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNo
           <CityViewport embedded envelope={frame} snapshot={activity.data} runId={runId} tick={tick}
             status={summary?.status||''} stale={stale} loading={city.isLoading}
             error={city.error instanceof Error?city.error.message:''} visibleAgentIds={visibleAgents.map((a:any)=>Number(a.id))}
-            selectedAgentId={selected?.id??null} onSelect={projection.setObserverState} followId={observerState.follow} proposal={proposal}
-            onFallback={()=>projection.setObserverState({view:'atlas'})}/>
+            selectedAgentId={selected?.id??null} onSelect={updateCity} followId={cityState.follow} proposal={proposal} observerState={cityState}
+            onFallback={()=>updateCity({view:'atlas'})}/>
         </Suspense>}
       />
       <CityActivityPanel activity={activity} runId={runId} tick={tick} onSelect={projection.setObserverState}/>

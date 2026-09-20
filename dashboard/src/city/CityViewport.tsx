@@ -6,9 +6,10 @@ import { UrbanDevelopment, type CityProposal } from './UrbanDevelopment';
 import { CityControls } from './CityControls';
 import './city.css';
 import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
+import type { ObserverViewState } from '../app/observerViewState';
 
-type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal};
-export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal}:Props){
+type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal;observerState?:ObserverViewState};
+export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal,observerState}:Props){
   const location=useLocation();
   const host=useRef<HTMLDivElement>(null),scene=useRef<CityScene|null>(null);
   const [params,setParams]=useSearchParams();
@@ -18,16 +19,20 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   const [stats,setStats]=useState<SceneStats|null>(null);
   const pickRef=useRef<(key:string)=>void>(()=>{});
   const cameraChangeRef=useRef<(value:string)=>void>(()=>{});
-  const cameraBookmark=normalizeCityCamera3d(params.get('camera3d'));
+  const displayState=embedded?observerState:undefined;
+  const cameraBookmark=normalizeCityCamera3d(displayState?displayState.camera3d:params.get('camera3d'));
   cameraChangeRef.current=(value:string)=>{
-    if(value===cameraBookmark&&!params.has('follow'))return;
+    if(value===cameraBookmark&&!(displayState?displayState.follow:params.has('follow')))return;
     if(embedded&&onSelect){onSelect({camera3d:value,follow:null});return;}
     const next=new URLSearchParams(params);next.set('camera3d',value);next.delete('follow');setParams(next);
   };
   const parsed=useMemo(()=>{try{return {city:envelope?projectCity(envelope):null,error:''};}catch(e){return {city:null,error:e instanceof Error?e.message:'Invalid city data.'};}},[envelope]);
   const city=parsed.city;
-  const selectedType=embedded?(params.has('firm')?'firm':params.has('place')?'place':params.get('institution')?.startsWith('bank:')?'bank':'agent'):params.get('cityType')||'agent';
-  const selectedId=embedded?Number(params.get('firm')||params.get('place')||params.get('institution')?.split(':')[1]||selectedAgentId):Number(params.get('cityEntity')||params.get('agent'));
+  const firm=displayState?displayState.firm:params.get('firm');
+  const place=displayState?displayState.place:params.get('place');
+  const institution=displayState?displayState.institution:params.get('institution');
+  const selectedType=embedded?(firm!=null?'firm':place!=null?'place':institution?.startsWith('bank:')?'bank':'agent'):params.get('cityType')||'agent';
+  const selectedId=embedded?Number(firm||place||institution?.split(':')[1]||selectedAgentId):Number(params.get('cityEntity')||params.get('agent'));
   const selected=city?.instances.find(i=>i.entityType===selectedType&&i.entityId===selectedId)||null;
   const visible=useMemo(()=>city?.instances.filter(i=>(layer==='all'||i.entityType===layer)&&(region==='all'||String(i.regionId)===region)
     &&(!embedded||i.entityType!=='agent'||!visibleAgentIds||visibleAgentIds.includes(i.entityId))
