@@ -77,6 +77,9 @@ def test_exclusive_actions_reject_malformed_siblings_without_losing_ballots(
     assert len(results) == 3
     assert results[0]["ok"] is False and "consumes" in results[0]["reason"]
     assert results[2]["ok"] is recorded_voting
+    votes = ballots._events("ballot_cast", 1)
+    expected_votes = [(actor, "fiscal", "abstain")] if recorded_voting else []
+    assert [(vote["actor_id"], vote["key"], vote["choice"]) for vote in votes] == expected_votes
     assert world.economy.ledger.reconcile()[0]
 
 
