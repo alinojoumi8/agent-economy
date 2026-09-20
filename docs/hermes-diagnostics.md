@@ -14,6 +14,10 @@ uses the preparation harness, `open_run` genesis/migrations, or provider preflig
 All artifact paths and budget identifiers below are mandatory. The operator
 workspace path is also explicit because the HTTP server normally creates that
 separate UI database. This mode must attach its existing copy instead.
+The supplied workspace must match `operator_workspace.path` in the stored config,
+or the normal `operator-workspace.db` default beside the existing world database.
+Use absolute recorded control-plane paths when serving across worktrees; relative
+configured paths retain their normal process-working-directory interpretation.
 
 ```powershell
 python -B run.py --serve --host 127.0.0.1 --port PORT --ticks REMAINING_ALLOWANCE `

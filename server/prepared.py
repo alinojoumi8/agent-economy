@@ -3,6 +3,7 @@ from contextlib import ExitStack, contextmanager
 import json
 import re
 import sqlite3
+from pathlib import Path
 
 from agents.passports import SqlitePassportRepository
 from engine.existing import existing_path, validate_schema
@@ -105,6 +106,10 @@ def prepared_app(*, existing_run_db, provider_budget_db, passport_db,
         meta, config = _world_state(conn, expected_run_id)
         validate_schema(conn, initialize_schema)
         _passport_binding(conn, passport, config)
+    configured_workspace = config.get('operator_workspace', {}).get(
+        'path', database.parent / 'operator-workspace.db')
+    if existing_path(Path(configured_workspace)) != workspace_path:
+        raise ValueError('operator workspace path differs from recorded world workspace')
     with inspection_snapshot(workspace_path) as conn:
         validate_schema(conn, lambda ref: ref.executescript(WORKSPACE_SCHEMA))
     contract = _budget_contract(budget_path, expected_budget_contract_sha256,

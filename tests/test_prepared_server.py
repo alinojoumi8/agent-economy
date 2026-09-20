@@ -42,7 +42,7 @@ def logical(path):
 @pytest.fixture
 def artifacts(tmp_path):
     passport = tmp_path / 'passports.db'
-    workspace = tmp_path / 'workspace.db'
+    workspace = tmp_path / 'operator-workspace.db'
     world = _world(tmp_path, engine_semantics_version=20, public_join={
         'enabled': True, 'passport_db_path': str(passport), 'world_slug': 'test-world',
     })
@@ -182,6 +182,38 @@ def test_wrong_passport_file_is_rejected(inert, tmp_path):
         with prepared_app(**inert):
             pytest.fail('unexpected server')
     assert bytes_of(tmp_path) == before
+
+
+@pytest.mark.parametrize('configured', [False, True])
+def test_unrelated_valid_workspace_is_rejected(inert, tmp_path, configured):
+    if configured:
+        with sqlite3.connect(inert['existing_run_db']) as conn:
+            cfg = json.loads(conn.execute('SELECT config_json FROM run_meta').fetchone()[0])
+            cfg['operator_workspace'] = {'path': str(inert['operator_workspace_db'])}
+            conn.execute('UPDATE run_meta SET config_json=?', (json.dumps(cfg),))
+    other = tmp_path / 'unrelated-workspace.db'
+    OperatorWorkspace(other).close()
+    inert['operator_workspace_db'] = other
+    before = bytes_of(tmp_path)
+    with pytest.raises(ValueError, match='recorded world workspace'):
+        with prepared_app(**inert):
+            pytest.fail('unexpected server')
+    assert bytes_of(tmp_path) == before
+
+
+def test_explicit_recorded_workspace_loads(inert, tmp_path):
+    configured = tmp_path / 'configured-workspace.db'
+    inert['operator_workspace_db'].rename(configured)
+    with sqlite3.connect(inert['existing_run_db']) as conn:
+        cfg = json.loads(conn.execute('SELECT config_json FROM run_meta').fetchone()[0])
+        cfg['operator_workspace'] = {'path': str(configured)}
+        conn.execute('UPDATE run_meta SET config_json=?', (json.dumps(cfg),))
+    inert['operator_workspace_db'] = configured
+    before = {k: logical(inert[k]) for k in ('existing_run_db','provider_budget_db','passport_db','operator_workspace_db')}
+    with prepared_app(**inert) as app:
+        with TestClient(app):
+            assert app.state.operator_workspace.path == configured
+    assert {k: logical(inert[k]) for k in before} == before
 
 
 def test_durable_attention_pause_is_not_cleared(inert):
