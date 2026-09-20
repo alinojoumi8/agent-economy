@@ -80,6 +80,8 @@ jobs:
           tests/test_personal_names.py
           tests/test_hermes_citizens_operator.py
           tests/test_hermes_supervision.py
+          tests/test_hermes_diagnostics.py
+          tests/test_inspection_snapshot.py
           tests/test_research_export.py
           tests/test_prd_completion.py
           tests/test_recorded_replay_golden.py

@@ -7,12 +7,14 @@ concerns do not live in one large route-registration closure.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
 import time
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
+from pathlib import Path
 from threading import Lock
 from typing import AsyncIterator
 
@@ -490,6 +492,51 @@ class RunController:
     async def step(self) -> dict:
         async with self._control_lock:
             return await self._step_locked()
+
+    def diagnostic_state(self) -> dict:
+        """Read the clock boundary without readiness probes or state updates."""
+        meta = self.store.get_meta()
+        return {"run_id": meta["run_id"], "tick": self.store.tick,
+                "active_tick": meta["active_tick"], "status": self.world.status,
+                "running": self.is_running(), "control_lock_held": self._control_lock.locked(),
+                "pause_reason": self.world.last_pause_reason,
+                "identity": {"run_id": meta["run_id"], "seed": meta["seed"],
+                    "config_sha256": hashlib.sha256(meta["config_json"].encode()).hexdigest()}}
+
+    def diagnostic_snapshot(self) -> dict:
+        """Inspect without writing SQLite WAL read marks or citizen leases."""
+        from engine.inspection import inspection_snapshot
+        with inspection_snapshot(self.store.path) as db:
+            meta = dict(db.execute("SELECT * FROM run_meta").fetchone())
+            return {"run_id": meta["run_id"], "tick": meta["tick"],
+                "active_tick": meta["active_tick"], "status": self.world.status,
+                "running": self.is_running(), "control_lock_held": self._control_lock.locked(),
+                "pause_reason": self.world.last_pause_reason,
+                "identity": {"run_id": meta["run_id"], "seed": meta["seed"],
+                    "config_sha256": hashlib.sha256(meta["config_json"].encode()).hexdigest()},
+                "database": str(Path(self.store.path).resolve())}
+
+    async def advance_one(self, expected_run_id: str, expected_tick: int) -> dict:
+        """Compare and step once under the existing clock lock; never recover/retry."""
+        # Do not queue a diagnostic behind another control operation. There is
+        # no yield between this check and acquiring an uncontended asyncio lock.
+        if self._control_lock.locked():
+            raise HTTPException(status_code=409, detail="controller_busy")
+        async with self._control_lock:
+            before = self.diagnostic_state()
+            if before["run_id"] != expected_run_id:
+                raise HTTPException(status_code=409, detail="wrong_run_id")
+            if type(expected_tick) is not int or before["tick"] != expected_tick:
+                raise HTTPException(status_code=409, detail="stale_expected_tick")
+            if before["running"] or before["status"] == "running":
+                raise HTTPException(status_code=409, detail="world_running")
+            if before["active_tick"] is not None:
+                raise HTTPException(status_code=409, detail="partial_tick_requires_recovery")
+            result = await self._step_locked()
+            after = self.diagnostic_state()
+            return {"outcome": "advanced" if after["tick"] == expected_tick + 1
+                    and after["active_tick"] is None else "not_completed",
+                    "before": before, "after": after, "result": result}
 
     async def _step_locked(self) -> dict:
         self._require_mutable("step")

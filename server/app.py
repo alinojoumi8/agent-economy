@@ -54,6 +54,11 @@ class SpeedBody(BaseModel):
     delay_s: float = Field(ge=0.0, le=3600.0, allow_inf_nan=False)
 
 
+class AdvanceOneBody(BaseModel):
+    expected_run_id: str = Field(strict=True, pattern=r"^[a-zA-Z0-9_-]+$")
+    expected_tick: int = Field(strict=True, ge=0)
+
+
 class ParticipantControlBody(BaseModel):
     agent_id: int
     expected_tick: int
@@ -463,6 +468,17 @@ def create_app(world: World, *, served_ticks: int | None = None,
     @app.post("/api/run/step")
     async def step_once():
         return await controller.step()
+
+    # Local operator diagnostics only. Existing hosted authorization surfaces
+    # and the production Step endpoint retain their contracts.
+    if not hosted_safe:
+        @app.get("/api/run/diagnostics")
+        async def diagnostic_state():
+            return controller.diagnostic_snapshot()
+
+        @app.post("/api/run/advance-one")
+        async def advance_one(body: AdvanceOneBody):
+            return await controller.advance_one(body.expected_run_id, body.expected_tick)
 
     @app.post("/api/run/speed")
     async def set_speed(body: SpeedBody):
