@@ -647,3 +647,29 @@ def test_direct_advance_valid_paused_world_steps_once(diagnostic, monkeypatch, t
     assert result['before']['tick'] == 0 and result['after']['tick'] == 1
     assert world.store.tick == 1 and world.store.get_meta()['active_tick'] is None
     assert world.status == 'paused' and not controller.is_running()
+
+
+
+def test_diagnostic_api_snapshot_runs_off_event_loop(diagnostic, monkeypatch):
+    import threading
+    _, world, *_ = diagnostic
+    app = create_app(world)
+    controller = app.state.run_controller
+    snapshot = controller.diagnostic_snapshot
+    calls = []
+    before = boundary_evidence(world)
+    async def exercise():
+        loop_thread = threading.get_ident()
+        def checked_snapshot():
+            assert threading.get_ident() != loop_thread
+            calls.append(1)
+            return snapshot()
+        monkeypatch.setattr(controller, 'diagnostic_snapshot', checked_snapshot)
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                     base_url='http://testserver') as client:
+            reply = await client.get('/api/run/diagnostics')
+            assert reply.status_code == 200
+            assert reply.json()['run_id'] == 'external-test'
+            assert reply.json()['tick'] == 0
+    asyncio.run(exercise())
+    assert calls == [1] and boundary_evidence(world) == before

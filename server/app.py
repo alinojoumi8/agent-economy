@@ -474,7 +474,7 @@ def create_app(world: World, *, served_ticks: int | None = None,
     if not hosted_safe:
         @app.get("/api/run/diagnostics")
         async def diagnostic_state():
-            return controller.diagnostic_snapshot()
+            return await asyncio.to_thread(controller.diagnostic_snapshot)
 
         @app.post("/api/run/advance-one")
         async def advance_one(body: AdvanceOneBody):

@@ -40,6 +40,8 @@ each audience can find the authoritative level of detail.
 - [Operator runbook](operator-runbook.md) — safe startup, hosted deployment,
   backup/restore, bounded pilot, production acceptance, phase-aware resume,
   reports, replay, and retention.
+- [Controlled Hermes/Jev diagnostics](hermes-diagnostics.md) — read-only checks,
+  explicit single decisions and guarded single-tick validation.
 - [Troubleshooting](troubleshooting.md) — provider cooldowns, orphaned state,
   legacy databases, dashboard performance, evidence failures, and replay.
 - [Security policy](../SECURITY.md) — local/hosted boundaries, RLS/auth threat
