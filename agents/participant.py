@@ -864,6 +864,27 @@ class ParticipantService:
             for choice in ballot["choices"]:
                 items.append(exact_action({"type": "cast_election_vote", "ballot_key": ballot["key"],
                     "choice": choice}, f"Vote {choice} in {ballot['key']}", f"ballot-{ballot['key']}-{choice}"))
+        if (bool(self.config.get("entrepreneurship", {}).get("enabled", False))
+                and self.store.tick + 1 >= max(0, int(
+                    self.config["entrepreneurship"].get("activation_tick", 0)))):
+            # The startup variants above come from this tick's context, including
+            # bounded v4 alternatives. Never use a free-form or cached authority.
+            generic_pitch = any(item["type"] == "pitch_vc"
+                                and not item.get("action") for item in items)
+            items = [item for item in items
+                     if item["type"] != "pitch_vc" or item.get("action")]
+            pitches = [item for item in items if item["type"] == "pitch_vc"]
+            for item in pitches:
+                error = ActionExecutor(self.ctx.e).pitch_prerequisite_error(
+                    self.store.tick + 1, int(agent_id),
+                    {key: value for key, value in item["action"].items() if key != "variant"})
+                item.update(enabled=error is None, available=error is None)
+                if error is not None:
+                    item["disabled_reason"] = error["reason"]
+            if generic_pitch and not pitches:
+                items.append({"type": "pitch_vc", "label": "Pitch my company to VC",
+                              "fields": [], "enabled": False, "available": False,
+                              "disabled_reason": "startup action must copy a current supplied action exactly"})
         for item in items:
             item.setdefault("variant", "default")
             spec = action_spec(str(item["type"]))
@@ -904,7 +925,7 @@ class ParticipantService:
             if len(path) > 1:
                 nested_allowed.setdefault(path[0], set()).add(path[1])
             kind = field.get("kind")
-            if (exact_population_terms or (action_type == 'found_company'
+            if (exact_population_terms or (action_type in {'found_company', 'pitch_vc'}
                     and descriptor.get('available') is True)) and kind == 'hidden':
                 supplied = _path_value(action, path, field.get('default'))
                 if supplied != field.get('default'):

@@ -1197,7 +1197,8 @@ class ActionExecutor:
         return {"ok": True}
 
     # ── VC track: pitch → evaluation → term sheet → equity (P1 R13) ─────────
-    def _do_pitch_vc(self, tick, actor_id, action, phase) -> dict:
+    def pitch_prerequisite_error(self, tick, actor_id, action) -> dict | None:
+        """Read-only exact authority, company control and VC state checks."""
         authorization_error = self._startup_authorization_error(
             tick, actor_id, action)
         if authorization_error is not None:
@@ -1205,6 +1206,16 @@ class ActionExecutor:
         firm_id = int(action.get("firm_id", 0)) or self._owned_firm(actor_id)
         if not firm_id or not self._controls_firm(actor_id, firm_id):
             return {"ok": False, "reason": "actor does not control a firm to pitch"}
+        ask = int(action.get("ask", action.get("amount", 0)))
+        if not self.e.vc.can_pitch(firm_id, ask):
+            return {"ok": False, "reason": "pitch rejected (firm not private, bad ask, or one already pending)"}
+        return None
+
+    def _do_pitch_vc(self, tick, actor_id, action, phase) -> dict:
+        error = self.pitch_prerequisite_error(tick, actor_id, action)
+        if error is not None:
+            return error
+        firm_id = int(action.get("firm_id", 0)) or self._owned_firm(actor_id)
         ask = int(action.get("ask", action.get("amount", 0)))
         pid = self.e.vc.pitch(tick, actor_id, firm_id, ask,
                               summary=str(action.get("summary", ""))[:300])

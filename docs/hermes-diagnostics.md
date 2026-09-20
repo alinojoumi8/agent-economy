@@ -277,12 +277,60 @@ intentional snapshots, so dynamic execution guards remain necessary.
 
 ### Other catalog findings
 
-A separate concrete mismatch exists for the generic `pitch_vc` form in
-`ParticipantService.action_catalog`: it allows editable ask/summary fields,
-whereas `_do_pitch_vc` uses `_startup_authorization_error` to require an exact
-current supplied startup action under active entrepreneurship. Exact
-`startup_work.eligible_actions` variants already coexist with that form. This
-change leaves those unrelated listings unchanged; fixing the generic funding
-form is a separate bounded follow-up. Civic incorporation, migration, trade and
-startup variants examined already derive from supplied context actions. This is
-not a claim that every action in the application has been exhaustively audited.
+The generic `pitch_vc` mismatch identified during incorporation testing is now
+addressed by the funding contract below. Other consumers of
+`_startup_authorization_error` (term-sheet proposal/acceptance, diligence,
+funding close, IP registration and merger proposal/approval/close) enter this
+participant catalog through exact context-derived startup variants; no further
+generic-form plus exact-startup-authorization mismatch was found among those
+consumers. This is a bounded inspection, not a guarantee about every action.
+
+## VC pitch availability contract
+
+The MCP path is `ae_actions_list` -> `ExternalAgentService.turn` ->
+`ParticipantService.action_catalog`. The former generic founder form supplied
+an owned firm ID, editable ask (default 50,000 cents) and editable summary
+(default "growth capital"). Under active entrepreneurship, those arbitrary
+terms could not satisfy `_startup_authorization_error`, even though the form
+was marked enabled. Existing exact `startup-*` variants coexisted with it.
+
+With active entrepreneurship, the generic form is removed. The current
+`startup_work.eligible_actions` pitch variants remain, checked by the shared
+read-only `ActionExecutor.pitch_prerequisite_error`. If none exists, a founder
+gets an explicit disabled/unavailable descriptor explaining that a current
+supplied action is required. Authorized company, ask and summary are hidden
+exact fields; clients cannot change them. The UI variant identifies the form,
+not an economic authorization field. Legacy inactive-entrepreneurship forms
+remain unchanged. No authorization is created by the new availability helper;
+the existing context generation and actor/tick authorization caches are retained.
+
+### Actual prerequisites
+
+Precomputable at listing time:
+
+- A current actor/tick supplied startup action under active entrepreneurship,
+  matched by canonical payload (only existing provenance fields are excluded).
+- The actor controls the specified firm under normal business-control rules.
+- The firm is private, the ask is positive, and no pending pitch exists.
+- The current context must still offer that pitch, rather than an old cache
+  entry. Its preseed generation requires enabled autonomous preseed, the
+  configured founding/activation delay, a business idea, no prior pitch, and
+  no higher-priority lifecycle action. JEV v4 also supplies exact 75% and 125%
+  ask alternatives; these remain available, not collapsed to the base amount.
+
+`pitch_vc` itself does not set investor identity, equity, valuation or fund
+capital. Those belong to later investment/term-sheet actions. The ask is an exact
+supplied integer, not a client-chosen range. A successfully created pitch starts
+pending; it does not transfer money or guarantee funding. Pending pitch expiry
+is 14 ticks; that is distinct from the actor/tick opportunity authorization.
+
+Execution still rechecks authority and control and calls the same
+`VentureCapital.can_pitch` predicate through the normal pitch creation path.
+An earlier action can create a pending pitch or change control/private status.
+A consumed preseed opportunity is not offered again, even if a historical
+pending pitch later expires, because the generator requires no prior pitch.
+The catalog never reserves funding or promises execution success.
+
+The helper extraction preserves existing rejection text/order and VC creation,
+follow-on, event and ledger behavior. Historical turn envelopes and the
+protected tick-2 run are not rewritten. Test fixtures are disposable and offline.
