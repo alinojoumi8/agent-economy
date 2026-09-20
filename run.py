@@ -966,10 +966,11 @@ async def replay_headless(world: World, target_tick: int) -> None:
                 typed_request = json.loads(typed_requests[0]["payload_json"])
                 if typed_request.get("question") != prediction["question"]:
                     raise RuntimeError("recorded typed Oracle question does not match its prediction")
-                recorded_contract = typed_request["governed_contract"]
-                if governed_contract is not None and governed_contract != recorded_contract:
-                    raise RuntimeError("recorded typed Oracle contract disagrees with its schedule")
-                governed_contract = recorded_contract
+                if "governed_contract" in typed_request:
+                    recorded_contract = typed_request["governed_contract"]
+                    if governed_contract is not None and governed_contract != recorded_contract:
+                        raise RuntimeError("recorded typed Oracle contract disagrees with its schedule")
+                    governed_contract = recorded_contract
             result = await world.oracle.ask(
                 str(prediction["question"]),
                 governed_contract=governed_contract)

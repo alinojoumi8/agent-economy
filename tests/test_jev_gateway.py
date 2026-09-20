@@ -90,6 +90,7 @@ def test_openrouter_rejects_other_models_but_keeps_recorded_replay_and_direct_pr
 
 def test_zero_helper_reserve_blocks_even_a_zero_cost_estimate(store, monkeypatch):
     monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    transport(monkeypatch, lambda req: pytest.fail("no provider call may be dispatched"))
     gateway = Gateway(store, configuration())
     monkeypatch.setattr(gateway, "_estimate_cost", lambda *args: 0.0)
     try:
@@ -99,6 +100,44 @@ def test_zero_helper_reserve_blocks_even_a_zero_cost_estimate(store, monkeypatch
         assert not store.query("SELECT * FROM llm_calls")
     finally:
         gateway.close()
+
+
+def test_replay_rollback_restores_advisory_allowance(tmp_path, monkeypatch):
+    monkeypatch.setenv("TEST_JEV_KEY", "private-fixture-value")
+    transport(monkeypatch, lambda req: httpx.Response(200, json=response()))
+    config = configuration()
+    config["budget"]["helper_reserve_usd"] = .01
+    source = Store(str(tmp_path / "helper-source.db"))
+    source.init_run_meta("source", 1, config)
+    gateway = Gateway(source, config)
+    try:
+        first = asyncio.run(gateway.evaluate(request(purpose="hermes_selection"), evaluation()))
+    finally:
+        gateway.close()
+        source.close()
+    monkeypatch.delenv("TEST_JEV_KEY")
+    transport(monkeypatch, lambda req: pytest.fail("replay must not dispatch"))
+    config.update(replay=True, replay_source_path=str(tmp_path / "helper-source.db"))
+    replay = Store(str(tmp_path / "helper-replay.db"))
+    replay.init_run_meta("replay", 1, config)
+    gateway = Gateway(replay, config)
+    try:
+        with pytest.raises(RuntimeError, match="downstream validation"):
+            with gateway.replay_admission("failed_advice"):
+                asyncio.run(gateway.evaluate(request(purpose="hermes_selection"), evaluation()))
+                assert gateway.governor._helper_spend_usd == first.cost_usd
+                raise RuntimeError("downstream validation")
+        assert not replay.query("SELECT * FROM llm_calls")
+        assert gateway.governor.total_spend() == 0
+        assert gateway.governor._helper_spend_usd == 0
+        assert gateway.governor.can_spend(.01, "hermes_selection")
+        recorded = asyncio.run(gateway.evaluate(request(purpose="hermes_selection"), evaluation()))
+        assert recorded.parsed == first.parsed
+        assert gateway.governor._helper_spend_usd == first.cost_usd
+        assert len(replay.query("SELECT * FROM llm_calls")) == 1
+    finally:
+        gateway.close()
+        replay.close()
 
 
 def test_readiness_protects_text_routes_and_historical_semantics(monkeypatch):

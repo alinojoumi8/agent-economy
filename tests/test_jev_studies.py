@@ -131,6 +131,48 @@ def test_counterfactual_builder_binds_recorded_context_and_never_joins_future_st
         frozen_menu(record)
 
 
+@pytest.mark.parametrize("exclusion", ["incomplete_founder_observation", "legal_work_not_delegated"])
+def test_counterfactual_ineligible_call_does_not_hide_later_eligible_turn(tmp_path, exclusion):
+    from copy import deepcopy
+    from engine.store import Store
+    from llm.decisions import canonical_json
+    from research.artifacts import file_sha256
+    from research.domain_snapshots import build_counterfactual
+    from tests.test_jev_candidates import observation
+    from tests.test_jev_domains import domain_config
+
+    config = domain_config("founder_operations")
+    valid = observation()
+    valid.update(purpose="founder", my_firm={"firm_id": 8, "price": 200, "cash": 6000,
+        "currency_code": "CAD", "payroll": 5000, "employees": 1, "target_headcount": 2,
+        "open_jobs": 1, "employee_roster": [], "executed_sales_units": 3, "sales_window": 7},
+        decision_resources={"firm:8:CAD": {"available_cents": 1000}})
+    ineligible = deepcopy(valid)
+    if exclusion == "incomplete_founder_observation":
+        del ineligible["my_firm"]["currency_code"]
+    else:
+        ineligible["legal_work"] = {"eligible_actions": [{"type": "issue_legal_decision"}]}
+    database = tmp_path / "contexts.db"
+    store = Store(str(database))
+    try:
+        store.init_run_meta("counterfactual", 99, config)
+        store.execute("UPDATE run_meta SET tick=4")
+        for index, context in enumerate([ineligible, valid, valid]):
+            store.insert("llm_calls", tick=4, agent_id=context["agent"]["id"], role="founder",
+                provider="scripted", model="scripted", purpose="decision", cache_key=str(index),
+                request_json=canonical_json({"context": context}), response_json="{}", in_tokens=0,
+                out_tokens=0, cached=0, cost_usd=0, latency_ms=0, created_at="fixture")
+        store.commit()
+    finally:
+        store.close()
+    original = file_sha256(database)
+    result = build_counterfactual(database, tmp_path / "counterfactual.json", config, "founder_operations")
+    assert result["eligible_records"] == 1
+    assert result["records"][0]["source_call_id"] == 2
+    assert result["exclusions"] == {exclusion: 1, "duplicate_actor_turn": 1}
+    assert file_sha256(database) == original
+
+
 def test_brier_uses_choice_probabilities_only():
     base = dict(arm="jev", split="held_out", status="complete", baseline_agreement=1,
         cost_usd=0, latency_ms=1, confidence=.99, label_agreement=1, selection_status="selected",

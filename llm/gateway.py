@@ -801,6 +801,7 @@ class Gateway:
                 self.governor._total_spend_usd,
                 self.governor._oracle_spend_usd,
                 self.governor._report_spend_usd,
+                self.governor._helper_spend_usd,
                 self.governor._world_spend_usd,
                 self.governor._level,
             ),
@@ -823,6 +824,7 @@ class Gateway:
                 self.governor._total_spend_usd,
                 self.governor._oracle_spend_usd,
                 self.governor._report_spend_usd,
+                self.governor._helper_spend_usd,
                 self.governor._world_spend_usd,
                 self.governor._level,
             ) = snapshot["governor"]

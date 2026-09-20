@@ -48,7 +48,6 @@ def build_counterfactual(database, output, config, domain, limit=200):
             if identity in seen:
                 exclusions["duplicate_actor_turn"] += 1
                 continue
-            seen.add(identity)
             if domain == "founder_operations" and not {"currency_code", "executed_sales_units", "sales_window"} <= set(context.get("my_firm") or {}):
                 exclusions["incomplete_founder_observation"] += 1
                 continue
@@ -63,6 +62,7 @@ def build_counterfactual(database, output, config, domain, limit=200):
             if domain not in menu.metadata["domains"]:
                 exclusions["no_represented_choice_for_domain"] += 1
                 continue
+            seen.add(identity)
             group = decision_hash({"source": source_hash, "actor": row["agent_id"]})
             record = {"contract": policy["version"], "compiler": menu.compiler_version,
                 "agent_id": row["agent_id"], "tick": row["tick"], "purpose": row["purpose"],

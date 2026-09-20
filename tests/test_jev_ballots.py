@@ -60,6 +60,26 @@ def test_missing_and_abstaining_voters_do_not_invent_fiscal_mandate(world):
     assert (gov.tax_rate_bps(), gov.benefit_cents()) == before
 
 
+@pytest.mark.parametrize("selected", [
+    {"type": "study_skill", "skill_key": "finance"},
+    {"type": "attend_civic_appointment", "appointment_id": 99999},
+])
+@pytest.mark.parametrize("malformed", [None, 17, "invalid action"])
+@pytest.mark.parametrize("recorded_voting", [False, True])
+def test_exclusive_actions_reject_malformed_siblings_without_losing_ballots(
+        world, selected, malformed, recorded_voting):
+    ballots = world.economy.ballots
+    ballots.enabled = recorded_voting
+    ballots.open_day(1)
+    actor = int(world.store.scalar("SELECT id FROM agents WHERE alive=1 AND kind='citizen' AND age>=18 ORDER BY id LIMIT 1"))
+    results = world.runtime.executor.execute_actions(1, actor, [
+        malformed, selected, {"type": "cast_election_vote", "ballot_key": "fiscal", "choice": "abstain"}])
+    assert len(results) == 3
+    assert results[0]["ok"] is False and "consumes" in results[0]["reason"]
+    assert results[2]["ok"] is recorded_voting
+    assert world.economy.ledger.reconcile()[0]
+
+
 def _bill(world):
     store, politics = world.store, world.economy.politics
     actor = int(store.scalar("SELECT agent_id FROM legislators WHERE chamber='house' ORDER BY seat_number LIMIT 1"))

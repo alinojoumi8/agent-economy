@@ -225,8 +225,11 @@ class Newsroom:
                 selector = SelectionService(self.gw, self.config)
                 selected_events = events
                 if selector.enabled("newsroom", tick):
+                    editor = self._desk_agent("editor", outlet["id"], tick=tick)
+                    if editor is None:
+                        continue
                     selected_events = await selector.choose_news(
-                        self._desk_agent("editor", outlet["id"], tick=tick), tick, outlet, events)
+                        editor, tick, outlet, events)
                     if not selected_events:
                         if self.daily_news_required:
                             pending.append((outlet, self._ground_article(

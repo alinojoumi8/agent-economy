@@ -22,6 +22,69 @@ def config(tmp_path, services):
     return value
 
 
+@pytest.mark.parametrize("semantics", [16, 20])
+def test_newsroom_without_live_editor_never_dispatches_or_records_selection(tmp_path, monkeypatch, semantics):
+    value = config(tmp_path, ["newsroom"])
+    value["engine_semantics_version"] = semantics
+    store, world, _ = open_run(value, None, None, data_dir=tmp_path)
+    async def forbidden(*args, **kwargs):
+        pytest.fail("An outlet without a live editor must not select or write news")
+    monkeypatch.setattr(world.gateway, "evaluate", forbidden)
+    monkeypatch.setattr(world.gateway, "complete", forbidden)
+    try:
+        assert store.scalar("SELECT COUNT(*) FROM agents WHERE role='editor' AND alive=1") > 0
+        store.execute("UPDATE agents SET alive=0 WHERE role='editor'")
+        assert asyncio.run(world.newsroom.publish(1)) == []
+        assert not store.query("SELECT * FROM events WHERE kind='bounded_selection'")
+        assert not store.query("SELECT * FROM llm_calls")
+        assert world.economy.ledger.reconcile()[0]
+    finally:
+        world.close()
+
+
+@pytest.mark.parametrize("has_schedule", [False, True])
+@pytest.mark.parametrize("recorded", ["absent", "matching", "conflicting"])
+def test_replay_typed_oracle_preserves_optional_schedule_contract(monkeypatch, has_schedule, recorded):
+    import sqlite3
+    from types import SimpleNamespace
+    import run
+    import reports.acceptance
+
+    question = "Will unemployment exceed 8% within 2 ticks?"
+    contract = {"campaign_id": "fixture", "resolution_rule": {"type": "unemployment_above"}}
+    source = sqlite3.connect(":memory:")
+    source.row_factory = sqlite3.Row
+    source.execute("CREATE TABLE predictions(id INTEGER, asked_tick INTEGER, question TEXT)")
+    source.execute("CREATE TABLE events(tick INTEGER, kind TEXT, payload_json TEXT)")
+    source.execute("INSERT INTO predictions VALUES(1,1,?)", (question,))
+    payload = {"prediction_id": 1, "question": question}
+    if recorded != "absent":
+        payload["governed_contract"] = contract if recorded == "matching" else None
+    source.execute("INSERT INTO events VALUES(1,'oracle_typed_request',?)", (json.dumps(payload),))
+    checkpoint = {"scheduled_tick": 1, "question": question, "status": "completed", "detail": "fixture"}
+    monkeypatch.setattr(run, "_recorded_acceptance_side_effects", lambda *args: (
+        {1: checkpoint} if has_schedule else {}, {}, []))
+    monkeypatch.setattr(reports.acceptance, "_scheduled_contract", lambda *args: contract)
+    monkeypatch.setattr(reports.acceptance, "_record_checkpoint", lambda *args, **kwargs: None)
+    observed = []
+    async def ask(question, *, governed_contract):
+        observed.append(governed_contract)
+        return {"prediction_id": 1}
+    world = SimpleNamespace(gateway=SimpleNamespace(replay_conn=source), store=SimpleNamespace(tick=1),
+        oracle=SimpleNamespace(ask=ask), config={"acceptance": {
+            "oracle_latency_source": "scheduled_e2e_v1", "oracle_questions": [{"at_tick": 1, "question": question}]}})
+    try:
+        if has_schedule and recorded == "conflicting":
+            with pytest.raises(RuntimeError, match="disagrees with its schedule"):
+                asyncio.run(run.replay_headless(world, 1))
+            assert observed == []
+        else:
+            asyncio.run(run.replay_headless(world, 1))
+            assert observed == [contract if has_schedule or recorded == "matching" else None]
+    finally:
+        source.close()
+
+
 def test_news_selection_and_attention_preserve_exact_replay(tmp_path, monkeypatch):
     async def forbidden(*a, **k):
         raise AssertionError("network is disabled")

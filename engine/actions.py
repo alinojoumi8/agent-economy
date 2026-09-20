@@ -213,7 +213,8 @@ class ActionExecutor:
                 selected = appointment_indexes[0]
                 return [
                     self.execute_action(tick, actor_id, action, phase, seq=index)
-                    if index == selected or (action.get("type") == "cast_election_vote" and self.e.ballots.active(tick)) else self._reject(
+                    if index == selected or (isinstance(action, dict)
+                        and action.get("type") == "cast_election_vote" and self.e.ballots.active(tick)) else self._reject(
                         tick, actor_id, action,
                         "attend_civic_appointment consumes the citizen's action for this turn",
                         phase,
@@ -229,7 +230,8 @@ class ActionExecutor:
                 selected = study_indexes[0]
                 return [
                     self.execute_action(tick, actor_id, action, phase, seq=index)
-                    if index == selected or (action.get("type") == "cast_election_vote" and self.e.ballots.active(tick)) else self._reject(
+                    if index == selected or (isinstance(action, dict)
+                        and action.get("type") == "cast_election_vote" and self.e.ballots.active(tick)) else self._reject(
                         tick, actor_id, action,
                         "study_skill consumes the citizen's action for this turn", phase)
                     for index, action in enumerate(actions or [])
