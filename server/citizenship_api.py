@@ -193,13 +193,13 @@ def _render_error(
 
 
 def install_citizenship_routes(
-    app: FastAPI, world, *, config: dict[str, Any],
+    app: FastAPI, world, *, config: dict[str, Any], repository=None,
 ) -> LocalCitizenshipService:
     """Install local-only public onboarding and standard browser OAuth."""
     service = LocalCitizenshipService(
         world.runtime.external,
         run_id=str(world.gateway.run_id),
-        config=config,
+        config=config, repository=repository,
     )
     app.state.citizenship_service = service
     navigation = navigation_document(service)

@@ -332,7 +332,8 @@ async def _wait_turn(service, auth: dict[str, Any], *, after_tick: int | None,
         await asyncio.sleep(min(0.25, remaining))
 
 
-def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -> None:
+def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False,
+                            passport_repository=None) -> None:
     service = world.runtime.external
     commons = world.commons
     from agents.selection_services import SelectionService
@@ -383,7 +384,7 @@ def install_external_routes(app: FastAPI, world, *, hosted_safe: bool = False) -
     public_join_enabled = bool(join_config.get("enabled", False)) and not hosted_safe
     if public_join_enabled:
         from server.citizenship_api import install_citizenship_routes
-        install_citizenship_routes(app, world, config=join_config)
+        install_citizenship_routes(app, world, config=join_config, repository=passport_repository)
 
     def auth(request: Request, required_scope: str | None = None) -> dict[str, Any]:
         try:

@@ -101,7 +101,7 @@ def _page(rows, limit: int) -> dict[str, Any]:
     return {"items": items, "next_cursor": int(items[-1]["id"]) if len(items) == limit else None}
 
 
-def install_v2_routes(app, world, controller) -> None:
+def install_v2_routes(app, world, controller, *, operator_workspace=None) -> None:
     router = APIRouter(prefix="/api/v2", tags=["legal-political-economy-v2"])
     store = world.store
     @app.exception_handler(PopulationProjectionError)
@@ -113,7 +113,10 @@ def install_v2_routes(app, world, controller) -> None:
     workspace_config = world.config.get("operator_workspace", {})
     workspace_path = Path(workspace_config.get(
         "path", Path(store.path).parent / "operator-workspace.db"))
-    operator_workspace = OperatorWorkspace(workspace_path, world_path=store.path)
+    if operator_workspace is None:
+        operator_workspace = OperatorWorkspace(workspace_path, world_path=store.path)
+    else:
+        workspace_path = operator_workspace.path
     app.state.operator_workspace = operator_workspace
     csrf_token = str(workspace_config.get("csrf_token", "local-observatory"))
     from server.city_observations_api import install_city_observation_routes

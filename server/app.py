@@ -232,7 +232,8 @@ def _agent_execution_document(
 
 
 def create_app(world: World, *, served_ticks: int | None = None,
-               hosted_safe: bool = False) -> FastAPI:
+               hosted_safe: bool = False, passport_repository=None,
+               operator_workspace=None) -> FastAPI:
     controller = RunController(
         world, served_ticks=served_ticks, hosted_safe=hosted_safe)
     hub = controller.hub
@@ -240,9 +241,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
     app.state.run_controller = controller
     from server.v2_api import install_v2_routes
-    install_v2_routes(app, world, controller)
+    install_v2_routes(app, world, controller, operator_workspace=operator_workspace)
     from server.external_api import install_external_routes
-    install_external_routes(app, world, hosted_safe=hosted_safe)
+    install_external_routes(app, world, hosted_safe=hosted_safe,
+                            passport_repository=passport_repository)
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
 

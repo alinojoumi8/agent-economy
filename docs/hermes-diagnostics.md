@@ -7,6 +7,59 @@ No diagnostic live launch was performed during implementation. The original
 
 ## Explicit operations
 
+### Attach an existing prepared server
+
+The normal `run.py` launcher supports an exclusive resume-existing mode. It never
+uses the preparation harness, `open_run` genesis/migrations, or provider preflight.
+All artifact paths and budget identifiers below are mandatory. The operator
+workspace path is also explicit because the HTTP server normally creates that
+separate UI database. This mode must attach its existing copy instead.
+
+```powershell
+python -B run.py --serve --host 127.0.0.1 --port PORT --ticks REMAINING_ALLOWANCE `
+  --existing-run-db C:/original/data/runs/RUN_ID.db --expected-run-id RUN_ID `
+  --provider-budget-db C:/original/evidence/provider-budget.db `
+  --expected-budget-contract-sha256 VERIFIED_CONTRACT_SHA256 `
+  --provider-budget-binding ORIGINAL_BINDING --provider-budget-scope ORIGINAL_SCOPE `
+  --passport-db C:/original/control-plane/passports.db `
+  --operator-workspace-db C:/original/data/runs/operator-workspace.db
+```
+
+Use the contract digest and binding/scope from the preserved allowance evidence;
+do not invent a new contract or replenish usage. Paths must be distinct existing
+unaliased regular files. The passport path must match the stored world config,
+and every passport-linked connection must match the registry's citizenship link.
+No identity, signing key, profile or registry is created. The budget's contract
+digest, gateway config binding, integrity, disposition and reservation totals
+are checked; sealed, breached or unresolved allowances are refused. All native
+provider requests remain governed by the original shared `ProviderBudget` object.
+
+Only paused/created worlds at complete tick boundaries with an explicit supported
+semantics version and the current database schema can attach. Missing artifacts,
+corrupt databases, missing schema objects, terminal/running/partial worlds and
+conflicting CLI modes fail closed. Older schemas require separate reviewed
+migration; this command never upgrades them. It does not read a replacement run
+config or silently fall back to fresh startup. Provider credentials must already
+be available through the normal environment/`.env` mechanism; no authentication
+probe is performed by this mode.
+
+Startup holds SQLite writer exclusion while rechecking the saved run and creating
+runtime objects with query-only source connections. It restores saved status and
+PRNG state, retaining durable provider/budget attention-pause evidence at the
+current boundary. Process-only pause details that were never persisted cannot be
+reconstructed; running/partial snapshots are refused rather than repaired.
+`--ticks` sets the bounded server allowance; it does not execute any tick or
+authorize a later live operation. Supplying `--acceptance-run`, preflight,
+activation, replay or other startup modes is an error.
+
+Opening/closing SQLite runtime handles may change physical WAL/SHM/checkpoint
+files. Startup must leave canonical rows, events, admissions, submissions, budget
+reservations and usage unchanged. Tests compare every table before/after the app
+lifespan and prohibit genesis, transport, child-process and clock calls. They use
+disposable databases only. This mode is a supported attachment interface, not
+permission to bypass a host execution restriction. Run read-only CHECK and review
+its evidence before separately authorizing ADVANCE-ONE or DECIDE-ONE.
+
 Run from the diagnostic checkout. Common options go before the operation.
 Use the actual existing world directory and URL; the examples are placeholders.
 
