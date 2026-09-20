@@ -484,3 +484,166 @@ def test_ten_profile_manifest_dispatches_only_selected_citizen(diagnostic, monke
     assert calls[0][calls[0].index('--profile') + 1] == 'maya'
     assert world.store.tick == 0
     assert not any((op.profiles / f'other-{i}').exists() for i in range(9))
+
+
+# These tests bypass DiagnosticOperator: the server is the authority even when
+# the caller omits preflight, or its observation becomes stale before the lock.
+def boundary_evidence(world):
+    from copy import deepcopy
+    return {
+        'database': world.store.conn.serialize(),
+        'files': hashes(Path(world.store.path).parent),
+        'changes': world.store.conn.total_changes,
+        'world': deepcopy({name: getattr(world, name, None) for name in (
+            'status', 'last_pause_reason', 'last_report_path',
+            '_pause_requested', '_stop_requested')}),
+    }
+
+
+@pytest.mark.parametrize('transport', ['controller', 'api'])
+@pytest.mark.parametrize('guard,reason', [
+    ('finished', 'world_terminal'), ('halted', 'world_terminal'),
+    ('error', 'world_terminal'), ('completed', 'world_terminal'),
+    ('exhausted', 'world_terminal'), ('attention', 'attention_pause_requires_recovery'),
+    ('limit', 'served_tick_limit_reached'), ('stale', 'stale_expected_tick'),
+    ('identity', 'wrong_run_id'), ('running', 'world_running'),
+    ('task_running', 'world_running'), ('partial', 'partial_tick_requires_recovery'),
+    ('acceptance', 'acceptance steps require --acceptance-run and explicit live approval'),
+    ('participant', 'choose an explicit participant action, including do nothing, before Step'),
+])
+def test_direct_advance_rejection_preserves_state(diagnostic, monkeypatch, transport, guard, reason):
+    _, world, *_ = diagnostic
+    app = create_app(world)
+    controller = app.state.run_controller
+    run_id, tick = 'external-test', 0
+    if guard in {'finished', 'halted', 'error', 'completed', 'exhausted'}:
+        world.status = guard
+        world.store.set_meta(status=guard)
+    elif guard == 'attention':
+        world.status = 'paused'
+        world.last_pause_reason = {'kind': 'provider_budget', 'attention_required': True}
+    elif guard == 'limit':
+        controller.target_tick = 0
+    elif guard == 'stale':
+        tick = 1
+    elif guard == 'identity':
+        run_id = 'wrong-run'
+    elif guard == 'running':
+        world.status = 'running'
+    elif guard == 'task_running':
+        controller._step_active = True
+    elif guard == 'partial':
+        world.store.set_meta(active_tick=1)
+    elif guard == 'acceptance':
+        controller.acceptance_configured = True
+        controller.acceptance_authorized = False
+    elif guard == 'participant':
+        monkeypatch.setattr(controller.participant, 'active_agent_id', lambda: 1)
+        monkeypatch.setattr(controller.participant, 'has_queued_action', lambda: False)
+    world.store.commit()
+    before = boundary_evidence(world)
+    calls = []
+    async def forbidden_step():
+        calls.append(1)
+        pytest.fail('Rejected diagnostic reached world.step')
+    monkeypatch.setattr(world, 'step', forbidden_step)
+    if transport == 'controller':
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(controller.advance_one(run_id, tick))
+        status, detail = exc.value.status_code, exc.value.detail
+    else:
+        # No lifespan startup/shutdown: isolate the single route invocation.
+        client = TestClient(app)
+        try:
+            reply = client.post('/api/run/advance-one', json={
+                'expected_run_id': run_id, 'expected_tick': tick})
+            status, detail = reply.status_code, reply.json()['detail']
+        finally:
+            client.close()
+    assert status == (403 if guard == 'acceptance' else 409)
+    assert detail == reason
+    assert calls == [] and world.store.tick == 0
+    assert boundary_evidence(world) == before
+
+
+@pytest.mark.parametrize('transport', ['controller', 'api'])
+@pytest.mark.parametrize('transition', ['finished', 'attention'])
+def test_advance_revalidates_state_at_lock_acquisition(diagnostic, monkeypatch, transport, transition):
+    _, world, *_ = diagnostic
+    world.status = 'paused'
+    app = create_app(world)
+    controller = app.state.run_controller
+    # The caller observes a safe boundary, then state changes during entry into
+    # the server lock. Checking only before acquisition would miss this change.
+    observed = controller.diagnostic_state()
+    assert observed['status'] == 'paused' and observed['pause_reason'] is None
+    lock = controller._control_lock
+    after_transition = []
+    class TransitionLock:
+        def locked(self):
+            return lock.locked()
+        async def __aenter__(self):
+            if transition == 'finished':
+                world.status = 'finished'
+                world.store.set_meta(status='finished')
+            else:
+                world.last_pause_reason = {'kind': 'operator_attention', 'reason': 'inspect'}
+            world.store.commit()
+            after_transition.append(boundary_evidence(world))
+            await lock.acquire()
+        async def __aexit__(self, *args):
+            lock.release()
+    monkeypatch.setattr(controller, '_control_lock', TransitionLock())
+    calls = []
+    async def forbidden_step():
+        calls.append(1)
+        pytest.fail('Stale preflight reached world.step')
+    monkeypatch.setattr(world, 'step', forbidden_step)
+    if transport == 'controller':
+        with pytest.raises(HTTPException) as exc:
+            asyncio.run(controller.advance_one('external-test', 0))
+        status, detail = exc.value.status_code, exc.value.detail
+    else:
+        client = TestClient(app)
+        try:
+            reply = client.post('/api/run/advance-one', json={
+                'expected_run_id': 'external-test', 'expected_tick': 0})
+            status, detail = reply.status_code, reply.json()['detail']
+        finally:
+            client.close()
+    assert status == 409
+    assert detail == ('world_terminal' if transition == 'finished'
+                      else 'attention_pause_requires_recovery')
+    assert len(after_transition) == 1 and calls == [] and world.store.tick == 0
+    assert boundary_evidence(world) == after_transition[0]
+
+
+@pytest.mark.parametrize('transport', ['controller', 'api'])
+def test_direct_advance_valid_paused_world_steps_once(diagnostic, monkeypatch, transport):
+    _, world, *_ = diagnostic
+    world.status = 'paused'
+    world.store.set_meta(status='paused')
+    app = create_app(world)
+    controller = app.state.run_controller
+    real_step = controller._step_locked
+    calls = []
+    async def governed_step():
+        assert controller._control_lock.locked()
+        calls.append(1)
+        return await real_step()
+    monkeypatch.setattr(controller, '_step_locked', governed_step)
+    if transport == 'controller':
+        result = asyncio.run(controller.advance_one('external-test', 0))
+    else:
+        client = TestClient(app)
+        try:
+            reply = client.post('/api/run/advance-one', json={
+                'expected_run_id': 'external-test', 'expected_tick': 0})
+            assert reply.status_code == 200
+            result = reply.json()
+        finally:
+            client.close()
+    assert result['outcome'] == 'advanced' and calls == [1]
+    assert result['before']['tick'] == 0 and result['after']['tick'] == 1
+    assert world.store.tick == 1 and world.store.get_meta()['active_tick'] is None
+    assert world.status == 'paused' and not controller.is_running()

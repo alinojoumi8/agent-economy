@@ -532,6 +532,17 @@ class RunController:
                 raise HTTPException(status_code=409, detail="world_running")
             if before["active_tick"] is not None:
                 raise HTTPException(status_code=409, detail="partial_tick_requires_recovery")
+            # This locked boundary is authoritative even for direct API callers.
+            # Normal Step may reopen finished runs and clear pauses; diagnostics
+            # must never use those recovery semantics implicitly.
+            if before["status"] in {"halted", "finished", "error", "completed", "exhausted"}:
+                raise HTTPException(status_code=409, detail="world_terminal")
+            if before["pause_reason"]:
+                raise HTTPException(status_code=409, detail="attention_pause_requires_recovery")
+            if self.remaining_ticks() == 0:
+                raise HTTPException(status_code=409, detail="served_tick_limit_reached")
+            # No await separates validation from entry into the governed step;
+            # its participant, acceptance and provider guards remain unchanged.
             result = await self._step_locked()
             after = self.diagnostic_state()
             return {"outcome": "advanced" if after["tick"] == expected_tick + 1

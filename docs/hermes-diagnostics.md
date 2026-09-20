@@ -99,7 +99,15 @@ Requires both an explicit run ID and a nonnegative expected completed tick. The
 client records its request before sending exactly one POST. The new local route
 calls `RunController.advance_one`, which rejects an occupied control lock, then
 compares run identity, tick, running state and partial-tick state **inside the
-existing `_control_lock`**. Only then does it invoke `_step_locked` once.
+existing `_control_lock`**. At that same atomic boundary it rejects terminal
+states (`halted`, `finished`, `error`, `completed`, `exhausted`), any existing
+attention pause reason, and an exhausted served-tick limit. These checks are
+authoritative for direct API callers too; the client's earlier checks are only
+for usability. Rejection does not reopen a world, clear its pause, or mutate its
+database. Only a valid boundary invokes `_step_locked` once, retaining all of the
+normal governed-step safety checks. Diagnostic terminal and pause rejections use
+HTTP 409 (`world_terminal`, `attention_pause_requires_recovery`, or
+`served_tick_limit_reached`); they require separate explicit recovery.
 
 The established participant, acceptance, halt, served-tick, provider-budget and
 world-step controls remain in charge. This is one **whole-world** tick: it may
