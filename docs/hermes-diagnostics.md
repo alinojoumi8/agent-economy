@@ -223,3 +223,66 @@ one DECIDE-ONE and inspect its receipt before a separately authorized ADVANCE-ON
 No live result, production readiness or 100-tick validation is claimed by these
 offline tests. PR #96 and the preserved prepared world are not deployment targets
 for this implementation task.
+
+
+## Incorporation catalog contract
+
+`ae_actions_list` returns the persisted turn's participant action catalog. For
+non-civic worlds with active entrepreneurship, `found_company` now has
+`enabled: false`, `available: false` and a missing-opportunity reason unless the
+current context supplies an incorporation action. A supplied action is exposed
+as an exact template: name, sector, lawyer, capital and business idea cannot be
+retargeted. New catalogs use this contract; existing turn envelopes and rejected
+receipts are historical evidence and are not rewritten by an upgrade.
+
+The existing context builder remains the source of deterministic opportunities.
+No opportunity generation, authorization grant, economic rule or identity rule
+is added by this fix. Its current next-tick opportunity is checked by the same
+read-only `ActionExecutor.founding_prerequisite_error` used at execution. The
+executor retains the same ordered checks, rejection reasons, permit consumption
+and ledger effects. The helper never reserves a permit or changes state.
+
+Before choice, the catalog can evaluate current actor availability, whether a
+current opportunity exists, its exact payload, lawyer eligibility, existing
+business control, present funds and already-used formation capacity. Opportunity
+construction also applies configured age, health, retirement, risk, employment,
+arrival/review cadence, reserve/capital and market conditions. Zero capital is
+legal at execution; the configured opportunity generator may require more.
+Legacy profiles without active entrepreneurship retain their editable form.
+Civic worlds retain the existing permit/appointment opportunity flow.
+
+Listing is not an execution reservation. Earlier actions in the governed tick
+can consume capacity/funds, change lawyer availability or company control, or
+consume a civic authorization. Execution rechecks those conditions and records
+a terminal rejection if necessary. No speculative future state is used to
+promise success.
+
+### Preserved live evidence
+
+Run `9b08e45cca`, tick 2, Omar actor 29, receipt
+`add5ca73-45a1-4c0e-9f3a-e825660c430b` correctly rejected incorporation because
+`found_company is available only from a supplied entrepreneurship opportunity`.
+The old catalog always appended the non-civic editable form, using the optional
+opportunity only for default values. Without an opportunity it still offered
+blank business fields, a valid lawyer and zero capital. Form normalization was
+not the engine's authorization check. The new unavailable descriptor prevents
+that known-invalid choice; exact templates also prevent invented terms when an
+opportunity exists. The old rejection is retained without modification.
+
+The path is `server.external_api` MCP `ae_actions_list` ->
+`ExternalAgentService.turn` -> `ParticipantService.action_catalog` ->
+`ContextBuilder.build`. Submission normalizes against the turn catalog; governed
+execution calls `ActionExecutor._do_found_company`. Persisted turn catalogs are
+intentional snapshots, so dynamic execution guards remain necessary.
+
+### Other catalog findings
+
+A separate concrete mismatch exists for the generic `pitch_vc` form in
+`ParticipantService.action_catalog`: it allows editable ask/summary fields,
+whereas `_do_pitch_vc` uses `_startup_authorization_error` to require an exact
+current supplied startup action under active entrepreneurship. Exact
+`startup_work.eligible_actions` variants already coexist with that form. This
+change leaves those unrelated listings unchanged; fixing the generic funding
+form is a separate bounded follow-up. Civic incorporation, migration, trade and
+startup variants examined already derive from supplied context actions. This is
+not a claim that every action in the application has been exhaustively audited.

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from engine.actions import ActionExecutor
 from engine.store import Store, load_json, open_read_only_connection
 from engine.local_participation import departed_after, is_local
 from engine.commands.registry import POPULATION_MODELS
@@ -489,6 +490,25 @@ class ParticipantService:
                     label,
                     f"civic-{founding_action['type']}",
                 ))
+        elif (bool(self.config.get("entrepreneurship", {}).get("enabled", False))
+              and self.store.tick + 1 >= max(0, int(
+                  self.config["entrepreneurship"].get("activation_tick", 0)))):
+            # Reuse the context's current opportunity, never stale authorization
+            # caches or a client-invented form. Execution still rechecks everything.
+            items = [item for item in items if item["type"] != "found_company"]
+            reason = "found_company is available only from a supplied entrepreneurship opportunity"
+            if founding_action.get("type") == "found_company":
+                reason = ActionExecutor(self.ctx.e).founding_prerequisite_error(
+                    self.store.tick + 1, int(agent_id), founding_action)
+                founding = exact_action(
+                    founding_action, "Found the opportunity-authorized company", "default")
+            else:
+                founding = {"type": "found_company", "label": "Found a company",
+                            "fields": []}
+            founding.update(enabled=reason is None, available=reason is None)
+            if reason is not None:
+                founding["disabled_reason"] = reason
+            items.append(founding)
         if self.engine_semantics_version >= 13:
             construction = ctx.get("construction_work") or {}
             for index, action in enumerate(
@@ -884,7 +904,8 @@ class ParticipantService:
             if len(path) > 1:
                 nested_allowed.setdefault(path[0], set()).add(path[1])
             kind = field.get("kind")
-            if exact_population_terms and kind == 'hidden':
+            if (exact_population_terms or (action_type == 'found_company'
+                    and descriptor.get('available') is True)) and kind == 'hidden':
                 supplied = _path_value(action, path, field.get('default'))
                 if supplied != field.get('default'):
                     raise ParticipantError(409, f'{name} is stale or unavailable')

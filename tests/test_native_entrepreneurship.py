@@ -243,27 +243,15 @@ def test_eligibility_and_participant_payload_are_bounded(store):
         system, _ = builder.render_prompt(context)
         assert "found_company{name,sector,lawyer_agent_id}" not in system
 
+    store.set_meta(tick=10)
     service = ParticipantService(store, builder, config)
-    catalog = {item["type"]: item for item in service.action_catalog(eligible_id)}
-    founding = catalog["found_company"]
-    idea_fields = {field["name"]: field for field in founding["fields"]
-                   if field.get("action_path")}
-    assert {name: field["action_path"] for name, field in idea_fields.items()} == {
-        "mission": ["business_idea", "mission"],
-        "customer_problem": ["business_idea", "customer_problem"],
-        "offering": ["business_idea", "offering"],
-    }
-    normalized = service._normalize_action(eligible_id, {
-        "type": "found_company", "name": "Participant Firm", "sector": "services",
-        "lawyer_agent_id": lawyer_id, "opening_capital": 100_000,
-        "business_idea": {
-            "mission": "Serve local customers",
-            "customer_problem": "Supply is limited",
-            "offering": "Reliable services",
-        },
-    })
-    assert normalized["business_idea"]["offering"] == "Reliable services"
-    with pytest.raises(ParticipantError, match="unexpected business_idea fields"):
+    founding = next(item for item in service.action_catalog(eligible_id)
+                    if item["type"] == "found_company")
+    assert founding["enabled"] and founding["available"]
+    assert all(field["kind"] == "hidden" for field in founding["fields"])
+    normalized = service._normalize_action(eligible_id, founding["action"])
+    assert normalized["business_idea"] == founding["action"]["business_idea"]
+    with pytest.raises(ParticipantError, match="stale or unavailable"):
         service._normalize_action(eligible_id, {
             **normalized,
             "business_idea": {**normalized["business_idea"], "employees": ["fake"]},
