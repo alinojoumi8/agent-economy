@@ -418,3 +418,26 @@ def test_mocked_jev_services_ballots_and_owned_helper_replay_exactly(tmp_path, m
     finally:
         replay_world.close()
     assert hashlib.sha256(source.read_bytes()).hexdigest() == digest
+
+@pytest.mark.parametrize('candidate', [{'type': []}, {'type': {}}, {'type': None}, {'type': 1}, {}, []])
+def test_hermes_helper_rejects_malformed_type_without_dispatch(tmp_path, monkeypatch, candidate):
+    from agents.hermes_selection import recommend
+    from agents.external import ExternalAgentError
+    from tests.test_external_agent_gateway import _connection
+    store, world, _ = open_run(config(tmp_path, ['hermes_helper']), None, None, data_dir=tmp_path)
+    try:
+        service = world.runtime.external
+        auth = service.authenticate(_connection(world)['credential']['token'])
+        turn = service.turn(auth)
+        before = store.scalar('SELECT COUNT(*) FROM external_security_audit')
+        async def denied(*args, **kwargs):
+            pytest.fail('malformed candidate dispatched a provider')
+        monkeypatch.setattr(world.gateway, 'evaluate', denied)
+        with pytest.raises(ExternalAgentError) as exc:
+            asyncio.run(recommend(service, world.gateway, auth, target_tick=turn['target_tick'],
+                observed_projection_hash=turn['projection_hash'], candidate_actions=[candidate]))
+        assert exc.value.code == 'invalid_candidates'
+        assert store.scalar('SELECT COUNT(*) FROM external_security_audit') == before
+        assert not store.query('SELECT * FROM external_action_submissions')
+    finally:
+        world.close()

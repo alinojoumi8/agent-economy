@@ -125,6 +125,11 @@ by their own feature flags and semantics; listing a domain does not enable
 its engine. Recorded voting and Commons helpers require semantics 20. The
 explicit `recorded_voting.version: 1` flag selects the new prospective election
 mechanics within semantics 20; flagless historical worlds retain their formulas.
+When the political model is enabled, recorded voting also requires the V4
+`politics` domain so legislative bill contests have an actionable native menu.
+Extra ballot wakes obey the governor's citizen-enable and cadence limits;
+actors already selected by the scheduler are retained. Undispatched electors
+remain nonvotes rather than fabricated votes.
 The unfinished semantics-21 population work is not activated.
 
 Provider-free rehearsal profiles:

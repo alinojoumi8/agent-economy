@@ -157,3 +157,40 @@ def test_recorded_votes_restart_and_replay_exactly(tmp_path, monkeypatch):
     finally:
         world.close()
     assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+
+@pytest.mark.parametrize('policy_change', ['absent', 'no_politics', 'v3'])
+def test_recorded_politics_requires_v4_ballot_surface(tmp_path, policy_change):
+    from engine.ballots import RecordedBallots
+    from types import SimpleNamespace
+    cfg = configuration(tmp_path)
+    if policy_change == 'absent':
+        cfg['llm'].pop('decision_policy')
+    elif policy_change == 'no_politics':
+        cfg['llm']['decision_policy']['domains'].remove('politics')
+    else:
+        cfg['llm']['decision_policy'] = {'version': 'bounded-economic-choice-v3',
+            'primary': {'provider': 'scripted', 'model': 'scripted'}}
+    with pytest.raises(ValueError, match='requires the V4 politics domain'):
+        RecordedBallots(SimpleNamespace(config=cfg, store=None, engine_semantics_version=20))
+    cfg['political_model']['enabled'] = False
+    assert RecordedBallots(SimpleNamespace(config=cfg, store=None, engine_semantics_version=20)).enabled
+
+
+@pytest.mark.parametrize('enabled,cadence', [(False,1),(True,3),(True,1)])
+def test_ballot_wakes_preserve_governor_cohort_bounds(world, monkeypatch, enabled, cadence):
+    runtime = world.runtime
+    actors = [dict(r) for r in world.store.query('SELECT * FROM agents WHERE alive=1 AND age>=18 ORDER BY id')]
+    tick = 1
+    scheduled = actors[:1]
+    monkeypatch.setattr(runtime.gw.governor, 'citizens_enabled', lambda: enabled)
+    monkeypatch.setattr(runtime.gw.governor, 'cadence_multiplier', lambda: cadence)
+    monkeypatch.setattr(runtime.scheduler, 'scheduled_agents', lambda *a, **k: scheduled)
+    monkeypatch.setattr(world.economy.ballots, 'pending_actors', lambda t: [a['id'] for a in actors])
+    seen = []
+    async def decide(t, actor, **kwargs):
+        seen.append(actor['id'])
+        return {'agent_id': actor['id'], 'actions': []}
+    monkeypatch.setattr(runtime, '_decide_pipelined_guarded', decide)
+    asyncio.run(runtime.decide_all(tick))
+    expected = {scheduled[0]['id']} | ({a['id'] for a in actors if a['id'] % cadence == tick % cadence} if enabled else set())
+    assert set(seen) == expected and len(seen) == len(expected)

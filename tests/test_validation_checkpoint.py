@@ -300,3 +300,25 @@ def test_world_entry_reads_boundary_while_exclusions_held(artifacts,tmp_path,mon
         assert logical(c.replay_checkpoint_paths['budget'])==logical(Path(c.last_replay_checkpoint['path'])/'budget.db')
     finally:
         world.close()
+
+
+def test_source_verification_off_loop_rechecks_dirty_content(artifacts, monkeypatch):
+    import threading
+    with prepared_app(**artifacts) as app:
+        c = app.state.run_controller
+        revisions = [{'head':'fixture','dirty':True,'tracked_files_sha256':'a'},
+                     {'head':'fixture','dirty':True,'tracked_files_sha256':'b'}]
+        c.replay_checkpoint_revision = revisions[0]
+        calls = []
+        async def exercise():
+            loop_thread = threading.get_ident()
+            def revision():
+                assert threading.get_ident() != loop_thread
+                calls.append(1)
+                return revisions[len(calls)-1]
+            monkeypatch.setattr('engine.replay_checkpoint.source_revision', revision)
+            await c.snapshot_for_replay('external-test', 0)
+            with pytest.raises(HTTPException, match='validation_checkpoint_failed'):
+                await c.snapshot_for_replay('external-test', 0)
+        asyncio.run(exercise())
+        assert calls == [1,1] and c.store.tick == 0 and not c._control_lock.locked()

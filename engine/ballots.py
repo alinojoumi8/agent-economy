@@ -24,6 +24,12 @@ class RecordedBallots:
             self.activation_tick = settings.get("activation_tick", 1)
             if type(self.activation_tick) is not int or self.activation_tick < 1:
                 raise ValueError("recorded_voting.activation_tick must be a positive integer")
+            if economy.config.get("political_model", {}).get("enabled", False):
+                from llm.decision_config import decision_policy, POLICY_VERSION_V4
+                policy = decision_policy(economy.config)
+                if (policy is None or policy["version"] != POLICY_VERSION_V4
+                        or "politics" not in policy["domains"]):
+                    raise ValueError("recorded_voting with politics requires the V4 politics domain")
 
     def active(self, tick):
         return self.enabled and tick >= self.activation_tick

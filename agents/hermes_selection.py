@@ -29,7 +29,9 @@ async def recommend(service, gateway, auth, *, target_tick, observed_projection_
             raise ExternalAgentError(409, "helper requires the exact open turn", "stale_projection")
         choices = {}
         for action in candidate_actions:
-            if not isinstance(action, dict) or ACTION_DOMAIN.get(action.get("type")) not in selector.policy["domains"]:
+            action_type = action.get("type") if isinstance(action, dict) else None
+            if (not isinstance(action_type, str)
+                    or ACTION_DOMAIN.get(action_type) not in selector.policy["domains"]):
                 raise ExternalAgentError(400, "candidate domain is not delegated", "invalid_candidates")
             try:
                 normalized = service.participant._normalize_action(

@@ -129,6 +129,7 @@ class OperatorWorkspace:
             from engine.existing import open_existing, validate_schema
             self.conn = open_existing(path, lambda conn: validate_schema(
                 conn, lambda ref: ref.executescript(SCHEMA)))
+            self.conn.isolation_level = ""
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)

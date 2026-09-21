@@ -213,6 +213,8 @@ class DiagnosticOperator(CohortOperator):
             for name in ("supervisor.lock", "operator.lock"):
                 try:
                     stack.enter_context(cohort_lock(self.root / name))
+                except FileNotFoundError as exc:
+                    raise DiagnosticError("cohort_directory_absent") from exc
                 except OSError as exc:
                     raise DiagnosticError("controller_busy") from exc
             yield

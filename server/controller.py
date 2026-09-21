@@ -501,7 +501,7 @@ class RunController:
         async with self._control_lock:
             return await self._step_locked()
 
-    def _snapshot_for_replay_locked(self, expected_run_id: str, expected_tick: int) -> dict:
+    async def _snapshot_for_replay_locked(self, expected_run_id: str, expected_tick: int) -> dict:
         from engine.replay_checkpoint import snapshot_for_replay, source_revision
         import uuid
         if self.replay_checkpoint_paths is None:
@@ -519,7 +519,9 @@ class RunController:
                        'persona': self.world.persona_prng.getstate(),
                        'lifecycle': self.world.lifecycle_prng.getstate()}))}
         try:
-            revision = source_revision()
+            # Keep byte-sensitive verification on every capture, including
+            # edits while already dirty; do not block the event loop hashing.
+            revision = await asyncio.to_thread(source_revision)
             if revision != self.replay_checkpoint_revision:
                 raise ValueError('server source changed since attachment')
             result = snapshot_for_replay(self.replay_checkpoint_paths,
@@ -546,7 +548,7 @@ class RunController:
         if self._control_lock.locked():
             raise HTTPException(status_code=409, detail="controller_busy")
         async with self._control_lock:
-            return self._snapshot_for_replay_locked(expected_run_id, expected_tick)
+            return await self._snapshot_for_replay_locked(expected_run_id, expected_tick)
 
     def diagnostic_state(self) -> dict:
         """Read the clock boundary without readiness probes or state updates."""
@@ -559,17 +561,10 @@ class RunController:
                     "config_sha256": hashlib.sha256(meta["config_json"].encode()).hexdigest()}}
 
     def diagnostic_snapshot(self) -> dict:
-        """Inspect without writing SQLite WAL read marks or citizen leases."""
-        from engine.inspection import inspection_snapshot
-        with inspection_snapshot(self.store.path) as db:
-            meta = dict(db.execute("SELECT * FROM run_meta").fetchone())
-            return {"run_id": meta["run_id"], "tick": meta["tick"],
-                "active_tick": meta["active_tick"], "status": self.world.status,
-                "running": self.is_running(), "control_lock_held": self._control_lock.locked(),
-                "pause_reason": self.world.last_pause_reason,
-                "identity": {"run_id": meta["run_id"], "seed": meta["seed"],
-                    "config_sha256": hashlib.sha256(meta["config_json"].encode()).hexdigest()},
-                "database": str(Path(self.store.path).resolve())}
+        """Read the existing connection without materializing the DB and WAL."""
+        state = self.diagnostic_state()
+        state["database"] = str(Path(self.store.path).resolve())
+        return state
 
     async def advance_one(self, expected_run_id: str, expected_tick: int) -> dict:
         """Compare and step once under the existing clock lock; never recover/retry."""
@@ -633,7 +628,7 @@ class RunController:
             expected_boundary = expected_boundary or (self.store.get_meta()['run_id'], self.store.tick)
             try:
                 boundary.enter_context(self._checkpoint_writers())
-                self._snapshot_for_replay_locked(*expected_boundary)
+                await self._snapshot_for_replay_locked(*expected_boundary)
             except BaseException as exc:
                 boundary.close()
                 if isinstance(exc, (ValueError, OSError, sqlite3.Error)):

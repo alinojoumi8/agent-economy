@@ -338,12 +338,16 @@ class AgentRuntime:
     # ── MORNING: decide (concurrent) ─────────────────────────────────────────
     async def decide_all(self, tick: int) -> list[dict]:
         gov = self.gw.governor
+        cadence = max(1, gov.cadence_multiplier())
+        citizens_enabled = gov.citizens_enabled()
         agents = self.scheduler.scheduled_agents(
-            tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
-        if self.e.ballots.active(tick):
+            tick, cadence_multiplier=cadence, citizens_enabled=citizens_enabled)
+        if self.e.ballots.active(tick) and citizens_enabled:
             by_id = {int(a["id"]): a for a in agents}
             for aid in self.e.ballots.pending_actors(tick):
-                if aid not in by_id:
+                # Ballot wakes cannot undo governor throttling. Stable phases
+                # preserve replay and leave undispatched voters as nonvotes.
+                if aid not in by_id and aid % cadence == tick % cadence:
                     by_id[aid] = self.store.query_one("SELECT * FROM agents WHERE id=?", (aid,))
             agents = [by_id[aid] for aid in sorted(by_id)]
         self.ctx.prepare_decision_cohort(agents, tick)

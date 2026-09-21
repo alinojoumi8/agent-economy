@@ -104,8 +104,8 @@ can make ownership uncertain. No authenticated agent endpoint is polled: those
 endpoints can update leases. CHECK creates no files/directories, profile sessions,
 SQL rows, budget reservations or child processes; its report goes to stdout.
 
-Even SQLite `mode=ro` can update a WAL read mark in `-shm`. Therefore CHECK and the
-server diagnostic reader use `engine.inspection.inspection_snapshot`: byte reads
+Even SQLite `mode=ro` can update a WAL read mark in `-shm`. Therefore CHECK's
+artifact inspection uses `engine.inspection.inspection_snapshot`: byte reads
 of the database/WAL, verification of the valid WAL prefix and last commit, and
 SQLite deserialization into a query-only in-memory database. It follows the
 [SQLite WAL format and reader algorithm](https://www.sqlite.org/fileformat2.html#wal_file_format).
@@ -115,6 +115,13 @@ reject concurrent changes without retry. Hot rollback journals, unreadable or
 unsupported snapshots and combined input sizes over 512 MiB are unavailable;
 the interface does not silently repair them. A stable observation does not
 reserve the world; only ADVANCE-ONE's server-side comparison authorizes a step.
+
+The lightweight server diagnostics endpoint reads clock metadata through its
+already-open store connection and returns the database identity. It does not
+copy or deserialize the whole world/WAL per poll, open another SQLite connection,
+renew citizen leases or dispatch providers. Prepared checkpoints still verify
+the source bytes on every capture; that Git/hash work runs off the event loop,
+without caching by HEAD or dirty status alone.
 
 ### DECIDE-ONE
 

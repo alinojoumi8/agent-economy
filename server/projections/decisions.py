@@ -33,20 +33,26 @@ def build_decision_workspace(store, *, as_of_tick):
     total = store.scalar("SELECT COUNT(*) FROM events WHERE kind='typed_decision' AND tick<=?", (as_of_tick,))
     rows = store.query("SELECT id,tick,subject_id,payload_json FROM events "
         "WHERE kind='typed_decision' AND tick<=? ORDER BY tick DESC,id DESC LIMIT 200", (as_of_tick,))
-    totals = {"provider_calls": 0, "cost_usd": 0.0, "accepted": 0, "attempted": 0}
-    for row in store.query("SELECT payload_json FROM events WHERE kind='typed_decision' AND tick<=?", (as_of_tick,)):
-        summary = decision_summary(json.loads(row["payload_json"]))
-        for key in totals:
-            totals[key] += summary[key]
-    services = {}
-    for row in store.query("SELECT payload_json FROM events WHERE kind='bounded_selection' AND tick<=?", (as_of_tick,)):
-        summary = observer_event_payload("bounded_selection", json.loads(row["payload_json"]))
-        item = services.setdefault(summary["service"], {"service": summary["service"], "selections": 0,
-            "provider_calls": 0, "cost_usd": 0.0})
-        item["selections"] += 1
-        item["provider_calls"] += summary["provider_calls"]
-        item["cost_usd"] += summary["cost_usd"]
+    # Aggregate inside SQLite; only the bounded display window is decoded in
+    # Python. Separate nested arrays avoid multiplying calls by outcomes.
+    totals = dict(store.query_one("""
+        SELECT COALESCE(SUM(json_array_length(payload_json, '$.calls')),0) AS provider_calls,
+          COALESCE(SUM((SELECT SUM(COALESCE(json_extract(c.value,'$.cost_usd'),0))
+                        FROM json_each(payload_json,'$.calls') c)),0.0) AS cost_usd,
+          COALESCE(SUM((SELECT COUNT(*) FROM json_each(payload_json,'$.outcomes') o
+                        WHERE json_type(o.value,'$.ok')='true')),0) AS accepted,
+          COALESCE(SUM(json_array_length(payload_json,'$.outcomes')),0) AS attempted
+        FROM events WHERE kind='typed_decision' AND tick<=?
+        """, (as_of_tick,)))
+    services = [dict(row) for row in store.query("""
+        SELECT json_extract(payload_json,'$.service') AS service, COUNT(*) AS selections,
+          COALESCE(SUM(json_array_length(payload_json,'$.calls')),0) AS provider_calls,
+          COALESCE(SUM((SELECT SUM(COALESCE(json_extract(c.value,'$.cost_usd'),0))
+                        FROM json_each(payload_json,'$.calls') c)),0.0) AS cost_usd
+        FROM events WHERE kind='bounded_selection' AND tick<=?
+        GROUP BY json_extract(payload_json,'$.service') ORDER BY service
+        """, (as_of_tick,))]
     return {"total": total, "window": 200, "totals": totals, "totals_scope": "all_decisions_through_as_of_tick",
-        "services": [services[key] for key in sorted(services)], "items": [
+        "services": services, "items": [
         {"id": row["id"], "tick": row["tick"], "agent_id": row["subject_id"],
          **decision_summary(json.loads(row["payload_json"]))} for row in rows]}

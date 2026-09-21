@@ -673,3 +673,25 @@ def test_diagnostic_api_snapshot_runs_off_event_loop(diagnostic, monkeypatch):
             assert reply.json()['tick'] == 0
     asyncio.run(exercise())
     assert calls == [1] and boundary_evidence(world) == before
+
+
+def test_missing_cohort_is_not_reported_as_busy(diagnostic, tmp_path):
+    operator, *_ = diagnostic
+    operator.root = tmp_path / 'absent'
+    with pytest.raises(DiagnosticError, match='cohort_directory_absent'):
+        with operator.exclusive():
+            pytest.fail('missing cohort acquired locks')
+    assert not operator.root.exists()
+
+
+def test_diagnostics_do_not_materialize_database(diagnostic, monkeypatch):
+    _, world, *_ = diagnostic
+    def forbidden(*args, **kwargs):
+        pytest.fail('diagnostics copied the database')
+    monkeypatch.setattr('engine.inspection.inspection_snapshot', forbidden)
+    controller = create_app(world).state.run_controller
+    before = boundary_evidence(world)
+    state = controller.diagnostic_snapshot()
+    assert state['database'] == str(Path(world.store.path).resolve())
+    assert state['tick'] == 0 and state['run_id'] == 'external-test'
+    assert boundary_evidence(world) == before
