@@ -221,9 +221,25 @@ class Newsroom:
                         continue
                 # Two-stage desk (TECH-SPEC §10): the reporter drafts 2–4
                 # candidate stories; the editor selects and frames per slant.
-                drafts = await self._report_stories(tick, outlet, events)
+                from agents.selection_services import SelectionService
+                selector = SelectionService(self.gw, self.config)
+                selected_events = events
+                if selector.enabled("newsroom", tick):
+                    editor = self._desk_agent("editor", outlet["id"], tick=tick)
+                    if editor is None:
+                        continue
+                    selected_events = await selector.choose_news(
+                        editor, tick, outlet, events)
+                    if not selected_events:
+                        if self.daily_news_required:
+                            pending.append((outlet, self._ground_article(
+                                outlet, None, events, grounding_tick=tick)))
+                        continue
+                    drafts = []
+                else:
+                    drafts = await self._report_stories(tick, outlet, events)
                 art = await self._write_story(
-                    tick, outlet, events, directives.get(outlet["id"]),
+                    tick, outlet, selected_events, directives.get(outlet["id"]),
                     drafts=drafts)
                 if art:
                     pending.append((outlet, art))

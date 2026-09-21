@@ -6,13 +6,14 @@ import json
 from itertools import product
 
 from llm.decisions import canonical_json, decision_hash, validate_evaluation
-from llm.decision_config import POLICY_VERSION, POLICY_VERSION_V2, POLICY_VERSION_V3
+from llm.decision_config import POLICY_VERSION, POLICY_VERSION_V2, POLICY_VERSION_V3, POLICY_VERSION_V4
 
 
 COMPILER_VERSION = "shopping-job-bundles-v1"
 COMPILER_VERSIONS = {POLICY_VERSION: COMPILER_VERSION,
                      POLICY_VERSION_V2: "shopping-job-bundles-v2",
-                     POLICY_VERSION_V3: "shopping-job-bundles-v3"}
+                     POLICY_VERSION_V3: "shopping-job-bundles-v3",
+                     POLICY_VERSION_V4: "domain-bundles-v1"}
 
 
 @dataclass(frozen=True)
@@ -23,6 +24,11 @@ class DecisionMenu:
     baseline_choice: str
     unsupported_reason: str | None = None
     compiler_version: str = COMPILER_VERSION
+    metadata_json: str = "{}"
+
+    @property
+    def metadata(self) -> dict:
+        return json.loads(self.metadata_json)
 
     @property
     def candidates(self) -> list[dict]:
@@ -34,8 +40,12 @@ class DecisionMenu:
 
     @property
     def menu_hash(self) -> str:
+        candidates = self.candidates
+        if self.compiler_version == "domain-bundles-v1":
+            from .decision_references import normalize_references, BINDINGS_KEY
+            candidates = normalize_references(candidates, self.metadata.get(BINDINGS_KEY, []))
         return decision_hash({"compiler": self.compiler_version, "observation": self.observation_hash,
-                              "candidates": self.candidates})
+                              "candidates": candidates})
 
     def actions_for(self, candidate_id: str) -> list[dict]:
         candidate = next((c for c in self.candidates if c["id"] == candidate_id), None)
@@ -90,6 +100,9 @@ def _unsupported(context: dict) -> str | None:
 
 def compile_candidates(context: dict, tick: int, policy: dict) -> DecisionMenu:
     """Compile complete compatible bundles; never query or mutate the world."""
+    if policy["version"] == POLICY_VERSION_V4:
+        from .domain_candidates import compile_domain_candidates
+        return compile_domain_candidates(context, tick, policy)
     if type(tick) is not int or context.get("tick") != tick:
         raise ValueError("candidate observation is not bound to the requested tick")
     agent, state = context.get("agent", {}), context.get("state", {})

@@ -377,19 +377,25 @@ class World:
         self.store.commit()
 
     # ── one tick ─────────────────────────────────────────────────────────────
-    async def step(self, *, pause_after_phase: str | None = None) -> dict:
-        if self.population_scenario is not None:
-            self.population_scenario.check_progress()
-        if pause_after_phase is not None and pause_after_phase not in self.phases:
-            raise ValueError("unknown pause phase")
-        meta = self.store.get_meta()
-        tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
+    async def step(self, *, pause_after_phase: str | None = None, entry_guard=None) -> dict:
+        # Prepared validation holds all artifact writer exclusions through this
+        # entry read. Release before any normal admission/provider writes. Other
+        # callers retain the same behavior and need no checkpoint guard.
+        from contextlib import nullcontext
+        with entry_guard if entry_guard is not None else nullcontext():
+            if self.population_scenario is not None:
+                self.population_scenario.check_progress()
+            if pause_after_phase is not None and pause_after_phase not in self.phases:
+                raise ValueError("unknown pause phase")
+            meta = self.store.get_meta()
+        tick = int(meta["active_tick"]) if meta["active_tick"] is not None else int(meta["tick"]) + 1
         phase = str(meta["next_phase"] or "NIGHT_CLOSE")
         if phase not in self.phases:
             phase = "NIGHT_CLOSE"
         state = load_json(meta["phase_state_json"], {}) or {}
         startup_settings = self.config.get('entrepreneurship', {})
-        save_startup_menus = (self.engine_semantics_version >= 21
+        save_startup_menus = ((self.engine_semantics_version >= 21
+            or (self.config.get("llm", {}).get("decision_policy") or {}).get("version") == "bounded-economic-choice-v4")
             and bool(startup_settings.get('enabled', False))
             and tick >= max(0, int(startup_settings.get('activation_tick', 0))))
         if meta["active_tick"] is None:
@@ -702,6 +708,7 @@ class World:
             # Markerless historical databases retain their original tick contract.
             self.metrics.snapshot(tick)
             self.oracle.resolve_open(tick)
+        self.economy.ballots.open_day(tick)
         # Reconcile scheduled/opening mechanics before any LLM decisions.
         self._assert_reconciled(tick, "NIGHT_CLOSE")
 
@@ -870,6 +877,7 @@ class World:
             )
 
     def _phase_finalize(self, tick: int) -> None:
+        self.economy.ballots.close_day(tick)
         if self.engine_semantics_version >= 12:
             # Civic maintenance stays inside the existing single-writer phase.
             self.economy.city.finalize(tick)

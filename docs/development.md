@@ -1,5 +1,13 @@
 # Development and testing
 
+[Controlled Hermes/Jev diagnostics](hermes-diagnostics.md) provide explicit read-only
+CHECK, single-citizen DECIDE-ONE and guarded ADVANCE-ONE operations. Live operations
+remain deferred until the execution-policy issue is resolved.
+
+Prospective Jev domain delegation is documented in [Jev v4](jev-domains.md).
+Use its provider-free profiles for development; existing worlds retain their
+recorded decision and voting contracts.
+
 Local operator household inspection is available from a selected person's
 dossier. The [financial inspector contract](plans/2026-09-08-household-financial-inspector.md)
 describes its committed-tick API, `operator_households.enabled` flag, identity

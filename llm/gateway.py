@@ -32,7 +32,8 @@ from observability import get_logger, log_event as operational_log, safe_fields
 logger = get_logger("llm")
 
 
-REPLAY_OPERATIONAL_PURPOSES = frozenset({"report_narrative"})
+ADVISORY_SELECTION_PURPOSES = frozenset({"hermes_selection", "commons_selection"})
+REPLAY_OPERATIONAL_PURPOSES = frozenset({"report_narrative"}) | ADVISORY_SELECTION_PURPOSES
 
 
 def _logical_replay_call(row: Any) -> str:
@@ -512,6 +513,13 @@ class Governor:
         # stored configs keep their original world/Oracle scheduling exactly.
         self.report_reserve_usd = max(
             0.0, float(budget_cfg.get("report_reserve_usd", 0.0)))
+        # Explicit carve-out inside the existing cap. Advice is control-plane
+        # work and cannot alter simulated cognitive cadence or create events.
+        self.helper_reserve_usd = max(0.0, float(budget_cfg.get("helper_reserve_usd", 0.0)))
+        from .decisions import finite_number
+        if not finite_number(budget_cfg.get("helper_reserve_usd", 0.0), 0,
+                             self.cap_usd if self.cap_usd is not None else 1_000_000):
+            raise ValueError("helper reserve must be finite, nonnegative and within the run cap")
         # Persisted opt-in keeps historical capped replays on their original
         # accounting while fresh runs reserve the complete Oracle workflow.
         self.oracle_plan_in_reserve = bool(
@@ -522,6 +530,7 @@ class Governor:
         self._total_spend_usd = 0.0
         self._oracle_spend_usd = 0.0
         self._report_spend_usd = 0.0
+        self._helper_spend_usd = 0.0
         self._world_spend_usd = 0.0
         self._refresh_spend()
         self._level = self._calculate_level()
@@ -538,14 +547,17 @@ class Governor:
             "COALESCE(SUM(cost_usd),0) AS total, "
             f"COALESCE(SUM(CASE WHEN {oracle_clause} THEN cost_usd ELSE 0 END),0) AS oracle, "
             "COALESCE(SUM(CASE WHEN purpose='report_narrative' "
-            "THEN cost_usd ELSE 0 END),0) AS report "
+            "THEN cost_usd ELSE 0 END),0) AS report, "
+            "COALESCE(SUM(CASE WHEN purpose IN ('hermes_selection','commons_selection') "
+            "THEN cost_usd ELSE 0 END),0) AS helper "
             "FROM llm_calls")
         self._last_call_id = int(row["last_id"] if row else 0)
         self._total_spend_usd = float(row["total"] if row else 0.0)
         self._oracle_spend_usd = float(row["oracle"] if row else 0.0)
         self._report_spend_usd = float(row["report"] if row else 0.0)
+        self._helper_spend_usd = float(row["helper"] if row else 0.0)
         self._world_spend_usd = (
-            self._total_spend_usd - self._oracle_spend_usd - self._report_spend_usd)
+            self._total_spend_usd - self._oracle_spend_usd - self._report_spend_usd - self._helper_spend_usd)
 
     def _ensure_current(self) -> None:
         last_id = int(self.store.scalar(
@@ -558,7 +570,9 @@ class Governor:
         cost = float(cost_usd)
         self._last_call_id = max(self._last_call_id, int(call_id))
         self._total_spend_usd += cost
-        if self._uses_report_reserve(purpose):
+        if purpose in ADVISORY_SELECTION_PURPOSES:
+            self._helper_spend_usd += cost
+        elif self._uses_report_reserve(purpose):
             self._report_spend_usd += cost
         elif self._uses_oracle_reserve(purpose):
             self._oracle_spend_usd += cost
@@ -595,7 +609,7 @@ class Governor:
             return float("inf")
         return max(
             0.01,
-            self.cap_usd - self.oracle_reserve_usd - self.report_reserve_usd)
+            self.cap_usd - self.oracle_reserve_usd - self.report_reserve_usd - self.helper_reserve_usd)
 
     def _calculate_level(self) -> int:
         if self.cap_usd is None:
@@ -629,6 +643,10 @@ class Governor:
 
     def can_spend(self, est_cost: float, purpose: str) -> bool:
         self._ensure_current()
+        if purpose in ADVISORY_SELECTION_PURPOSES:
+            return (self.helper_reserve_usd > 0 and
+                    self._helper_spend_usd + est_cost <= self.helper_reserve_usd and
+                    (self.cap_usd is None or self._total_spend_usd + est_cost <= self.cap_usd))
         if self.cap_usd is None:
             return True
         if self._uses_report_reserve(purpose):
@@ -649,6 +667,9 @@ class Governor:
             "world_spend_usd": round(self._world_spend_usd, 4),
             "oracle_spend_usd": round(self._oracle_spend_usd, 4),
             "report_spend_usd": round(self._report_spend_usd, 4),
+            **({"helper_reserve_usd": self.helper_reserve_usd,
+                "helper_spend_usd": round(self._helper_spend_usd, 4)}
+               if self.helper_reserve_usd or self._helper_spend_usd else {}),
             "level": self.level(), "conversation_pairs": self.conversation_pairs(),
             "cadence_multiplier": self.cadence_multiplier(),
             "citizens_enabled": self.citizens_enabled(),
@@ -780,6 +801,7 @@ class Gateway:
                 self.governor._total_spend_usd,
                 self.governor._oracle_spend_usd,
                 self.governor._report_spend_usd,
+                self.governor._helper_spend_usd,
                 self.governor._world_spend_usd,
                 self.governor._level,
             ),
@@ -802,6 +824,7 @@ class Gateway:
                 self.governor._total_spend_usd,
                 self.governor._oracle_spend_usd,
                 self.governor._report_spend_usd,
+                self.governor._helper_spend_usd,
                 self.governor._world_spend_usd,
                 self.governor._level,
             ) = snapshot["governor"]
@@ -1291,7 +1314,7 @@ class Gateway:
 
     async def evaluate(self, req: LLMRequest, evaluation: dict, *, route: str = "primary") -> LLMResponse:
         """Typed capability with strict replay and the ordinary accounted dispatch."""
-        payload = validate_evaluation(evaluation)
+        payload = validate_evaluation(evaluation, legacy_score_rubric=self.replay)
         typed = replace(req, evaluation=payload, evaluation_route=route,
                         context={**req.context, "_evaluation": payload})
         target = self.route_plan(typed).targets[0]
@@ -1453,7 +1476,7 @@ class Gateway:
             failure = ProviderUnavailable(
                 provider, model, req.purpose, f"{type(exc).__name__}: {exc}",
                 latency_ms=latency_ms, attempts=max(1, len(attempt_ids)))
-            if req.purpose != "report_narrative":
+            if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
                 self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                      phase="LLM", importance=5.0)
             operational_log(logger, logging.ERROR, "llm.request.failed",
@@ -1471,7 +1494,7 @@ class Gateway:
             # Report narration is generated after the simulated tick has
             # closed. Its provider outage is operational and must not mutate
             # deterministic world state that an offline replay rebuilds.
-            if req.purpose != "report_narrative":
+            if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
                 self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                      phase="LLM", importance=5.0)
             operational_log(logger, logging.ERROR, "llm.request.failed",
@@ -1579,7 +1602,7 @@ class Gateway:
                 failure = ProviderUnavailable(
                     provider, model, req.purpose, f"repair {type(exc).__name__}: {exc}",
                     latency_ms=latency_ms, attempts=attempts + self.provider_retries + 1)
-                if req.purpose != "report_narrative":
+                if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
                     self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                          phase="LLM", importance=5.0)
                 operational_log(logger, logging.ERROR, "llm.repair.failed",
@@ -1666,7 +1689,7 @@ class Gateway:
                     fallback_target.provider, fallback_target.model, req.purpose,
                     f"contract fallback {type(exc).__name__}: {exc}",
                     latency_ms=latency_ms, attempts=max(1, len(attempt_ids)))
-                if req.purpose != "report_narrative":
+                if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
                     self.store.log_event(
                         req.tick, "provider_failure", failure.as_dict(),
                         phase="LLM", importance=5.0)
@@ -1789,7 +1812,7 @@ class Gateway:
                         f"fallback repair {type(exc).__name__}: {exc}",
                         latency_ms=latency_ms,
                         attempts=max(1, len(attempt_ids)))
-                    if req.purpose != "report_narrative":
+                    if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
                         self.store.log_event(
                             req.tick, "provider_failure", failure.as_dict(),
                             phase="LLM", importance=5.0)
@@ -1885,7 +1908,7 @@ class Gateway:
                     provider, model, req.purpose,
                     validation_error or "live provider returned invalid JSON after repair",
                     latency_ms=latency_ms, attempts=max(1, len(attempt_ids)))
-                if req.purpose != "report_narrative":
+                if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
                     self.store.log_event(req.tick, "provider_failure", failure.as_dict(),
                                          phase="LLM", importance=5.0)
                 raise failure
@@ -2511,10 +2534,14 @@ class Gateway:
         identity = {"t": req.tick, "a": req.agent_id, "p": req.purpose,
                     "m": model, "msgs": req.messages()}
         if req.evaluation is not None:
+            context_identity = req.context
+            if self.decision_policy and self.decision_policy["version"] == "bounded-economic-choice-v4":
+                from agents.decision_references import normalize_references, BINDINGS_KEY
+                context_identity = normalize_references(req.context, req.context.get(BINDINGS_KEY, []))
             identity.update({"contract": DECISIONS_CONTRACT, "evaluation": req.evaluation,
                              "provider": provider, "decision_policy": self.decision_policy,
                              "evaluation_route": req.evaluation_route,
-                             "context_hash": decision_hash(req.context),
+                             "context_hash": decision_hash(context_identity),
                              "provider_config_hash": decision_hash(self.provider_configs.get(provider, {})),
                              "max_tokens": req.max_tokens,
                              "temperature": self._sampling_temperature("primary", req.temperature)})
@@ -2762,7 +2789,7 @@ class Gateway:
         # hard cap, but do not append simulated-world degradation events after
         # the final tick. Replay intentionally regenerates reports via the
         # deterministic engine fallback without dispatching a provider.
-        if req.purpose != "report_narrative":
+        if req.purpose not in REPLAY_OPERATIONAL_PURPOSES:
             self._log_governor_transitions(req.tick, level_before)
         return call_id
 

@@ -141,8 +141,15 @@ class Oracle:
         self, question: str, *, governed_contract: dict | None = None,
     ) -> dict:
         tick = self.store.tick
+        from agents.selection_services import SelectionService
+        selector = SelectionService(self.gw, self.config)
         governed_contract = self._normalize_governed_contract(
             governed_contract, tick=tick)
+        def record_typed_request(prediction_id):
+            if selector.enabled("oracle_tools", tick) or selector.enabled("oracle_forecast", tick):
+                self.store.log_event(tick, "oracle_typed_request", {
+                    "prediction_id": prediction_id, "question": question,
+                    "governed_contract": governed_contract}, importance=0)
         digest = self._world_digest(tick)
         legacy_replay = self._legacy_replay_at(tick)
         hardened_evidence = self._hardened_evidence_at(tick, question)
@@ -185,9 +192,13 @@ class Oracle:
                           json.dumps(planning_context)[:5000]),
                     context=planning_context,
                     tick=tick, max_tokens=350, temperature=0.1)
-                plan_resp = await self.gw.complete(
-                    plan_req, schema_hint='{"queries":[]}')
-                plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
+                if selector.enabled("oracle_tools", tick):
+                    from .typed_selection import select_plan
+                    plan = await select_plan(self, question, tick, governed_contract)
+                else:
+                    plan_resp = await self.gw.complete(
+                        plan_req, schema_hint='{"queries":[]}')
+                    plan = plan_resp.parsed if isinstance(plan_resp.parsed, dict) else {}
                 if state_bound_preflight:
                     try:
                         queries = validate_oracle_plan(
@@ -304,6 +315,7 @@ class Oracle:
                 evidence_json=json.dumps(evidence), status="insufficient_data")
             self.store.log_event(tick, "oracle_insufficient", {
                 "prediction_id": pid, "question": question}, phase=None, importance=1.0)
+            record_typed_request(pid)
             return {"insufficient_data": True, "reason": ans.get("reason", ""),
                     "prediction_id": pid, "evidence": evidence}
 
@@ -321,11 +333,16 @@ class Oracle:
                     "prediction_id": pid, "question": question,
                     "reason": str(exc)[:300],
                 }, phase=None, importance=2.0)
+            record_typed_request(pid)
             return {"insufficient_data": True,
                     "reason": "The analyst could not produce a checkable prediction.",
                     "prediction_id": pid, "evidence": evidence}
 
         p = validated["p"]
+        typed_probability = selector.enabled("oracle_forecast", tick) and governed_contract is not None
+        if typed_probability:
+            from .typed_selection import select_probability
+            p = await select_probability(self, question, tick, governed_contract, evidence)
         rule = validated["resolution_rule"]
         confidence = validated["confidence"]
         drivers = validated["drivers"]
@@ -338,10 +355,15 @@ class Oracle:
             confidence=confidence,
             resolution_rule_json=json.dumps(rule), deadline_tick=deadline,
             evidence_json=json.dumps(evidence), status="open")
+        record_typed_request(pid)
         self.store.log_event(tick, "oracle_prediction", {
             "prediction_id": pid, "question": question, "p": p, "deadline_tick": deadline,
-            "rule": rule}, importance=2.0)
-        return {"prediction_id": pid, "p": p, "drivers": ans.get("drivers", []),
+            "rule": rule, **({"forecast_contract": "typed-noul-v1", "probability_source": "typed_noul",
+                "confidence_source": "direct_analyst", "explanation_source": "direct_analyst"}
+                if typed_probability else {})}, importance=2.0)
+        return {**({"forecast_contract": "typed-noul-v1", "probability_source": "typed_noul",
+                    "confidence_source": "direct_analyst", "explanation_source": "direct_analyst"} if typed_probability else {}),
+                "prediction_id": pid, "p": p, "drivers": ans.get("drivers", []),
                 "confidence": ans.get("confidence", "med"), "resolution_rule": rule,
                 "deadline_tick": deadline, "reasoning": ans.get("reasoning", ""),
                 "evidence": evidence}
@@ -465,6 +487,9 @@ class Oracle:
         return max(1, matching)
 
     def _legacy_replay_at(self, tick: int) -> bool:
+        from agents.selection_services import SelectionService
+        if SelectionService(self.gw, self.config).enabled("oracle_tools", tick):
+            return False
         if not self.gw.replay or self.gw.replay_conn is None:
             return False
         row = self.gw.replay_conn.execute(
@@ -508,6 +533,9 @@ class Oracle:
         """
         if self.engine_semantics_version < 7:
             return None
+        from agents.selection_services import SelectionService
+        if SelectionService(self.gw, self.config).enabled("oracle_tools", tick):
+            return ORACLE_PREFLIGHT_CONTRACT
         if not self.gw.replay or self.gw.replay_conn is None:
             return ORACLE_PREFLIGHT_CONTRACT
         rows = self.gw.replay_conn.execute(

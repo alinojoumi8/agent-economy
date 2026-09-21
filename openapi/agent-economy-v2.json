@@ -124,6 +124,45 @@
         "title": "CommonsActionBody",
         "type": "object"
       },
+      "CommonsAdviceBody": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_actions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "maxItems": 32,
+            "minItems": 1,
+            "title": "Candidate Actions",
+            "type": "array"
+          },
+          "goal": {
+            "default": "",
+            "maxLength": 800,
+            "title": "Goal",
+            "type": "string"
+          },
+          "observation_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Observation Hash",
+            "type": "string"
+          },
+          "observed_tick": {
+            "minimum": 0.0,
+            "title": "Observed Tick",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "observed_tick",
+          "observation_hash",
+          "candidate_actions"
+        ],
+        "title": "CommonsAdviceBody",
+        "type": "object"
+      },
       "ConnectionCreateBody": {
         "additionalProperties": false,
         "properties": {
@@ -233,50 +272,58 @@
         "title": "HTTPValidationError",
         "type": "object"
       },
-      "OAuthClientRegistrationBody": {
+      "JevAdviceBody": {
         "additionalProperties": false,
         "properties": {
-          "client_name": {
-            "default": "MCP client",
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Client Name",
-            "type": "string"
-          },
-          "grant_types": {
+          "candidate_actions": {
             "items": {
-              "type": "string"
+              "additionalProperties": true,
+              "type": "object"
             },
-            "title": "Grant Types",
-            "type": "array"
-          },
-          "redirect_uris": {
-            "items": {
-              "type": "string"
-            },
-            "maxItems": 10,
+            "maxItems": 32,
             "minItems": 1,
-            "title": "Redirect Uris",
+            "title": "Candidate Actions",
             "type": "array"
           },
-          "response_types": {
-            "items": {
-              "type": "string"
-            },
-            "title": "Response Types",
-            "type": "array"
-          },
-          "token_endpoint_auth_method": {
-            "const": "none",
-            "default": "none",
-            "title": "Token Endpoint Auth Method",
+          "goal": {
+            "default": "",
+            "maxLength": 800,
+            "title": "Goal",
             "type": "string"
+          },
+          "observed_projection_hash": {
+            "maxLength": 64,
+            "minLength": 64,
+            "title": "Observed Projection Hash",
+            "type": "string"
+          },
+          "target_tick": {
+            "minimum": 1.0,
+            "title": "Target Tick",
+            "type": "integer"
           }
         },
         "required": [
-          "redirect_uris"
+          "target_tick",
+          "observed_projection_hash",
+          "candidate_actions"
         ],
-        "title": "OAuthClientRegistrationBody",
+        "title": "JevAdviceBody",
+        "type": "object"
+      },
+      "LocalTurnRenewalBody": {
+        "additionalProperties": false,
+        "properties": {
+          "target_tick": {
+            "minimum": 1.0,
+            "title": "Target Tick",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "target_tick"
+        ],
+        "title": "LocalTurnRenewalBody",
         "type": "object"
       },
       "ValidationError": {
@@ -550,6 +597,58 @@
         "summary": "Act Agent Commons"
       }
     },
+    "/api/v2/agent/commons/jev-advice": {
+      "post": {
+        "operationId": "commons_jev_advice_api_v2_agent_commons_jev_advice_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommonsAdviceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Commons Jev Advice"
+      }
+    },
+    "/api/v2/agent/commons/jev-view": {
+      "get": {
+        "operationId": "commons_jev_view_api_v2_agent_commons_jev_view_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          }
+        },
+        "summary": "Commons Jev View"
+      }
+    },
     "/api/v2/agent/events": {
       "get": {
         "operationId": "get_agent_events_api_v2_agent_events_get",
@@ -599,6 +698,42 @@
           }
         },
         "summary": "Get Agent Events"
+      }
+    },
+    "/api/v2/agent/jev-advice": {
+      "post": {
+        "operationId": "jev_advice_api_v2_agent_jev_advice_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JevAdviceBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Jev Advice"
       }
     },
     "/api/v2/agent/me": {
@@ -672,6 +807,42 @@
           }
         },
         "summary": "Agent Turn"
+      }
+    },
+    "/api/v2/agent/turn/renew": {
+      "post": {
+        "operationId": "renew_local_agent_turn_api_v2_agent_turn_renew_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LocalTurnRenewalBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Renew Local Agent Turn"
       }
     },
     "/api/v2/tenants/{tenant_id}/agent-connections": {
@@ -1262,16 +1433,6 @@
     "/oauth/register": {
       "post": {
         "operationId": "oauth_register_oauth_register_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/OAuthClientRegistrationBody"
-              }
-            }
-          },
-          "required": true
-        },
         "responses": {
           "201": {
             "content": {
@@ -1280,16 +1441,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            },
-            "description": "Validation Error"
           }
         },
         "summary": "Oauth Register"

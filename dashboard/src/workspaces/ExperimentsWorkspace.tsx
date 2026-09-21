@@ -19,7 +19,9 @@ type ExperimentsProjection = {
   predictions?: EvidenceRow[]; acceptance?: EvidenceRow[]; datasets?: EvidenceRow[];
   scenarios?: EvidenceRow[]; experiments?: EvidenceRow[]; results?: EvidenceRow[];
   current_only_artifacts_omitted?: boolean;
-  decisions?: {total: number; window: number; items: EvidenceRow[]};
+  decisions?: {total: number; window: number; items: EvidenceRow[];
+    totals?: {provider_calls: number; cost_usd: number; accepted: number; attempted: number};
+    services?: EvidenceRow[]};
 };
 type View = "evidence" | "rehearsals" | "forecasts" | "campaigns" | "inputs" | "price-studies" | "decisions";
 
@@ -90,10 +92,17 @@ export function ExperimentsWorkspace() {
       {view === "decisions" && <article className="world-os-workspace-card">
         <header><div><p className="world-os-kicker">Bounded economic choices</p><h3>Agent decisions</h3></div></header>
         <p>Latest {projection.data?.decisions?.items.length || 0} of {projection.data?.decisions?.total || 0} recorded decisions at this tick. Confidence describes answer concentration, not the probability of economic success. Accepted actions passed engine validation.</p>
+        {projection.data?.decisions?.totals && <dl className="world-os-summary-strip" aria-label="All bounded decisions through this tick">
+          <div><dt>All decision calls</dt><dd>{projection.data.decisions.totals.provider_calls}</dd></div>
+          <div><dt>All decision cost (USD)</dt><dd>${projection.data.decisions.totals.cost_usd.toFixed(6)}</dd></div>
+          <div><dt>Actions accepted</dt><dd>{projection.data.decisions.totals.accepted}/{projection.data.decisions.totals.attempted}</dd></div>
+        </dl>}
         <WorkspaceTable caption="Agent decisions" rows={projection.data?.decisions?.items || []}
           empty="No bounded decision policy has produced receipts in this view." columns={[
             {key: "tick", label: "Tick", render: row => text(row.tick)},
             {key: "agent", label: "Citizen", render: row => `#${row.agent_id}`},
+            {key: "domain", label: "Domains", render: row => text((row.domains as string[])?.join(", "), "Routine")},
+            {key: "controller", label: "Controller", render: row => text(row.controller, "native")},
             {key: "actions", label: "Actions", render: row => text((row.action_types as string[])?.join(", "), "Wait / outside menu")},
             {key: "status", label: "Status", render: row => `${text(row.status)} · ${text(row.reason)}`},
             {key: "confidence", label: "Confidence", render: row => row.confidence == null ? "Unavailable" : `${(Number(row.confidence) * 100).toFixed(0)}%`},
@@ -102,6 +111,15 @@ export function ExperimentsWorkspace() {
             {key: "cost", label: "Call cost (USD)", render: row => `$${Number(row.cost_usd || 0).toFixed(6)}`},
             {key: "latency", label: "Latency", render: row => `${row.latency_ms} ms`},
           ]} />
+        {!!projection.data?.decisions?.services?.length && <>
+          <p>Supporting selections through this tick. These costs are separate from the decision totals above. Private helper requests remain in their owner’s audit history.</p>
+          <WorkspaceTable caption="Supporting selections" rows={projection.data.decisions.services} empty="No supporting selections." columns={[
+            {key: "service", label: "Service", render: row => text(row.service)},
+            {key: "selections", label: "Selections", render: row => text(row.selections)},
+            {key: "calls", label: "Provider calls", render: row => text(row.provider_calls)},
+            {key: "cost", label: "Call cost (USD)", render: row => `$${Number(row.cost_usd || 0).toFixed(6)}`},
+          ]} />
+        </>}
       </article>}
 
       {view === "evidence" && <section className="world-os-evidence-cards" aria-label="Acceptance and release evidence">

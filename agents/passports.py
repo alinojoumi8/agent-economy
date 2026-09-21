@@ -162,8 +162,18 @@ class SqlitePassportRepository:
         ON agent_passports(owner_id, status, created_at);
     """
 
-    def __init__(self, path: str | Path):
+    def __init__(self, path: str | Path, *, existing_only: bool = False):
         self.path = Path(path)
+        if existing_only:
+            from engine.existing import open_existing, validate_schema
+            self._lock = RLock()
+            def validate(conn):
+                validate_schema(conn, lambda ref: ref.executescript(self._SCHEMA))
+                row = conn.execute("SELECT value FROM passport_meta WHERE key='cookie_signing_key'").fetchone()
+                if row is None or not re.fullmatch(r"[a-f0-9]{64}", row[0]):
+                    raise ValueError("existing passport signing key is missing or incompatible")
+            self._conn = open_existing(path, validate)
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._conn = sqlite3.connect(
@@ -554,7 +564,7 @@ class LocalCitizenshipService:
 
     def __init__(
         self, external: ExternalAgentService, *, run_id: str,
-        config: dict[str, Any],
+        config: dict[str, Any], repository: SqlitePassportRepository | None = None,
     ):
         self.external = external
         self.store = external.store
@@ -573,7 +583,7 @@ class LocalCitizenshipService:
         self.claim_hours = max(1, min(int(config.get("claim_hours", 24)), 72))
         db_path = Path(str(config.get(
             "passport_db_path", "data/control-plane/agent-passports.db")))
-        self.repository = SqlitePassportRepository(db_path)
+        self.repository = repository if repository is not None else SqlitePassportRepository(db_path)
         self._admission_lock = RLock()
 
     @property

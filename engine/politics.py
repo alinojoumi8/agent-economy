@@ -179,6 +179,8 @@ class PoliticalEconomy:
         return {"ok": True, "bill_id": bill_id, "version": version, "status": "committee"}
 
     def committee_vote(self, tick: int, actor_id: int, bill_id: int, vote: str) -> dict[str, Any]:
+        if getattr(self, "ballots", None) and self.ballots.active(tick):
+            return self.ballots.cast_legislative(tick, actor_id, bill_id, "committee", vote)
         bill = self.store.query_one("SELECT * FROM bills WHERE id=?", (bill_id,))
         legislator = self._legislator_for_agent(actor_id)
         if not bill or bill["status"] != "committee" or not legislator:
@@ -202,6 +204,8 @@ class PoliticalEconomy:
         return {"ok": True, "bill_id": bill_id, "status": status, "yes": yes, "members": members}
 
     def cast_vote(self, tick: int, actor_id: int, bill_id: int, vote: str) -> dict[str, Any]:
+        if getattr(self, "ballots", None) and self.ballots.active(tick):
+            return self.ballots.cast_legislative(tick, actor_id, bill_id, "floor", vote)
         bill = self.store.query_one("SELECT * FROM bills WHERE id=?", (bill_id,))
         legislator = self._legislator_for_agent(actor_id)
         if not bill or bill["status"] not in {"floor_house", "floor_senate"} or not legislator:
@@ -466,6 +470,8 @@ class PoliticalEconomy:
             self.store.log_event(tick, "policy_rule_effective", {"policy_rule_id": int(rule["id"]),
                 "rule_key": rule["rule_key"], "value": value, "bill_id": rule["bill_id"]},
                 phase="NIGHT_CLOSE", subject_type="bill", subject_id=rule["bill_id"], importance=3.5)
+        if getattr(self, "ballots", None) and self.ballots.active(tick):
+            return
         if self.house_interval > 0 and tick > 0 and tick % self.house_interval == 0:
             if not self.store.query_one(
                     "SELECT 1 FROM elections WHERE tick=? AND election_type='legislative'", (tick,)):

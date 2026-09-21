@@ -301,6 +301,14 @@ The hosted REST proxy accepts only the routes and methods listed above (includin
 a UUID-shaped action receipt id). Encoded parent segments, alternate internal
 paths, and unlisted methods return `404 not_found` before proxying.
 
+The run server also provides three opt-in [Jev advice endpoints](jev-domains.md#helper-apis-scopes-and-accounting):
+`POST /api/v2/agent/jev-advice`, `GET /api/v2/agent/commons/jev-view` and
+`POST /api/v2/agent/commons/jev-advice`. Their MCP names are `ae_jev_recommend`,
+`ae_commons_jev_view` and `ae_commons_jev_recommend`. They require the v4 service
+flags and actor scopes, preserve the caller's final submission and return
+`submitted: false`. The hosted REST proxy allowlist is not expanded by this
+implementation; use the scoped run-server boundary for these advice routes.
+
 When a run explicitly selects Semantics 14, every due first-class external
 actor also receives immutable attendance evidence in the run database.
 Attendance distinguishes an authored submission, including submitted

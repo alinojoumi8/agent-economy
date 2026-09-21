@@ -52,7 +52,8 @@ class OpenRouterDecisionsAdapter(Adapter):
         import httpx
 
         evaluation = (context or {}).get("_evaluation")
-        if evaluation is None or purpose not in {"decision", "preflight", "decision_evaluation"}:
+        from agents.decision_domains import TYPED_PURPOSES
+        if evaluation is None or purpose not in TYPED_PURPOSES:
             raise ValueError("OpenRouter Decisions requires a typed evaluation purpose")
         evaluation = validate_evaluation(evaluation)
         key = os.environ.get(self.api_key_env, "").strip()

@@ -657,12 +657,13 @@ test("historical city uses the requested fork/tick and independent playback", as
 test("a delayed new tick never borrows old placements or overwrites a newer selection", async ({ page }) => {
   // Keep the gap between browser navigation and React's commit observable.
   const timing = await page.context().newCDPSession(page);
-  await timing.send("Emulation.setCPUThrottlingRate", { rate: 4 });
   let release: () => void = () => {};
   const holdSix = new Promise<void>(resolve => { release = resolve; });
   await mockCity(page, { beforeMap: tick => tick === 6 ? holdSix : Promise.resolve() });
   await page.goto("/runs/run-demo/world?tick=3&view=recorded");
   await expect(page.getByRole("button", { name: "Play recorded day", exact: true })).toBeEnabled();
+  // Slow the navigation race being tested, after the app has initialized.
+  await timing.send("Emulation.setCPUThrottlingRate", { rate: 4 });
   await page.evaluate(() => {
     history.pushState(null, "", "/runs/run-demo/world?tick=6&view=recorded");
     dispatchEvent(new PopStateEvent("popstate"));

@@ -59,7 +59,7 @@ IGNORED_EVENT_KINDS = {
     # executed submission row that binds the action to its world effects.
     "external_action_queued", "external_action_stale", "external_action_rejected",
 }
-OPERATIONAL_LLM_PURPOSES = {"report_narrative"}
+OPERATIONAL_LLM_PURPOSES = {"report_narrative", "hermes_selection", "commons_selection"}
 JSON_COLUMNS = {
     "participant_ids", "slant_tags", "source_event_ids",
 }
@@ -543,11 +543,23 @@ def _event_llm_expectations(
         if (type(owner_id) is not int or event_row["phase"] != "EXECUTION"
                 or event_row["subject_type"] != "agent" or event_row["subject_id"] != owner_id
                 or root.get("contract") not in {"bounded-economic-choice-v1", "bounded-economic-choice-v2",
-                                               "bounded-economic-choice-v3"}):
+                                               "bounded-economic-choice-v3", "bounded-economic-choice-v4"}):
             return expectations, False
         role, valid = _agent_role(conn, owner_id, tick=int(event_row["tick"]))
         purpose = str(root.get("purpose") or "")
-        valid = valid and purpose == "decision"
+        valid = valid and (purpose in _action_purposes_for(conn, owner_id, int(event_row["tick"]), role)
+            if root.get("contract") == "bounded-economic-choice-v4" else purpose == "decision")
+    elif key == "model_call_id" and str(event_row["kind"]) == "bounded_selection":
+        from agents.selection_services import PURPOSES
+        service = root.get("service")
+        owner_id = root.get("agent_id")
+        valid = (root.get("contract") == "bounded-selection-v1" and
+            service in {"attention", "newsroom", "oracle_tools", "oracle_forecast"} and
+            event_row["phase"] == "DECISION_SERVICE" and root.get("controller") == "native" and
+            event_row["subject_id"] == owner_id and
+            (type(owner_id) is int or owner_id is None and service in {"oracle_tools", "oracle_forecast"}))
+        expectations["agent_id"] = owner_id
+        role, purpose = service, PURPOSES.get(service)
     elif key == "source_llm_call_id" and "agent_id" in root:
         try:
             owner_id = int(root["agent_id"])
@@ -613,7 +625,8 @@ def _logical_event_references(
         # event, so an incremental index resolves the logical identity without
         # depending on this database's physical event IDs.
         payload, _valid = _canonicalize_nested_event_references(
-            payload, references)
+            payload, references, extra_keys=(frozenset({"source_event_id", "outcome_event_id"})
+                if isinstance(payload, dict) and payload.get("contract") == "bounded-economic-choice-v4" else frozenset()))
         references[int(row["id"])] = {"event": {
             "tick": int(row["tick"]),
             "kind": str(row["kind"]),
@@ -871,7 +884,9 @@ def _table_digest(
                 if (table, column) in NESTED_EVENT_REFERENCE_JSON_COLUMNS:
                     value, valid = _canonicalize_nested_event_references(
                         value, event_references, extra_keys=(frozenset({"outcome_event_id"})
-                            if table == "urban_projection_history" else frozenset()))
+                            if table == "urban_projection_history" else
+                            frozenset({"source_event_id", "outcome_event_id"}) if table == "events" and
+                            isinstance(value, dict) and value.get("contract") == "bounded-economic-choice-v4" else frozenset()))
                     references_valid = references_valid and valid
                 record[column] = value
         encoded = storage.encode(record, exact=True)

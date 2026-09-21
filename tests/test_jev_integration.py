@@ -3,6 +3,7 @@ import asyncio
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
+import pytest
 from pathlib import Path
 import threading
 
@@ -105,3 +106,31 @@ def test_observer_events_and_causal_views_strip_private_menu(store):
         assert "evaluation" not in serialized and "candidates" not in serialized
     assert summary["items"][0]["action_types"] == ["buy_goods"]
     assert summary["items"][0]["accepted"] == 1
+
+
+def test_decision_totals_aggregate_without_decoding_full_history(store, monkeypatch):
+    from server.projections import decisions
+    payload = {'status': 'selected', 'calls': [{'cost_usd': .25}, {'cost_usd': .5}],
+               'outcomes': [{'ok': True}, {'ok': False}, {'ok': 1}], 'candidates': []}
+    for i in range(240):
+        store.log_event(1, 'typed_decision', payload)
+        store.log_event(1, 'bounded_selection', {'service': 'attention', 'calls': [{'cost_usd': .1}]})
+    store.log_event(2, 'typed_decision', payload)
+    original = decisions.json.loads
+    decoded = []
+    def counted(value, *args, **kwargs):
+        decoded.append(1)
+        return original(value, *args, **kwargs)
+    monkeypatch.setattr(decisions.json, 'loads', counted)
+    result = decisions.build_decision_workspace(store, as_of_tick=1)
+    assert len(decoded) == 200 and len(result['items']) == 200
+    assert result['total'] == 240
+    assert result['totals'] == {'provider_calls': 480, 'cost_usd': 180.0, 'accepted': 240, 'attempted': 720}
+    assert result['services'][0]['selections'] == 240
+    assert result['services'][0]['provider_calls'] == 240
+    assert result['services'][0]['cost_usd'] == pytest.approx(24.0)
+    store.log_event(1, 'typed_decision', payload)
+    refreshed = decisions.build_decision_workspace(store, as_of_tick=1)
+    assert refreshed['total'] == 241 and refreshed['totals']['accepted'] == 241
+    assert decisions.build_decision_workspace(store, as_of_tick=0)['totals'] == {
+        'provider_calls': 0, 'cost_usd': 0.0, 'accepted': 0, 'attempted': 0}

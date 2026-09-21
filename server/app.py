@@ -54,6 +54,11 @@ class SpeedBody(BaseModel):
     delay_s: float = Field(ge=0.0, le=3600.0, allow_inf_nan=False)
 
 
+class AdvanceOneBody(BaseModel):
+    expected_run_id: str = Field(strict=True, pattern=r"^[a-zA-Z0-9_-]+$")
+    expected_tick: int = Field(strict=True, ge=0)
+
+
 class ParticipantControlBody(BaseModel):
     agent_id: int
     expected_tick: int
@@ -227,7 +232,8 @@ def _agent_execution_document(
 
 
 def create_app(world: World, *, served_ticks: int | None = None,
-               hosted_safe: bool = False) -> FastAPI:
+               hosted_safe: bool = False, passport_repository=None,
+               operator_workspace=None) -> FastAPI:
     controller = RunController(
         world, served_ticks=served_ticks, hosted_safe=hosted_safe)
     hub = controller.hub
@@ -235,9 +241,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
     app = FastAPI(title="Agent Economy Observatory", lifespan=controller.lifespan)
     app.state.run_controller = controller
     from server.v2_api import install_v2_routes
-    install_v2_routes(app, world, controller)
+    install_v2_routes(app, world, controller, operator_workspace=operator_workspace)
     from server.external_api import install_external_routes
-    install_external_routes(app, world, hosted_safe=hosted_safe)
+    install_external_routes(app, world, hosted_safe=hosted_safe,
+                            passport_repository=passport_repository)
     acceptance_cache = {"result": None, "evaluated_at": 0.0}
     acceptance_lock = asyncio.Lock()
 
@@ -463,6 +470,21 @@ def create_app(world: World, *, served_ticks: int | None = None,
     @app.post("/api/run/step")
     async def step_once():
         return await controller.step()
+
+    # Local operator diagnostics only. Existing hosted authorization surfaces
+    # and the production Step endpoint retain their contracts.
+    if not hosted_safe:
+        @app.get("/api/run/diagnostics")
+        async def diagnostic_state():
+            return await asyncio.to_thread(controller.diagnostic_snapshot)
+
+        @app.post("/api/run/advance-one")
+        async def advance_one(body: AdvanceOneBody):
+            return await controller.advance_one(body.expected_run_id, body.expected_tick)
+
+        @app.post("/api/run/snapshot-for-replay")
+        async def snapshot_for_replay(body: AdvanceOneBody):
+            return await controller.snapshot_for_replay(body.expected_run_id, body.expected_tick)
 
     @app.post("/api/run/speed")
     async def set_speed(body: SpeedBody):

@@ -338,8 +338,18 @@ class AgentRuntime:
     # ── MORNING: decide (concurrent) ─────────────────────────────────────────
     async def decide_all(self, tick: int) -> list[dict]:
         gov = self.gw.governor
+        cadence = max(1, gov.cadence_multiplier())
+        citizens_enabled = gov.citizens_enabled()
         agents = self.scheduler.scheduled_agents(
-            tick, cadence_multiplier=gov.cadence_multiplier(), citizens_enabled=gov.citizens_enabled())
+            tick, cadence_multiplier=cadence, citizens_enabled=citizens_enabled)
+        if self.e.ballots.active(tick) and citizens_enabled:
+            by_id = {int(a["id"]): a for a in agents}
+            for aid in self.e.ballots.pending_actors(tick):
+                # Ballot wakes cannot undo governor throttling. Stable phases
+                # preserve replay and leave undispatched voters as nonvotes.
+                if aid not in by_id and aid % cadence == tick % cadence:
+                    by_id[aid] = self.store.query_one("SELECT * FROM agents WHERE id=?", (aid,))
+            agents = [by_id[aid] for aid in sorted(by_id)]
         self.ctx.prepare_decision_cohort(agents, tick)
         participant_decision = self.participant.decision_for_tick(tick)
         external_agent_ids, external_decisions = self.external.decisions_for_tick(tick)
@@ -383,6 +393,11 @@ class AgentRuntime:
                                 error_type=type(res).__name__, error=str(res))
                 continue
             if res is not None:
+                # Parallel provider completion must not reorder the event spine.
+                # Prepared context effects precede service receipts in actor order.
+                from .selection_services import SelectionService
+                for receipt in res.pop("selection_receipts", []):
+                    SelectionService(self.gw, self.config).record_receipt(receipt)
                 decisions.append(res)
         if participant_decision is not None:
             self._attach_civic_decision_context(tick, participant_decision)
@@ -1082,6 +1097,21 @@ class AgentRuntime:
 
         if prepared.request is None:
             raise RuntimeError("prepared model decision has no request")
+        from .selection_services import SelectionService
+        selector = SelectionService(self.gw, self.config)
+        selection_receipts = []
+        if selector.enabled("attention", prepared.request.tick) and context.get("memories"):
+            from dataclasses import replace
+            memories, receipt = await selector.rank_attention(
+                prepared.agent_id, prepared.request.tick, context["memories"],
+                goals=context.get("decision_goals", context.get("beliefs", {})), record_event=False)
+            if receipt:
+                selection_receipts.append(receipt)
+            context = {**context, "memories": memories}
+            system, user = self.ctx.render_prompt(context)
+            prepared = prepared._replace(context=context,
+                request=replace(prepared.request, context=context, system=system, user=user),
+                typed_menu=self.typed_policy.prepare(context, prepared.request.tick))
         typed = (await self.typed_policy.complete(prepared.request, prepared.typed_menu)
                  if prepared.typed_menu is not None else None)
         resp = typed.response if typed is not None else await self.gw.complete(prepared.request)
@@ -1108,6 +1138,7 @@ class AgentRuntime:
             "numeric_claims_redacted": public_reasoning != raw_reasoning,
             "llm_call_id": getattr(resp, "call_id", None),
             **({"typed_receipt": typed.receipt} if typed is not None else {}),
+            "selection_receipts": selection_receipts,
             "communication_sources": context.get("communication_sources", []),
             "communication_read_context_key": context.get(
                 "communication_read_context_key"),

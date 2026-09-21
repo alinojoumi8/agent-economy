@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -169,14 +170,30 @@ def run_hermes_process(command, *, timeout, **kwargs):
         process.wait()
 
 
+@contextmanager
+def cohort_lock(path):
+    """Hold the same nonblocking exclusive lock used by the cohort worker."""
+    with path.open("a+b") as lock:
+        if os.name == "nt":
+            import msvcrt
+            lock.seek(0); lock.write(b"0"); lock.flush(); lock.seek(0)
+            msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        yield
+
+
 class CohortOperator:
-    def __init__(self, args):
+    def __init__(self, args, *, world_root=None, create_directory=True):
         self.args = args
-        self.root = ROOT / "data/control-plane/hermes-cohort" / args.run_id
-        self.root.mkdir(parents=True, exist_ok=True)
+        self.world_root = Path(world_root) if world_root is not None else ROOT
+        self.root = self.world_root / "data/control-plane/hermes-cohort" / args.run_id
+        if create_directory:
+            self.root.mkdir(parents=True, exist_ok=True)
         self.manifest_path = self.root / "manifest.json"
         self.client = httpx.Client(base_url=args.url, timeout=300, trust_env=False)
-        self.database = ROOT / "data/runs" / f"{args.run_id}.db"
+        self.database = self.world_root / "data/runs" / f"{args.run_id}.db"
         self.hermes = Path(args.hermes_python)
         self.profiles = Path(args.profiles_root)
 
@@ -315,6 +332,14 @@ class CohortOperator:
                 print(f"{citizen['name']}: refreshing turn after {reason} (attempt {attempt}/3)", flush=True)
 
     def _decide_once(self, citizen, tick, *, attempt=1):
+        return self.decision_attempt(citizen, tick, attempt=attempt)
+
+    def decision_attempt(self, citizen, tick, *, attempt=1, max_attempts=3):
+        """One bounded Hermes process; callers own scheduling and any retries.
+
+        Hermes itself may make multiple model/tool requests during this process.
+        The production wrapper retains its original three-attempt policy.
+        """
         if any(row["status"] == "queued" for row in self.receipts(citizen, tick)):
             return
         if (self.root / "STOP").exists():
@@ -342,7 +367,7 @@ class CohortOperator:
             "verbatim into observed_projection_hash; never abbreviate, guess, or reuse an old hash. "
             "Call one MCP tool per tool_call. If tool argument validation fails or the turn is stale, "
             "fetch ae_turn_wait again and correct the submission. Do not finish until a queued receipt is confirmed. "
-            f"This is attempt {attempt} of at most 3; if recovering, your previous turn did not yield a queued receipt. "
+            f"This is attempt {attempt} of at most {max_attempts}; if recovering, your previous turn did not yield a queued receipt. "
             "Choose useful economic "
             "work, job seeking, training, exploration, settlement founding or building, moving, civic voting, "
             "or essential purchases based on your own goals and affordability. Frontier actions appear only when available; "
@@ -363,7 +388,7 @@ class CohortOperator:
         # rotating ChatGPT tokens or require an unrelated provider's API key.
         if model["provider"] == "deepseek":
             key = (dotenv_values(home / ".env").get("DEEPSEEK_API_KEY")
-                   or dotenv_values(ROOT / ".env").get("DEEPSEEK_API_KEY") or env.get("DEEPSEEK_API_KEY"))
+                   or dotenv_values(self.world_root / ".env").get("DEEPSEEK_API_KEY") or env.get("DEEPSEEK_API_KEY"))
             if not key:
                 raise RuntimeError("DEEPSEEK_API_KEY is unavailable; no substitute agent will act")
             env["DEEPSEEK_API_KEY"] = key
@@ -404,20 +429,15 @@ class CohortOperator:
             raise error(f"{citizen['name']} did not queue an action; Hermes exit code "
                         f"{result.returncode}; inspect {log_path}")
         print(f"{citizen['name']}: queued tick {tick}", flush=True)
+        return {"exit_code": result.returncode, "timed_out": timed_out,
+                "session_id": session_id, "log": str(log_path)}
 
     def run(self):
         manifest = read_json(self.manifest_path)
         citizens = manifest["citizens"]
         if len(citizens) != 10:
             raise RuntimeError("Exactly ten provisioned citizens are required")
-        with (self.root / "operator.lock").open("a+b") as lock:
-            if os.name == "nt":
-                import msvcrt
-                lock.seek(0); lock.write(b"0"); lock.flush(); lock.seek(0)
-                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
-            else:
-                import fcntl
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        with cohort_lock(self.root / "operator.lock"):
             starting = self.api("/api/run/status")
             if starting["run_id"] != self.args.run_id:
                 raise RuntimeError("The server is serving a different world")

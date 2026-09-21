@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from engine.actions import ActionExecutor
 from engine.store import Store, load_json, open_read_only_connection
 from engine.local_participation import departed_after, is_local
 from engine.commands.registry import POPULATION_MODELS
@@ -489,6 +490,25 @@ class ParticipantService:
                     label,
                     f"civic-{founding_action['type']}",
                 ))
+        elif (bool(self.config.get("entrepreneurship", {}).get("enabled", False))
+              and self.store.tick + 1 >= max(0, int(
+                  self.config["entrepreneurship"].get("activation_tick", 0)))):
+            # Reuse the context's current opportunity, never stale authorization
+            # caches or a client-invented form. Execution still rechecks everything.
+            items = [item for item in items if item["type"] != "found_company"]
+            reason = "found_company is available only from a supplied entrepreneurship opportunity"
+            if founding_action.get("type") == "found_company":
+                reason = ActionExecutor(self.ctx.e).founding_prerequisite_error(
+                    self.store.tick + 1, int(agent_id), founding_action)
+                founding = exact_action(
+                    founding_action, "Found the opportunity-authorized company", "default")
+            else:
+                founding = {"type": "found_company", "label": "Found a company",
+                            "fields": []}
+            founding.update(enabled=reason is None, available=reason is None)
+            if reason is not None:
+                founding["disabled_reason"] = reason
+            items.append(founding)
         if self.engine_semantics_version >= 13:
             construction = ctx.get("construction_work") or {}
             for index, action in enumerate(
@@ -839,6 +859,32 @@ class ParticipantService:
             items.append(item)
         if frontier.get("task"):
             items = [item for item in items if item["type"] == "do_nothing"]
+        for ballot in (self.ctx.e.ballots.upcoming_choices(agent_id, self.store.tick + 1)
+                       if self.config.get("recorded_voting") else []):
+            for choice in ballot["choices"]:
+                items.append(exact_action({"type": "cast_election_vote", "ballot_key": ballot["key"],
+                    "choice": choice}, f"Vote {choice} in {ballot['key']}", f"ballot-{ballot['key']}-{choice}"))
+        if (bool(self.config.get("entrepreneurship", {}).get("enabled", False))
+                and self.store.tick + 1 >= max(0, int(
+                    self.config["entrepreneurship"].get("activation_tick", 0)))):
+            # The startup variants above come from this tick's context, including
+            # bounded v4 alternatives. Never use a free-form or cached authority.
+            generic_pitch = any(item["type"] == "pitch_vc"
+                                and not item.get("action") for item in items)
+            items = [item for item in items
+                     if item["type"] != "pitch_vc" or item.get("action")]
+            pitches = [item for item in items if item["type"] == "pitch_vc"]
+            for item in pitches:
+                error = ActionExecutor(self.ctx.e).pitch_prerequisite_error(
+                    self.store.tick + 1, int(agent_id),
+                    {key: value for key, value in item["action"].items() if key != "variant"})
+                item.update(enabled=error is None, available=error is None)
+                if error is not None:
+                    item["disabled_reason"] = error["reason"]
+            if generic_pitch and not pitches:
+                items.append({"type": "pitch_vc", "label": "Pitch my company to VC",
+                              "fields": [], "enabled": False, "available": False,
+                              "disabled_reason": "startup action must copy a current supplied action exactly"})
         for item in items:
             item.setdefault("variant", "default")
             spec = action_spec(str(item["type"]))
@@ -853,7 +899,7 @@ class ParticipantService:
                 item["disabled_reason"] = "No valid options are currently available"
         return items
 
-    def _normalize_action(self, agent_id: int, action: Any) -> dict:
+    def _normalize_action(self, agent_id: int, action: Any, *, catalog: list[dict] | None = None) -> dict:
         if not isinstance(action, dict):
             raise ParticipantError(400, "action must be a JSON object")
         action_type = str(action.get("type", ""))
@@ -862,7 +908,7 @@ class ParticipantService:
         exact_bid_terms = self.engine_semantics_version >= 20 and action_type in {"place_estate_property_bid", "place_estate_unlisted_bid"}
         exact_population_terms = self.engine_semantics_version >= 21 and action_type in POPULATION_MODELS
         variant = str(action.get("variant", "default"))
-        descriptors = [item for item in self.action_catalog(agent_id)
+        descriptors = [item for item in (self.action_catalog(agent_id) if catalog is None else catalog)
                        if item["type"] == action_type and item.get("variant", "default") == variant]
         if not descriptors:
             raise ParticipantError(400, "action is not available to the controlled citizen")
@@ -879,7 +925,8 @@ class ParticipantService:
             if len(path) > 1:
                 nested_allowed.setdefault(path[0], set()).add(path[1])
             kind = field.get("kind")
-            if exact_population_terms and kind == 'hidden':
+            if (exact_population_terms or (action_type in {'found_company', 'pitch_vc'}
+                    and descriptor.get('available') is True)) and kind == 'hidden':
                 supplied = _path_value(action, path, field.get('default'))
                 if supplied != field.get('default'):
                     raise ParticipantError(409, f'{name} is stale or unavailable')

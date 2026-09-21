@@ -31,6 +31,31 @@ test('City is home; full-day pagination, outcomes and actor filters share map se
   await expect(activity.getByLabel('Agent',{exact:true})).toHaveValue('125');
 });
 
+for(const clear of [false,true])test(`rapid City view and ${clear?'filter clearing':'agent filtering'} preserve both pending choices`,async({page})=>{
+  await installCityFixture(page);
+  await page.goto('/runs/city-fixture/world?population=all&view=atlas'+(clear?'&actor=125':''));
+  const activity=page.getByRole('region',{name:'City activity',exact:true});
+  await expect(activity.getByLabel('Day activity totals')).toContainText(clear?'1 events':'125 events');
+  const control=await (clear?activity.getByRole('button',{name:'Clear filters',exact:true}):activity.getByLabel('Agent',{exact:true})).elementHandle();
+  const list=page.getByRole('button',{name:'List',exact:true});
+  // Deliver both user events before the deferred navigation can render.
+  await list.evaluate((button,{control,clear})=>{
+    (button as HTMLButtonElement).click();
+    if(!control)throw new Error('Activity control is missing');
+    if(clear)(control as HTMLButtonElement).click();
+    else{
+      (control as HTMLSelectElement).value='125';
+      control.dispatchEvent(new Event('change',{bubbles:true}));
+    }
+  },{control,clear});
+  await expect(page).toHaveURL(/view=list/);
+  if(clear)await expect(page).not.toHaveURL(/actor=/);
+  else await expect(page).toHaveURL(/actor=125/);
+  await expect(list).toHaveAttribute('aria-pressed','true');
+  await expect(activity.getByLabel('Agent',{exact:true})).toHaveValue(clear?'':'125');
+  await expect(activity.getByLabel('Day activity totals')).toContainText(clear?'125 events':'1 events');
+});
+
 test('City panels are keyboard contained and mobile layout has no horizontal overflow',async({page})=>{
   await installCityFixture(page);await page.setViewportSize({width:390,height:844});await page.emulateMedia({reducedMotion:'reduce'});
   await page.goto('/runs/city-fixture/world?population=all&agent=75');

@@ -21,7 +21,7 @@ from agents.decision_candidates import COMPILER_VERSIONS, DecisionMenu
 from agents.typed_policy import TypedDecisionPolicy
 from engine.store import Store
 from llm.decision_budget import tariffs_for, typed_targets
-from llm.decision_config import decision_policy
+from llm.decision_config import POLICY_VERSION_V4, decision_policy
 from llm.decisions import canonical_json, decision_hash, validate_evaluation
 from llm.gateway import DEFAULT_PRICING, Gateway, LLMRequest
 from llm.readiness import validate_llm_config
@@ -41,14 +41,39 @@ def frozen_menu(record):
     compiler = COMPILER_VERSIONS.get(record.get("contract"))
     if compiler is None or record.get("compiler") != compiler:
         raise ValueError("frozen record uses another compiler or policy")
+    metadata = record.get("domain_metadata", {})
+    if record.get("contract") == POLICY_VERSION_V4 and not metadata:
+        metadata = {key: record[key] for key in ("domains", "controller", "coverage_exclusions",
+            "ballot_actions", "candidate_count", "compiler_policy")}
+        metadata["decision_reference_bindings"] = record.get("decision_reference_bindings", [])
     menu = DecisionMenu(record["observation_hash"], canonical_json(record["candidates"]),
-        canonical_json(validate_evaluation(record["evaluation"])), record["baseline_choice"],
-        compiler_version=compiler)
+        canonical_json(validate_evaluation(record["evaluation"], legacy_score_rubric=record.get("contract") != POLICY_VERSION_V4)), record["baseline_choice"],
+        compiler_version=compiler, metadata_json=canonical_json(metadata))
     if menu.menu_hash != record["menu_hash"]:
         raise ValueError("frozen candidate menu identity changed")
     criteria = menu.evaluation["questions"]["action"]["criteria"]
-    if criteria != {c["id"]: {"actions": c["actions"], **c["facts"]} for c in menu.candidates}:
+    expected = ({c["id"]: {k: v for k, v in c.items() if k != "id"} for c in menu.candidates}
+                if record["contract"] == POLICY_VERSION_V4 else
+                {c["id"]: {"actions": c["actions"], **c["facts"]} for c in menu.candidates})
+    if record["contract"] == POLICY_VERSION_V4:
+        from agents.decision_references import normalize_references
+        expected = normalize_references(expected, metadata.get("decision_reference_bindings", []))
+    if criteria != expected:
         raise ValueError("frozen questions differ from executable candidates")
+    if record["contract"] == POLICY_VERSION_V4:
+        if record.get("question_hash") != decision_hash(menu.evaluation["questions"]):
+            raise ValueError("frozen question identity changed")
+        state = menu.evaluation["state"]
+        if state.get("actor", {}).get("id") != record["agent_id"] or state.get("tick") != record["tick"]:
+            raise ValueError("frozen actor or tick differs from the authorized observation")
+        ballots = {"ballot_" + c["key"]: {choice: {"type": "cast_election_vote",
+            "ballot_key": c["key"], "choice": choice} for choice in c["choices"]}
+            for c in state.get("ballots", [])}
+        if (metadata.get("ballot_actions") != ballots or
+                set(menu.evaluation["questions"]) != {"action", *ballots} or
+                any(menu.evaluation["questions"]["ballot_" + c["key"]]["criteria"] != c["choices"]
+                    for c in state.get("ballots", []))):
+            raise ValueError("frozen ballot mapping differs from the opening snapshot")
     menu.actions_for(menu.baseline_choice)
     return menu
 
@@ -77,6 +102,12 @@ def freeze(database: Path, output: Path, limit: int = 2000):
             frozen_menu(receipt)
             record = {key: receipt[key] for key in ("contract", "compiler", "agent_id", "tick",
                 "observation_hash", "menu_hash", "candidates", "evaluation", "baseline_choice")}
+            if receipt["contract"] == POLICY_VERSION_V4:
+                record["purpose"] = receipt["purpose"]
+                record["question_hash"] = receipt["question_hash"]
+                record["domain_metadata"] = {key: receipt[key] for key in (
+                    "domains", "controller", "coverage_exclusions", "ballot_actions", "candidate_count", "compiler_policy")}
+                record["domain_metadata"]["decision_reference_bindings"] = receipt.get("decision_reference_bindings", [])
             record["id"] = decision_hash({"source": original, "actor": record["agent_id"], "tick": record["tick"]})
             # All observations of one actor in one seed stay in the same split.
             group = decision_hash({"seed": meta["seed"], "actor": record["agent_id"]})
@@ -260,12 +291,29 @@ def summarize_frozen(rows):
                 "latency_p95_ms": _percentile([r["latency_ms"] for r in valid], .95),
                 "abstentions": sum(r.get("selection_status") == "abstained" for r in valid),
                 "escalations": sum(r.get("escalated", False) for r in valid),
-                "calibration_bins": bins,
-                "ece_against_labels": sum(b["n"] * abs(b["mean_confidence"] - b["label_agreement"])
+                "report_contract": "bounded-decision-report-v2",
+                "confidence_meaning": "answer_distribution_concentration_not_correctness_probability",
+                "concentration_agreement_bins": bins,
+                "concentration_agreement_mae": sum(b["n"] * abs(b["mean_confidence"] - b["label_agreement"])
                     for b in bins) / len(labelled) if labelled else None,
-                "brier_against_labels": statistics.fmean((r["confidence"] - r["label_agreement"])**2
-                    for r in labelled) if labelled else None}
+                "concentration_agreement_mse": statistics.fmean((r["confidence"] - r["label_agreement"])**2
+                    for r in labelled) if labelled else None,
+                "probability_brier": _probability_brier(valid)}
     return summaries
+
+
+def _probability_brier(rows):
+    # Only actual normalized Choice distributions against independently supplied
+    # labels qualify. Concentration and comparator agreement never substitute.
+    scores = []
+    for row in rows:
+        probabilities, label = row.get("probabilities"), row.get("label_choice")
+        if (not isinstance(probabilities, dict) or label not in probabilities
+                or any(type(p) not in {int, float} or not 0 <= p <= 1 for p in probabilities.values())
+                or abs(sum(probabilities.values()) - 1) > .02):
+            continue
+        scores.append(sum((p - int(option == label)) ** 2 for option, p in probabilities.items()))
+    return statistics.fmean(scores) if scores else None
 
 
 def paired_summary(cells, manifest):
@@ -334,11 +382,13 @@ async def execute(root: Path, *, approve_live=False):
                     before = guard.snapshot(scope=f"frozen-{arm}") if guard else None
                     try:
                         result = await asyncio.wait_for(policy.complete(LLMRequest(role="citizen",
-                            purpose="decision", tick=record["tick"]), frozen_menu(record)),
+                            purpose=record.get("purpose", "decision"), tick=record["tick"],
+                            agent_id=record["agent_id"], context={"agent": record["evaluation"]["state"].get("actor", {})}), frozen_menu(record)),
                             timeout=max(.01, manifest["wall_seconds"] - (time.monotonic() - started)))
                         receipt = result.receipt
                         choice = receipt["selected_candidate"]
                         row.update(status="complete", choice=choice, confidence=receipt["confidence"],
+                            probabilities=receipt.get("probabilities"), label_choice=record["label_choice"],
                             selection_status=receipt["status"], escalated=receipt["escalated"],
                             baseline_agreement=int(choice == record["baseline_choice"]),
                             label_agreement=None if record["label_choice"] is None else int(choice == record["label_choice"]),
@@ -428,7 +478,7 @@ async def execute(root: Path, *, approve_live=False):
                        "reason": stopped or "interrupted"}
                       for arm in manifest["configs"] for r in (manifest["snapshots"] or {}).get("records", [])
                       if (arm, r["id"]) not in observed)
-        result = {"protocol": PROTOCOL, "manifest_sha256": identity,
+        result = {"protocol": PROTOCOL, "report_contract": "bounded-decision-report-v2", "manifest_sha256": identity,
             "status": "complete" if all(r["status"] == "complete" for r in cells + frozen) and not stopped else "incomplete",
             "cells": cells, "frozen": frozen, "frozen_summary": summarize_frozen(frozen),
             "paired_summary": paired_summary(cells, manifest), "provider_accounting": accounting,
@@ -448,6 +498,12 @@ def main():
     frozen.add_argument("--run", type=Path, required=True)
     frozen.add_argument("--out", type=Path, required=True)
     frozen.add_argument("--limit", type=int, default=2000)
+    counterfactual = commands.add_parser("counterfactual")
+    counterfactual.add_argument("--run", type=Path, required=True)
+    counterfactual.add_argument("--config", type=Path, required=True)
+    counterfactual.add_argument("--domain", required=True)
+    counterfactual.add_argument("--out", type=Path, required=True)
+    counterfactual.add_argument("--limit", type=int, default=200)
     labelled = commands.add_parser("label")
     labelled.add_argument("--snapshots", type=Path, required=True)
     labelled.add_argument("--labels", type=Path, required=True)
@@ -469,6 +525,10 @@ def main():
     if args.command == "freeze":
         value = freeze(args.run, args.out, args.limit)
         print(f"Frozen {len(value['records'])} observations; source unchanged.")
+    elif args.command == "counterfactual":
+        from research.domain_snapshots import build_counterfactual
+        value = build_counterfactual(args.run, args.out, load_config(args.config), args.domain, args.limit)
+        print(f"Prepared {len(value['records'])} counterfactual observations; source unchanged.")
     elif args.command == "label":
         label_snapshots(args.snapshots, args.labels, args.out, args.definition)
         print(f"Saved separately labelled observations: {args.out}")

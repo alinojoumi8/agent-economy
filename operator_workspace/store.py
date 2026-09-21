@@ -120,10 +120,17 @@ END;
 
 
 class OperatorWorkspace:
-    def __init__(self, path: str | Path, *, world_path: str | Path | None = None):
+    def __init__(self, path: str | Path, *, world_path: str | Path | None = None,
+                 existing_only: bool = False):
         self.path = Path(path).resolve()
         if world_path is not None and self.path == Path(world_path).resolve():
             raise ValueError("operator workspace must be separate from world storage")
+        if existing_only:
+            from engine.existing import open_existing, validate_schema
+            self.conn = open_existing(path, lambda conn: validate_schema(
+                conn, lambda ref: ref.executescript(SCHEMA)))
+            self.conn.isolation_level = ""
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(str(self.path), check_same_thread=False)
         self.conn.row_factory = sqlite3.Row

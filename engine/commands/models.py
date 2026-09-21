@@ -15,6 +15,12 @@ class LegacyCommand(CommandBase):
     model_config = ConfigDict(extra="allow")
 
 
+class CastElectionVote(CommandBase):
+    type: Literal["cast_election_vote"]
+    ballot_key: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+    choice: str = Field(min_length=1, max_length=100, pattern=r"^[a-z0-9_]+$")
+
+
 class PlaceEstatePropertyBid(CommandBase):
     type: Literal["place_estate_property_bid"]
     custody_id: Annotated[StrictInt, Field(gt=0)]

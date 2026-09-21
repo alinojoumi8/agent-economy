@@ -198,3 +198,23 @@ def test_workspace_rejects_unbounded_string_reference_identifiers(tmp_path, iden
         ).fetchone()[0] == 0
     finally:
         workspace.close()
+
+@pytest.mark.parametrize('existing', [False, True])
+def test_existing_workspace_rolls_back_view_when_audit_fails(tmp_path, monkeypatch, existing):
+    path = tmp_path / 'workspace.db'
+    workspace = OperatorWorkspace(path)
+    if existing:
+        workspace.close()
+        workspace = OperatorWorkspace(path, existing_only=True)
+    try:
+        def fail(**kwargs):
+            raise RuntimeError('audit failed')
+        monkeypatch.setattr(workspace, 'append_audit', fail)
+        with pytest.raises(RuntimeError, match='audit failed'):
+            workspace.save_city_view(owner_id='owner', route='city', expected_version=0,
+                entries=['actor:1'], run_id='run', fork_id=None)
+        assert workspace.get_saved_view(owner_id='owner', route='city')['version'] == 0
+        with sqlite3.connect(path) as reader:
+            assert reader.execute('SELECT COUNT(*) FROM saved_views').fetchone()[0] == 0
+    finally:
+        workspace.close()
