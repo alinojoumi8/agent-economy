@@ -78,6 +78,8 @@ def artifacts(tmp_path):
 
 @pytest.fixture
 def inert(monkeypatch, artifacts):
+    monkeypatch.setattr('engine.replay_checkpoint.source_revision',
+                        lambda: {'head': 'fixture', 'dirty': False})
     def forbidden(*args, **kwargs):
         pytest.fail('resume attempted genesis, model/preflight, subprocess or clock work')
     for obj, name in [(World, 'initialize'), (World, 'step'), (World, 'run'), (Gateway, 'preflight'),

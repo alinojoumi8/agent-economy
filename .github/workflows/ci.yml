@@ -85,6 +85,7 @@ jobs:
           tests/test_pitch_catalog.py
           tests/test_native_entrepreneurship.py
           tests/test_prepared_server.py
+          tests/test_validation_checkpoint.py
           tests/test_inspection_snapshot.py
           tests/test_research_export.py
           tests/test_prd_completion.py

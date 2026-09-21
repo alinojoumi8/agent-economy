@@ -334,3 +334,64 @@ The catalog never reserves funding or promises execution success.
 The helper extraction preserves existing rejection text/order and VC creation,
 follow-on, event and ledger behavior. Historical turn envelopes and the
 protected tick-2 run are not rewritten. Test fixtures are disposable and offline.
+
+## Mandatory pre-tick validation checkpoints
+
+Every server opened with `--existing-run-db` now requires a complete pre-tick
+checkpoint before either `/api/run/advance-one` or `/api/run/step` can dispatch.
+The normal Hermes cohort uses Step and receives the same protection. This is a
+prospective server change: an already running older server is not upgraded or
+restarted automatically. New-world startup and economic rules are unchanged.
+Continuous Run is refused on this prepared validation surface; use bounded Step.
+
+A local operator can also call `POST /api/run/snapshot-for-replay` with
+`{"expected_run_id":"<run>","expected_tick":<tick>}`. This creates evidence only;
+it neither queues an action nor advances the clock. It uses the existing local
+operator access boundary and refuses hosted mode, wrong/stale identity, busy or
+uncommitted state, partial ticks, terminal state and attention pauses.
+
+Capture is synchronous inside the controller lock. It reads database/WAL bytes
+into private SQLite images, checks integrity/foreign keys and provider reservation
+settlement, and verifies all source file stamps across the complete capture
+interval. Concurrent changes fail closed without retry. All four explicit stores
+(world, shared budget, passport and operator workspace) must be present. The
+world image includes every table, queued submission, turn, receipt, PRNG stream,
+sequence counter and configuration. Runtime PRNG state must equal the committed
+state; the operation never repairs a mismatch. Runtime status/target tick and
+source Git revision/working-tree digest are recorded in the manifest.
+The source digest is bound at server attachment and rechecked before capture;
+on-disk source changes require a newly reviewed server attachment. This operation
+requires the persisted split-stream PRNG format (semantics 7 and later); older
+worlds keep their existing ordinary replay path.
+
+Files are flushed into a private staging directory and published by an atomic
+rename under `<world-db-directory>/validation-checkpoints/<unique-id>/`. The
+controller exposes `last_replay_checkpoint` for the most recent successful
+capture. No source checkpoint catalog row or world event is written. Checkpoint
+failure prevents the world step. Independent bundles are never overwritten or
+automatically pruned. Retain them with the resulting provider recordings.
+
+These bundles contain private identity material. Keep them local; do not commit
+or publish them. SQLite images use rollback-journal header bytes rather than a
+WAL dependency; their physical hashes differ from the live files while complete
+SQL state is identical. Hashes for each image and the manifest bind the evidence.
+This provides atomic publication and fail-closed capture, not a guarantee against
+storage hardware failure. Concurrent external writers can cause a refused capture.
+
+`engine.replay_checkpoint.restore_replay_bundle(bundle, new_directory)` verifies
+hashes and atomically copies only the four allowlisted databases and manifest.
+It never launches a server or opens paths named by the stored configuration.
+Stored absolute paths remain provenance: an offline harness must explicitly bind
+its copied identity/workspace/budget stores and frozen provider recordings, use
+`World(..., replay=True)`, restore persisted PRNG state, and deny network access.
+Never attach a restored budget to live providers. Hermes models need not be
+relaunched: the pre-tick world already contains their queued inputs and prior
+validation receipts. The original Hermes sessions remain separate operational
+evidence, not deterministic world-step inputs.
+
+Periodic `checkpoint_every` snapshots are post-tick, world-only artifacts. Setting
+that interval to zero disabled those snapshots in the earlier validation profile;
+read-only table hashes and partial exports did not replace a restorable checkpoint.
+The mandatory pre-tick bundle is independent of that historical configuration.
+Tests in `tests/test_validation_checkpoint.py` prove full SQL-state preservation,
+WAL inclusion, isolated restore and a recorded replay from a queued-input checkpoint.

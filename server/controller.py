@@ -11,6 +11,7 @@ import hashlib
 import json
 import logging
 import os
+import sqlite3
 import time
 from concurrent.futures import Future
 from contextlib import asynccontextmanager
@@ -123,6 +124,10 @@ class RunController:
             else None)
         self.acceptance_artifacts: dict = {}
         self.hosted_safe = bool(hosted_safe)
+        self.replay_checkpoint_paths = None
+        self.replay_checkpoint_root = None
+        self.replay_checkpoint_revision = None
+        self.last_replay_checkpoint = None
 
     def is_running(self) -> bool:
         return bool(self._step_active or (self.task and not self.task.done()))
@@ -354,6 +359,8 @@ class RunController:
 
     def _start_locked(self, max_ticks: int | None = None) -> dict:
         self._require_mutable("start")
+        if self.replay_checkpoint_paths is not None:
+            raise HTTPException(status_code=409, detail="prepared_validation_requires_bounded_step")
         if self.acceptance_configured and not self.acceptance_authorized:
             raise HTTPException(
                 status_code=403,
@@ -493,6 +500,43 @@ class RunController:
         async with self._control_lock:
             return await self._step_locked()
 
+    def _snapshot_for_replay_locked(self, expected_run_id: str, expected_tick: int) -> dict:
+        from engine.replay_checkpoint import snapshot_for_replay, source_revision
+        import uuid
+        if self.replay_checkpoint_paths is None:
+            raise HTTPException(status_code=409, detail="validation_checkpoint_not_configured")
+        state = self.diagnostic_state()
+        if (state['running'] or state['status'] not in {'paused', 'created'}
+                or state['pause_reason'] or state['active_tick'] is not None):
+            raise HTTPException(status_code=409, detail="unsafe_validation_checkpoint_boundary")
+        if self.store.conn.in_transaction:
+            raise HTTPException(status_code=409, detail="checkpoint_requires_committed_boundary")
+        # JSON round-trip gives the same list representation as stored PRNG state.
+        runtime = {**state, 'target_tick': self.target_tick,
+                   'random': json.loads(json.dumps({
+                       'engine': self.world.engine_prng.getstate(),
+                       'persona': self.world.persona_prng.getstate(),
+                       'lifecycle': self.world.lifecycle_prng.getstate()}))}
+        try:
+            revision = source_revision()
+            if revision != self.replay_checkpoint_revision:
+                raise ValueError('server source changed since attachment')
+            result = snapshot_for_replay(self.replay_checkpoint_paths,
+                Path(self.replay_checkpoint_root) / uuid.uuid4().hex,
+                expected_run_id=expected_run_id, expected_tick=expected_tick, runtime=runtime,
+                revision=revision)
+        except (ValueError, OSError, sqlite3.Error) as exc:
+            raise HTTPException(status_code=409, detail="validation_checkpoint_failed:" + type(exc).__name__) from exc
+        self.last_replay_checkpoint = result
+        return result
+
+    async def snapshot_for_replay(self, expected_run_id: str, expected_tick: int) -> dict:
+        self._require_mutable('snapshot-for-replay')
+        if self._control_lock.locked():
+            raise HTTPException(status_code=409, detail="controller_busy")
+        async with self._control_lock:
+            return self._snapshot_for_replay_locked(expected_run_id, expected_tick)
+
     def diagnostic_state(self) -> dict:
         """Read the clock boundary without readiness probes or state updates."""
         meta = self.store.get_meta()
@@ -570,6 +614,10 @@ class RunController:
             raise HTTPException(
                 status_code=403,
                 detail="acceptance steps require --acceptance-run and explicit live approval")
+        if self.replay_checkpoint_paths is not None:
+            # Synchronous capture under the same clock lock, before pause clearing
+            # or any governed step. Failure never dispatches or retries the tick.
+            self._snapshot_for_replay_locked(self.store.get_meta()['run_id'], self.store.tick)
         self._reopen_finished()
         self.world.last_report_path = None
         self.world.last_pause_reason = None

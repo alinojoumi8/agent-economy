@@ -482,6 +482,10 @@ def create_app(world: World, *, served_ticks: int | None = None,
         async def advance_one(body: AdvanceOneBody):
             return await controller.advance_one(body.expected_run_id, body.expected_tick)
 
+        @app.post("/api/run/snapshot-for-replay")
+        async def snapshot_for_replay(body: AdvanceOneBody):
+            return await controller.snapshot_for_replay(body.expected_run_id, body.expected_tick)
+
     @app.post("/api/run/speed")
     async def set_speed(body: SpeedBody):
         return controller.set_speed(body.delay_s)

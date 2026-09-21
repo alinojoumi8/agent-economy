@@ -114,6 +114,8 @@ def prepared_app(*, existing_run_db, provider_budget_db, passport_db,
         validate_schema(conn, lambda ref: ref.executescript(WORKSPACE_SCHEMA))
     contract = _budget_contract(budget_path, expected_budget_contract_sha256,
                                 provider_budget_binding, config)
+    from engine.replay_checkpoint import source_revision
+    checkpoint_revision = source_revision()
     with ExitStack() as stack:
         store = Store(str(database), existing_only=True)
         stack.callback(store.close)
@@ -156,6 +158,14 @@ def prepared_app(*, existing_run_db, provider_budget_db, passport_db,
         from server.app import create_app
         app = create_app(world, served_ticks=served_ticks, passport_repository=identities,
                          operator_workspace=workspace)
+        # Prepared servers are controlled validation surfaces. Both Step (used
+        # by the production cohort) and ADVANCE-ONE require a complete pre-tick
+        # bundle; continuous Run is intentionally unavailable on this surface.
+        controller = app.state.run_controller
+        controller.replay_checkpoint_paths = dict(world=database, budget=budget_path,
+                                                  passport=passport, workspace=workspace_path)
+        controller.replay_checkpoint_root = database.parent / 'validation-checkpoints'
+        controller.replay_checkpoint_revision = checkpoint_revision
         reader = getattr(app.state, 'replay_reader', None)
         if reader is not None:
             stack.callback(reader.close)
