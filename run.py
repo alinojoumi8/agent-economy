@@ -1421,7 +1421,11 @@ def main() -> None:
                     help="validate provider routes and required environment variables, then exit")
     ap.add_argument("--preflight-live", action="store_true",
                     help="also authenticate and confirm configured models through provider /models APIs")
+    from server.prepared import add_arguments, handle_cli
+    add_arguments(ap)
     args = ap.parse_args()
+    if handle_cli(ap, args):
+        return
     if args.replay_source_dir is not None and not args.replay:
         ap.error("--replay-source-dir requires --replay")
     if args.activate_entrepreneurship and (

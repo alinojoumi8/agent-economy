@@ -29,17 +29,19 @@ class VentureCapital:
         self.ledger = ledger
 
     # ── founder side ─────────────────────────────────────────────────────────
+    def can_pitch(self, firm_id: int, ask_cents: int) -> bool:
+        """Read-only pitch prerequisites, shared with action availability."""
+        firm = self.store.query_one("SELECT status FROM firms WHERE id=?", (firm_id,))
+        return bool(firm and firm["status"] == "private" and ask_cents > 0
+                    and not self.store.query_one(
+                        "SELECT 1 FROM pitches WHERE firm_id=? AND status='pending'",
+                        (firm_id,)))
+
     def pitch(self, tick: int, founder_agent_id: int, firm_id: int, ask_cents: int,
               summary: str = "") -> Optional[int]:
+        if not self.can_pitch(firm_id, ask_cents):
+            return None
         firm = self.store.query_one("SELECT * FROM firms WHERE id=?", (firm_id,))
-        if not firm or firm["status"] != "private":
-            return None   # private rounds are for private firms (listed raise on-market)
-        if ask_cents <= 0:
-            return None
-        pending = self.store.query_one(
-            "SELECT 1 FROM pitches WHERE firm_id=? AND status='pending'", (firm_id,))
-        if pending:
-            return None
         follow_on = 1 if self.store.query_one(
             "SELECT 1 FROM pitches WHERE firm_id=? AND status='funded'", (firm_id,)) else 0
         pid = self.store.insert(

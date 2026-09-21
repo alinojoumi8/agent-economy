@@ -377,13 +377,18 @@ class World:
         self.store.commit()
 
     # ── one tick ─────────────────────────────────────────────────────────────
-    async def step(self, *, pause_after_phase: str | None = None) -> dict:
-        if self.population_scenario is not None:
-            self.population_scenario.check_progress()
-        if pause_after_phase is not None and pause_after_phase not in self.phases:
-            raise ValueError("unknown pause phase")
-        meta = self.store.get_meta()
-        tick = int(meta["active_tick"]) if meta["active_tick"] is not None else self.store.tick + 1
+    async def step(self, *, pause_after_phase: str | None = None, entry_guard=None) -> dict:
+        # Prepared validation holds all artifact writer exclusions through this
+        # entry read. Release before any normal admission/provider writes. Other
+        # callers retain the same behavior and need no checkpoint guard.
+        from contextlib import nullcontext
+        with entry_guard if entry_guard is not None else nullcontext():
+            if self.population_scenario is not None:
+                self.population_scenario.check_progress()
+            if pause_after_phase is not None and pause_after_phase not in self.phases:
+                raise ValueError("unknown pause phase")
+            meta = self.store.get_meta()
+        tick = int(meta["active_tick"]) if meta["active_tick"] is not None else int(meta["tick"]) + 1
         phase = str(meta["next_phase"] or "NIGHT_CLOSE")
         if phase not in self.phases:
             phase = "NIGHT_CLOSE"

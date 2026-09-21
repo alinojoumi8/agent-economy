@@ -148,10 +148,22 @@ class ReadOnlyReplaySnapshot:
 
 
 class Store:
-    def __init__(self, path: str, *, create: bool = True, read_only: bool = False):
+    def __init__(self, path: str, *, create: bool = True, read_only: bool = False,
+                 existing_only: bool = False):
         self.path = path
         self.read_only = bool(read_only)
         self._closed = False
+        if existing_only:
+            if read_only:
+                raise ValueError("existing_only and read_only are mutually exclusive")
+            from .existing import open_existing, validate_schema
+            def validate(conn):
+                row = conn.execute("SELECT schema_version FROM run_meta WHERE id=1").fetchone()
+                if row is None or row[0] != SCHEMA_VERSION:
+                    raise ValueError("existing run requires the current schema; migration is forbidden")
+                validate_schema(conn, initialize_schema)
+            self.conn = open_existing(path, validate)
+            return
         if self.read_only:
             self.conn = open_read_only_connection(path)
             return
