@@ -3,7 +3,7 @@
 Only copies are SQLite-opened. Publication is an atomic directory rename;
 an incomplete staging directory is never a usable checkpoint.
 """
-from contextlib import ExitStack
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -17,6 +17,40 @@ from engine.checkpoint_manifest import _fsync_directory
 
 
 ARTIFACTS = ('world', 'budget', 'passport', 'workspace')
+
+
+@contextmanager
+def checkpoint_writer_exclusion(paths, world_connection):
+    """Keep SQLite writer exclusion until World.step reads its entry boundary.
+
+    Only prepared governed advances use this. Snapshot-only inspection continues
+    to byte-read originals. These empty transactions may change WAL read marks,
+    but cannot write database rows. Do not retain them across provider dispatch.
+    """
+    import sqlite3
+    def release(db, query_only):
+        try:
+            db.rollback()
+        finally:
+            db.execute('PRAGMA query_only=' + str(query_only))
+    with ExitStack() as stack:
+        for name in ARTIFACTS:
+            if name == 'world':
+                db = world_connection
+            else:
+                path = Path(paths[name]).resolve(strict=True)
+                db = sqlite3.connect(path.as_uri() + '?mode=rw', uri=True, timeout=0)
+                stack.callback(db.close)
+            if db.in_transaction:
+                raise ValueError('checkpoint writer already has an active transaction')
+            query_only = db.execute('PRAGMA query_only').fetchone()[0]
+            busy_timeout = db.execute('PRAGMA busy_timeout').fetchone()[0]
+            stack.callback(db.execute, 'PRAGMA busy_timeout=' + str(busy_timeout))
+            db.execute('PRAGMA busy_timeout=0')
+            db.execute('BEGIN IMMEDIATE')
+            stack.callback(release, db, query_only)
+            db.execute('PRAGMA query_only=ON')
+        yield
 
 
 def sha256(path):

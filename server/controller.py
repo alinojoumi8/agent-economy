@@ -14,7 +14,7 @@ import os
 import sqlite3
 import time
 from concurrent.futures import Future
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, contextmanager, ExitStack
 from pathlib import Path
 from threading import Lock
 from typing import AsyncIterator
@@ -128,6 +128,7 @@ class RunController:
         self.replay_checkpoint_root = None
         self.replay_checkpoint_revision = None
         self.last_replay_checkpoint = None
+        self._checkpoint_writer_held = False
 
     def is_running(self) -> bool:
         return bool(self._step_active or (self.task and not self.task.done()))
@@ -509,7 +510,7 @@ class RunController:
         if (state['running'] or state['status'] not in {'paused', 'created'}
                 or state['pause_reason'] or state['active_tick'] is not None):
             raise HTTPException(status_code=409, detail="unsafe_validation_checkpoint_boundary")
-        if self.store.conn.in_transaction:
+        if self.store.conn.in_transaction and not self._checkpoint_writer_held:
             raise HTTPException(status_code=409, detail="checkpoint_requires_committed_boundary")
         # JSON round-trip gives the same list representation as stored PRNG state.
         runtime = {**state, 'target_tick': self.target_tick,
@@ -529,6 +530,16 @@ class RunController:
             raise HTTPException(status_code=409, detail="validation_checkpoint_failed:" + type(exc).__name__) from exc
         self.last_replay_checkpoint = result
         return result
+
+    @contextmanager
+    def _checkpoint_writers(self):
+        from engine.replay_checkpoint import checkpoint_writer_exclusion
+        with checkpoint_writer_exclusion(self.replay_checkpoint_paths, self.store.conn):
+            self._checkpoint_writer_held = True
+            try:
+                yield
+            finally:
+                self._checkpoint_writer_held = False
 
     async def snapshot_for_replay(self, expected_run_id: str, expected_tick: int) -> dict:
         self._require_mutable('snapshot-for-replay')
@@ -587,13 +598,14 @@ class RunController:
                 raise HTTPException(status_code=409, detail="served_tick_limit_reached")
             # No await separates validation from entry into the governed step;
             # its participant, acceptance and provider guards remain unchanged.
-            result = await self._step_locked()
+            result = (await self._step_locked(expected_boundary=(expected_run_id, expected_tick))
+                      if self.replay_checkpoint_paths is not None else await self._step_locked())
             after = self.diagnostic_state()
             return {"outcome": "advanced" if after["tick"] == expected_tick + 1
                     and after["active_tick"] is None else "not_completed",
                     "before": before, "after": after, "result": result}
 
-    async def _step_locked(self) -> dict:
+    async def _step_locked(self, *, expected_boundary=None) -> dict:
         self._require_mutable("step")
         if self.is_running():
             operational_log(logger, logging.INFO, "run.step.skipped",
@@ -614,25 +626,36 @@ class RunController:
             raise HTTPException(
                 status_code=403,
                 detail="acceptance steps require --acceptance-run and explicit live approval")
+        boundary = ExitStack()
         if self.replay_checkpoint_paths is not None:
-            # Synchronous capture under the same clock lock, before pause clearing
-            # or any governed step. Failure never dispatches or retries the tick.
-            self._snapshot_for_replay_locked(self.store.get_meta()['run_id'], self.store.tick)
-        self._reopen_finished()
-        self.world.last_report_path = None
-        self.world.last_pause_reason = None
-        self.world._pause_requested = False
-        self.world._stop_requested = False
-        self.world.gateway.clear_interrupt()
-        self._step_active = True
+            if self.acceptance_configured:
+                raise HTTPException(status_code=409, detail="prepared_validation_requires_bounded_step")
+            expected_boundary = expected_boundary or (self.store.get_meta()['run_id'], self.store.tick)
+            try:
+                boundary.enter_context(self._checkpoint_writers())
+                self._snapshot_for_replay_locked(*expected_boundary)
+            except BaseException as exc:
+                boundary.close()
+                if isinstance(exc, (ValueError, OSError, sqlite3.Error)):
+                    raise HTTPException(status_code=409, detail="validation_checkpoint_writer_unavailable") from exc
+                raise
         try:
+            self._reopen_finished()
+            self.world.last_report_path = None
+            self.world.last_pause_reason = None
+            self.world._pause_requested = False
+            self.world._stop_requested = False
+            self.world.gateway.clear_interrupt()
+            self._step_active = True
             if self.acceptance_configured:
                 from reports.acceptance import advance_acceptance_run
                 target = min(self.acceptance_target_tick, self.store.tick + 1)
                 acceptance = await advance_acceptance_run(self.world, target_tick=target)
             else:
-                summary = await self.world.step()
+                summary = (await self.world.step(entry_guard=boundary)
+                           if self.replay_checkpoint_paths is not None else await self.world.step())
         finally:
+            boundary.close()
             self._step_active = False
         if self.acceptance_configured:
             self.world.status = "paused"

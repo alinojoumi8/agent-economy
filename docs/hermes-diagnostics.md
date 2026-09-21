@@ -364,6 +364,16 @@ on-disk source changes require a newly reviewed server attachment. This operatio
 requires the persisted split-stream PRNG format (semantics 7 and later); older
 worlds keep their existing ordinary replay path.
 
+For a governed advance, empty SQLite `BEGIN IMMEDIATE` transactions exclude
+independent writers on all four artifacts from capture through the initial
+`World.step` boundary read. Query-only guards prevent accidental writes while
+those exclusions are held. Lock acquisition does not wait or retry. Exclusions
+are released at step entry, before normal admission and provider-accounting
+writes, and on every error path. The shared budget remains governed normally
+during the tick; it is not frozen for the entire provider operation. These empty
+transactions may affect WAL/SHM bookkeeping, not SQL state. Snapshot-only requests
+retain the byte-read-only path and do not acquire SQLite writer locks.
+
 Files are flushed into a private staging directory and published by an atomic
 rename under `<world-db-directory>/validation-checkpoints/<unique-id>/`. The
 controller exposes `last_replay_checkpoint` for the most recent successful

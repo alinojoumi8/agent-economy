@@ -3,6 +3,7 @@ import asyncio
 import json
 from pathlib import Path
 import socket
+import sqlite3
 
 import pytest
 from fastapi import HTTPException
@@ -68,11 +69,13 @@ def test_governed_paths_checkpoint_before_exactly_one_step(artifacts, monkeypatc
     with prepared_app(**artifacts) as app:
         c = app.state.run_controller
         calls=[]
-        async def one():
+        async def one(*, entry_guard):
             bundle=Path(c.last_replay_checkpoint['path'])
             assert bundle.is_dir()
-            with inspection_snapshot(bundle/'world.db') as db:
-                assert db.execute('select tick from run_meta').fetchone()[0] == 0
+            with entry_guard:
+                assert c._checkpoint_writer_held
+                with inspection_snapshot(bundle/'world.db') as db:
+                    assert db.execute('select tick from run_meta').fetchone()[0] == 0
             calls.append(1)
             c.store.set_meta(tick=1)
             c.store.commit()
@@ -227,7 +230,7 @@ def test_missing_artifact_refuses_checkpoint(artifacts,tmp_path):
     with prepared_app(**artifacts) as app:
         c=app.state.run_controller
         c.replay_checkpoint_paths['budget']=tmp_path/'absent.db'
-        with pytest.raises(HTTPException,match='validation_checkpoint_failed'):
+        with pytest.raises(HTTPException,match='validation_checkpoint_writer_unavailable'):
             asyncio.run(c.advance_one('external-test',0))
         assert c.store.tick==0
         assert not (tmp_path/'absent.db').exists()
@@ -240,3 +243,60 @@ def test_changed_server_source_refuses_advance(artifacts,monkeypatch):
         with pytest.raises(HTTPException,match='validation_checkpoint_failed'):
             asyncio.run(c.advance_one('external-test',0))
         assert c.store.tick==0 and c.last_replay_checkpoint is None
+
+
+@pytest.mark.parametrize('artifact', ['world','budget','passport','workspace'])
+def test_external_write_after_capture_cannot_win_before_step(artifacts,monkeypatch,artifact):
+    import engine.replay_checkpoint as module
+    with prepared_app(**artifacts) as app:
+        c=app.state.run_controller
+        before={k:logical(v) for k,v in paths_of(artifacts).items()}
+        original=module.snapshot_for_replay
+        attempts=[]
+        def capture_then_race(*args,**kwargs):
+            result=original(*args,**kwargs)
+            path=c.replay_checkpoint_paths[artifact]
+            with sqlite3.connect(path,timeout=0) as writer:
+                attempts.append(artifact)
+                # An actual independent SQLite writer, after publication.
+                writer.execute('BEGIN IMMEDIATE')
+            return result
+        monkeypatch.setattr(module,'snapshot_for_replay',capture_then_race)
+        async def forbidden(**kwargs):
+            pytest.fail('must refuse before dispatch after capture exception')
+        monkeypatch.setattr(c.world,'step',forbidden)
+        with pytest.raises(HTTPException,match='validation_checkpoint_failed'):
+            asyncio.run(c.advance_one('external-test',0))
+        assert attempts==[artifact] and c.store.tick==0
+        assert not c._checkpoint_writer_held
+        assert {k:logical(v) for k,v in paths_of(artifacts).items()}==before
+        # All exclusions were released even on the failure path.
+        for p in paths_of(artifacts).values():
+            with sqlite3.connect(p,timeout=0) as writer:
+                writer.execute('BEGIN IMMEDIATE');writer.rollback()
+
+
+def test_world_entry_reads_boundary_while_exclusions_held(artifacts,tmp_path,monkeypatch):
+    from server.controller import RunController
+    import engine.replay_checkpoint as module
+    root=tmp_path/'entry';root.mkdir()
+    world=_world(root,engine_semantics_version=20)
+    c=RunController(world)
+    c.replay_checkpoint_paths=paths_of(artifacts)
+    c.replay_checkpoint_paths['world']=Path(world.store.path)
+    c.replay_checkpoint_root=tmp_path/'entry-checkpoints'
+    c.replay_checkpoint_revision=module.source_revision()
+    original=world.store.get_meta
+    observed=[]
+    def meta():
+        if c._step_active:
+            observed.append(c._checkpoint_writer_held)
+        return original()
+    monkeypatch.setattr(world.store,'get_meta',meta)
+    try:
+        asyncio.run(c.advance_one('external-test',0))
+        assert observed[0] is True
+        assert c.store.tick==1 and not c._checkpoint_writer_held
+        assert logical(c.replay_checkpoint_paths['budget'])==logical(Path(c.last_replay_checkpoint['path'])/'budget.db')
+    finally:
+        world.close()
