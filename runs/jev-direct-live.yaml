@@ -1,0 +1,21 @@
+# Opt-in direct route. No OpenRouter fallback; background decisions remain scripted.
+extends: jev-domains-offline.yaml
+budget:
+  cap_usd: 2.0
+  oracle_reserve_usd: 0.0
+llm:
+  provider_retries: 0
+  max_in_flight: 1
+  providers:
+    typesafe_jev:
+      kind: typesafe_decisions
+      endpoint: https://api.typesafe.ai/v1/systemone
+      api_key_env: TYPESAFE_API_KEY
+      timeout_s: 20
+      concurrency: 1
+      resolved_models: [jev-1.13.0]
+      upstream_provider: TypeSafe
+  pricing:
+    jev-1.13.0: {in: 0.042, out: 0.0, cache: 0.042}
+  decision_policy:
+    primary: {provider: typesafe_jev, model: jev-1.13.0, timeout_s: 20}

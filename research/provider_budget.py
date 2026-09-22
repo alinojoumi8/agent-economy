@@ -353,7 +353,7 @@ class ProviderBudget:
             provider = providers.get(tariff.provider, {})
             allowed_kinds = {"openai_compat", "anthropic"}
             if self.contract.protocol_version == "typed-provider-budget-v1":
-                allowed_kinds.add("openrouter_decisions")
+                allowed_kinds.update({"openrouter_decisions", "typesafe_decisions"})
             if provider.get("kind") not in allowed_kinds:
                 raise BudgetLedgerError("research completion budgets require a direct HTTP adapter")
             extras = provider.get("request_defaults")

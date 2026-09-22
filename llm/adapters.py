@@ -641,6 +641,9 @@ def build_adapters(config: dict) -> dict[str, Adapter]:
         kind = pcfg.get("kind")
         if kind == "openai_compat":
             adapters[pname] = OpenAICompatAdapter(pcfg)
+        elif kind == "typesafe_decisions":
+            from .typesafe_decisions import TypeSafeDecisionsAdapter
+            adapters[pname] = TypeSafeDecisionsAdapter(pcfg)
         elif kind == "openrouter_decisions":
             from .openrouter_decisions import OpenRouterDecisionsAdapter
             adapters[pname] = OpenRouterDecisionsAdapter(pcfg)
