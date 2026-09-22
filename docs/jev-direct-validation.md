@@ -77,3 +77,17 @@ checkout of `a0ca62d`. The full suite is **not** claimed green.
 Recommendation: direct access is compatible and available as an opt-in route.
 Keep production defaults and the interrupted experiment unchanged. A larger
 predeclared comparison is needed before claiming a reliability improvement.
+
+## Review follow-up
+
+CodeRabbit reviewed `ccaf50a` and identified two valid issues before the larger
+comparison was allowed to start. Invalid provider costs now use the same finite
+validity predicate for metering and the recorded cost-basis label. Input loading
+now parses, hashes and preserves one byte snapshot per file. A regression mutates
+an input during validation and proves that dispatch stops with no network calls
+and preservation evidence reports the change.
+
+The direct/OpenRouter transport, gateway and comparison suite after these fixes
+passed **90 tests**. No new live calls were made for this follow-up. The larger
+comparison remains gated on CI and review of the replacement head; its original
+preparation is not authority to run changed code without those checks.

@@ -106,6 +106,35 @@ def test_timeout_no_retry(monkeypatch):
     assert len(calls) == 1 and "secret" not in str(e.value)
 
 
+@pytest.mark.parametrize(
+    "cost,reported",
+    [
+        (None, False),
+        ("0.25", False),
+        (-1, False),
+        (True, False),
+        (1_000_001, False),
+        ({}, False),
+        (0, True),
+        (0.25, True),
+    ],
+)
+def test_cost_basis_matches_actual_metering(monkeypatch, cost, reported):
+    monkeypatch.setenv("TYPESAFE_API_KEY", "fixture-secret")
+    body = response()
+    body["usage"]["cost"] = cost
+    transport(monkeypatch, lambda req: httpx.Response(200, json=body))
+    result = asyncio.run(
+        TypeSafeDecisionsAdapter({}).complete(
+            "jev-1.13.0", [], purpose="decision", context={"_evaluation": evaluation()}
+        )
+    )
+    assert result.reported_cost_usd == (float(cost) if reported else None)
+    assert result.raw["cost_basis"] == (
+        "provider_reported" if reported else "declared_tariff"
+    )
+
+
 def test_direct_no_cost_uses_declared_tariff(store, monkeypatch):
     monkeypatch.setenv("TEST_JEV_KEY", "secret")
     body = response()

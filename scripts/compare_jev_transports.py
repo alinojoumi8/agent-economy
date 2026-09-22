@@ -68,10 +68,11 @@ async def compare(paths, output, *, execute=False):
     paths = [Path(p).resolve() for p in paths]
     if not 1 <= len(paths) <= 4 or len(set(paths)) != len(paths):
         raise ValueError("Supply one to four distinct preserved evaluation files")
+    source_bytes = {p: p.read_bytes() for p in paths}
     inputs = [
-        validate_evaluation(json.loads(p.read_text(encoding="utf-8"))) for p in paths
+        validate_evaluation(json.loads(source_bytes[p].decode("utf-8"))) for p in paths
     ]
-    hashes = {str(p): digest(p) for p in paths}
+    hashes = {str(p): hashlib.sha256(source_bytes[p]).hexdigest() for p in paths}
     configurations = {r: config(r) for r in ("direct", "openrouter")}
     for cfg in configurations.values():
         validate_llm_config(cfg, require_secrets=execute)
@@ -109,8 +110,9 @@ async def compare(paths, output, *, execute=False):
             "caveat": "Different pinned model identifiers; transport and model revision are confounded.",
         },
     )
-    for i, value in enumerate(inputs):
-        save(output / f"input-{i}.json", value)
+    for i, path in enumerate(paths):
+        with (output / f"input-{i}.json").open("xb") as stream:
+            stream.write(source_bytes[path])
     if not execute:
         return {"status": "prepared_not_run", "calls": 0}
     gateways, stores = {}, {}

@@ -161,6 +161,7 @@ class TypeSafeDecisionsAdapter(Adapter):
             for k in ("input_tokens", "output_tokens")
         )
         cost = usage.get("cost") if isinstance(usage, dict) else None
+        valid_cost = finite_number(cost, 0, 1_000_000)
         # Answer validation happens after metering, so a billable malformed answer
         # remains accounted and cannot trigger a generative JSON repair.
         return AdapterResult(
@@ -170,13 +171,9 @@ class TypeSafeDecisionsAdapter(Adapter):
             reported_usage=(usage["input_tokens"], usage["output_tokens"])
             if valid_usage
             else None,
-            reported_cost_usd=float(cost)
-            if finite_number(cost, 0, 1_000_000)
-            else None,
+            reported_cost_usd=float(cost) if valid_cost else None,
             raw={
                 "contract": "typesafe-systemone-v1",
-                "cost_basis": "provider_reported"
-                if cost is not None
-                else "declared_tariff",
+                "cost_basis": "provider_reported" if valid_cost else "declared_tariff",
             },
         )
