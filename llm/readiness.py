@@ -11,7 +11,7 @@ from .decision_config import decision_policy
 
 
 BUILTIN_PROVIDERS = {"scripted", "mock"}
-NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic", "openrouter_decisions"}
+NETWORK_PROVIDER_KINDS = {"openai_compat", "anthropic", "openrouter_decisions", "typesafe_decisions"}
 KNOWN_PROVIDER_KINDS = NETWORK_PROVIDER_KINDS | {"cli"}
 PROMPT_CACHE_MODES = {
     "off", "provider_automatic", "openai_key", "anthropic_ephemeral",
@@ -21,6 +21,7 @@ PROMPT_CACHE_MODES_BY_KIND = {
     "anthropic": {"off", "anthropic_ephemeral"},
     "cli": {"off"},
     "openrouter_decisions": {"off"},
+    "typesafe_decisions": {"off"},
 }
 
 
@@ -147,7 +148,7 @@ def validate_llm_config(
         if not model:
             errors.append(f"route '{route_name}' has no model")
         referenced.setdefault(provider, set()).add(model)
-        if (providers.get(provider, {}).get("kind") == "openrouter_decisions"
+        if (providers.get(provider, {}).get("kind") in {"openrouter_decisions", "typesafe_decisions"}
                 and not route_name.startswith("decision_policy.")):
             errors.append(f"route '{route_name}' cannot send prose purposes to a Decisions provider")
 
@@ -245,6 +246,18 @@ def validate_llm_config(
             from .openrouter_decisions import OpenRouterDecisionsAdapter, PINNED_MODEL
             try:
                 OpenRouterDecisionsAdapter(pcfg)
+            except (ValueError, TypeError) as exc:
+                errors.append(f"provider '{provider}': {exc}")
+            if auth_none:
+                errors.append(f"provider '{provider}' requires bearer authentication")
+            if pcfg.get("request_defaults") or base_url:
+                errors.append(f"provider '{provider}' requires endpoint configuration without chat defaults")
+            if any(m != PINNED_MODEL for m in models):
+                errors.append(f"provider '{provider}' requires pinned model {PINNED_MODEL}")
+        if kind == "typesafe_decisions":
+            from .typesafe_decisions import TypeSafeDecisionsAdapter, PINNED_MODEL
+            try:
+                TypeSafeDecisionsAdapter(pcfg)
             except (ValueError, TypeError) as exc:
                 errors.append(f"provider '{provider}': {exc}")
             if auth_none:

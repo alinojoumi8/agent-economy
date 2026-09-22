@@ -1218,7 +1218,7 @@ class Gateway:
             model = target.model
             adapter = self.adapters[provider]
             try:
-                if getattr(adapter, "name", None) == "openrouter_decisions":
+                if getattr(adapter, "name", None) in {"openrouter_decisions", "typesafe_decisions"}:
                     route = next(key for key in ("primary", "escalation")
                                  if (self.decision_policy.get(key) or {}).get("provider") == provider
                                  and (self.decision_policy.get(key) or {}).get("model") == model)
@@ -1507,7 +1507,7 @@ class Gateway:
         latency_ms = int((datetime.now(timezone.utc) - started).total_seconds() * 1000)
         cost_override: float | None = result.reported_cost_usd if req.evaluation is not None else None
 
-        if req.evaluation is not None and getattr(adapter, "name", None) != "openrouter_decisions":
+        if req.evaluation is not None and getattr(adapter, "name", None) not in {"openrouter_decisions", "typesafe_decisions"}:
             # A matched generative comparator returns the same answer shape. Its
             # usage/model identity comes from the transport, never model prose.
             answer, valid = self._parse(result.text)

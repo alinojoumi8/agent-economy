@@ -45,7 +45,7 @@ jobs:
           cache-dependency-path: requirements.lock
       - run: python -m pip install --require-hashes -r requirements.lock
       - name: Verify typed contracts, budgets, loopback HTTP, hybrid worlds and studies
-        run: python -m pytest -q tests/test_jev_*.py tests/test_live_response_contract.py
+        run: python -m pytest -q tests/test_jev_*.py tests/test_typesafe_*.py tests/test_live_response_contract.py
       - name: Rehearse 100 ticks and verify exact replay without networking
         run: python scripts/jev_domains_acceptance.py --out reports/out/jev-domains-ci --ticks 100
 
