@@ -21,6 +21,7 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
 REHEARSAL = RUNS / "scale-270-rehearsal.yaml"
 MINIMAX = RUNS / "scale-270-minimax-live.yaml"
+BUFFER_FORMAL = RUNS / "acceptance/scale-270-recovery-buffer-1000.yaml"
 
 
 @pytest.mark.parametrize("ticks", (0, -1, True))
@@ -69,27 +70,45 @@ def test_prepare_validation_enforces_live_approval_matrix(tmp_path):
         )
 
 
+@pytest.mark.parametrize("profile_path,ticks,checkpoint_every,keep_last", [
+    (REHEARSAL, 1, 7, 4),
+    (BUFFER_FORMAL, 1000, 100, 2),
+])
 def test_prepare_validation_preserves_profile_contract_and_rehomes_only_paths(
-    tmp_path,
+    tmp_path, profile_path, ticks, checkpoint_every, keep_last,
 ):
     source_root = tmp_path / "runs" / "source"
     prepared = prepare_validation_config(
-        REHEARSAL,
-        ticks=1,
+        profile_path,
+        ticks=ticks,
         output_dir=tmp_path / "output",
         data_dir=tmp_path / "runs",
         approve_live=False,
     )
-    profile = load_config(REHEARSAL)
+    profile = load_config(profile_path)
 
     assert prepared["population"] == profile["population"]
     assert prepared["living_world"] == profile["living_world"]
     assert prepared["budget"] == profile["budget"]
     assert prepared["conversations"] == profile["conversations"]
-    assert prepared["checkpoint_every"] == profile["checkpoint_every"] == 7
-    assert prepared["checkpoint_keep_last"] == profile["checkpoint_keep_last"] == 4
+    assert prepared["llm"] == profile["llm"]
+    assert prepared["llm"]["default_route"] == {"provider": "scripted", "model": "scripted"}
+    assert prepared["checkpoint_every"] == profile["checkpoint_every"] == checkpoint_every
+    assert prepared["checkpoint_keep_last"] == profile["checkpoint_keep_last"] == keep_last
     assert prepared["checkpoint_dir"] == str(source_root / "checkpoints")
     assert prepared["report_dir"] == str(tmp_path / "output" / "reports")
+
+
+@pytest.mark.parametrize("ticks", [120, 999, 1001])
+def test_formal_buffer_profile_rejects_any_other_horizon(tmp_path, ticks):
+    with pytest.raises(ValidationInputError, match="profile requires exactly 1000 ticks"):
+        prepare_validation_config(
+            BUFFER_FORMAL,
+            ticks=ticks,
+            output_dir=tmp_path / "output",
+            data_dir=tmp_path / "runs",
+            approve_live=False,
+        )
 
 
 @pytest.mark.parametrize(

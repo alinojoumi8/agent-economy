@@ -482,14 +482,18 @@ Exit `0` is a pass. Exit `10` is reserved for an economic-only failure in a
 120-tick diagnostic arm after every operational, integrity, checkpoint, and
 replay gate passed. Exit `5` is an operational, artifact, replay, unexpected,
 or formal-horizon failure; exit `2` is command misuse. The formal provider-free
-gate uses the same commands with this profile and horizon:
+v2 gate keeps the 120-tick buffer profile's economic policy and acceptance
+limits, requires exactly 1,000 ticks, and checkpoints every 100 ticks with two
+retained copies. The original v1 profile
+`runs/acceptance/scale-270-recovery-1000.yaml` remains available for historical
+reproduction. Run the v2 gate in a fresh artifact directory:
 
 ```bash
 python scripts/run_scale_validation.py \
-  --profile runs/acceptance/scale-270-recovery-1000.yaml \
-  --ticks 1000 --label recovery-1000 \
-  --output-dir reports/out/scale-270/formal/output \
-  --data-dir reports/out/scale-270/formal/runs
+  --profile runs/acceptance/scale-270-recovery-buffer-1000.yaml \
+  --ticks 1000 --label buffer-1000 \
+  --output-dir reports/out/scale-270/buffer-formal/output \
+  --data-dir reports/out/scale-270/buffer-formal/runs
 ```
 
 Provider-free profiles reject `--approve-live-inference`; do not add that flag
