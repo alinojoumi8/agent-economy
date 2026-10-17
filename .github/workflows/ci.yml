@@ -310,6 +310,7 @@ jobs:
           tests/test_research_export.py
           tests/test_bounded_export.py
           tests/test_recorded_replay_golden.py
+          tests/test_replay_memory.py
           tests/test_replay_source_lifecycle.py
           --basetemp "${{ runner.temp }}/ae-population-export"
 

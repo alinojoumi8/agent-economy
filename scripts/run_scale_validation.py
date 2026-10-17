@@ -348,21 +348,39 @@ def _read_only_tree(root: Path):
 class _MemorySampler:
     def __init__(self) -> None:
         self.process = psutil.Process()
-        self.samples: list[dict[str, object]] = []
+        self._totals = self._empty_totals()
+        self._by_stage: dict[str, dict[str, float | int]] = {}
+        self._lock = threading.Lock()
         self.stage = "startup"
-        self.started = time.perf_counter()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._sample, daemon=True)
 
     def _take_sample(self) -> None:
         memory = psutil.virtual_memory()
-        self.samples.append({
-            "elapsed_s": round(time.perf_counter() - self.started, 4),
-            "stage": self.stage,
-            "rss_mb": self.process.memory_info().rss / (1024 ** 2),
-            "available_memory_gb": memory.available / (1024 ** 3),
-            "system_memory_percent": float(memory.percent),
-        })
+        rss = self.process.memory_info().rss / (1024 ** 2)
+        available = memory.available / (1024 ** 3)
+        with self._lock:
+            stage = str(self.stage)
+            if stage not in self._by_stage:
+                self._by_stage[stage] = self._empty_totals()
+            for totals in (self._totals, self._by_stage[stage]):
+                totals["samples"] += 1
+                totals["peak_rss_mb"] = max(totals["peak_rss_mb"], rss)
+                totals["min_available_memory_gb"] = min(
+                    totals["min_available_memory_gb"], available)
+                totals["max_system_memory_percent"] = max(
+                    totals["max_system_memory_percent"], float(memory.percent))
+
+    @staticmethod
+    def _empty_totals() -> dict[str, float | int]:
+        return {"samples": 0, "peak_rss_mb": 0.0,
+                "min_available_memory_gb": float("inf"),
+                "max_system_memory_percent": 0.0}
+
+    @staticmethod
+    def _rounded(totals) -> dict[str, float | int]:
+        return {key: int(value) if key == "samples" else round(float(value), 2)
+                for key, value in totals.items()}
 
     def _sample(self) -> None:
         while not self._stop.is_set():
@@ -375,30 +393,15 @@ class _MemorySampler:
     def stop(self) -> dict[str, object]:
         self._stop.set()
         self._thread.join(timeout=2.0)
-        if not self.samples:
+        if not self._totals["samples"]:
             self._take_sample()
-        by_stage: dict[str, dict[str, object]] = {}
-        for stage in sorted({str(row["stage"]) for row in self.samples}):
-            rows = [row for row in self.samples if row["stage"] == stage]
-            by_stage[stage] = {
-                "samples": len(rows),
-                "peak_rss_mb": round(max(float(row["rss_mb"]) for row in rows), 2),
-                "min_available_memory_gb": round(
-                    min(float(row["available_memory_gb"]) for row in rows), 2),
-                "max_system_memory_percent": round(
-                    max(float(row["system_memory_percent"]) for row in rows), 2),
+        with self._lock:
+            return {
+                "sample_interval_s": 0.05,
+                **self._rounded(self._totals),
+                "by_stage": {stage: self._rounded(totals)
+                             for stage, totals in sorted(self._by_stage.items())},
             }
-        return {
-            "sample_interval_s": 0.05,
-            "samples": len(self.samples),
-            "peak_rss_mb": round(
-                max(float(row["rss_mb"]) for row in self.samples), 2),
-            "min_available_memory_gb": round(
-                min(float(row["available_memory_gb"]) for row in self.samples), 2),
-            "max_system_memory_percent": round(
-                max(float(row["system_memory_percent"]) for row in self.samples), 2),
-            "by_stage": by_stage,
-        }
 
 
 def _inspect_population(store: Any) -> dict[str, object]:

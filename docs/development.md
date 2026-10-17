@@ -523,6 +523,18 @@ sanitized JSON/Markdown evidence belongs under
 bodies, reasoning, cookies, environment dumps, or database bytes into a public
 receipt.
 
+Replay call attestation keeps canonical call bytes in a private `.replay-calls-*`
+temporary directory beside the replay database, using a bounded SQLite page
+cache. Final verification streams the source calls into that journal and hashes
+records in the same sorted order as historical receipts, including duplicates.
+Allow disk space for both consumed and expected call payloads until the gateway
+closes; it removes the journal before final artifact manifests are built. The
+source database is never written. Memory sampling retains running extrema and
+counts for each stage rather than every 50 ms observation, with unchanged
+receipt fields and acceptance limits.
+In-memory replay stores use the operating system's temporary directory;
+ordinary non-replay gateways create no journal files.
+
 Runtime checkpoint entries include `phases_s`: preparation, legacy writer,
 and catalog recording, plus legacy retention when it runs. Recording includes
 retention; do not add both durations. The legacy writer includes SQLite backup,
