@@ -18,6 +18,7 @@ import pytest
 from engine.store import Store
 from llm.gateway import Gateway, _logical_replay_call
 from llm.replay_attestation import ReplayCallJournal
+from research.study_runner import _disk_bytes
 from scripts.run_scale_validation import _MemorySampler
 
 
@@ -194,6 +195,50 @@ def test_abandoned_journal_releases_connection_before_removing_files(tmp_path):
     assert reference() is None
     assert len(scratch) == 1
     assert not scratch[0].exists()
+
+
+def test_disk_budget_scan_survives_concurrent_replay_journal_cleanup(tmp_path, monkeypatch):
+    artifact = tmp_path / "retained" / "source.bin"
+    artifact.parent.mkdir()
+    artifact.write_bytes(b"retained source")
+    journal = ReplayCallJournal(tmp_path)
+    try:
+        journal.append((1, "private prompt", "decision"))
+        scratch = next(tmp_path.glob(".replay-calls-*"))
+        active_size = sum(path.stat().st_size for path in tmp_path.rglob("*") if path.is_file())
+        assert _disk_bytes(tmp_path) == active_size > artifact.stat().st_size
+        original_scandir = os.scandir
+        retired = []
+
+        def retire_before_descent(path):
+            if not isinstance(path, int) and Path(path) == scratch and not retired:
+                retired.append(scratch)
+                journal.close()
+            return original_scandir(path)
+
+        monkeypatch.setattr(os, "scandir", retire_before_descent)
+        assert _disk_bytes(tmp_path) == len(b"retained source")
+        assert retired == [scratch]
+        assert artifact.read_bytes() == b"retained source"
+    finally:
+        journal.close()
+
+
+@pytest.mark.parametrize("error_type", [PermissionError, OSError])
+def test_disk_budget_scan_does_not_hide_unreadable_directories(tmp_path, monkeypatch, error_type):
+    blocked = tmp_path / "unreadable"
+    blocked.mkdir()
+    (blocked / "artifact.bin").write_bytes(b"must count")
+    original_scandir = os.scandir
+
+    def refuse_descent(path):
+        if Path(path) == blocked:
+            raise error_type("cannot inspect artifact directory")
+        return original_scandir(path)
+
+    monkeypatch.setattr(os, "scandir", refuse_descent)
+    with pytest.raises(error_type, match="cannot inspect"):
+        _disk_bytes(tmp_path)
 
 
 def test_non_replay_gateway_does_not_require_a_store_path(gateway):

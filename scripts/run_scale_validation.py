@@ -7,6 +7,7 @@ import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+import errno
 import hashlib
 import inspect
 import json
@@ -234,6 +235,26 @@ def validate_receipt_safety(
             raise ReceiptSafetyError(f"credential value at {path}")
 
     visit(payload, "$receipt")
+
+
+def verification_error_receipt(error: Exception) -> dict[str, str | int]:
+    """Keep public failure evidence without exception paths or private payloads."""
+    kind = type(error).__name__
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", kind) is None:
+        kind = "Exception"
+    result: dict[str, str | int] = {"type": kind, "message": "replay verification failed"}
+    if isinstance(error, ReplayResourceLimitError) and len(error.args) == 1:
+        message = error.args[0]
+        if isinstance(message, str) and message in {
+            "replay scratch byte limit exceeded", "replay verification time limit exceeded",
+            "replay free-space reserve reached", "replay scratch capacity or record limit exceeded",
+            "canonical replay record is too large", "expanded replay reference record is too large",
+            "recorded replay row is too large",
+        }:
+            result["message"] = message
+    elif isinstance(error, OSError) and type(error.errno) is int and error.errno in errno.errorcode:
+        result.update(errno=error.errno, message=f"replay verification failed ({errno.errorcode[error.errno]})")
+    return result
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, object]) -> None:
@@ -741,7 +762,8 @@ def run_validation(
         source_meta = dict(source_store.get_meta())
         population = _inspect_population(source_store)
         population_ok = population == EXPECTED_POPULATION
-        population_contract = config.get("acceptance", {}).get("scale_economic_health", {})
+        population_contract = (
+            (config.get("acceptance") or {}).get("scale_economic_health") or {})
         if population_contract.get("schema_version") == 3:
             population_ok, population_evidence = stable_population_evidence(
                 source_store.conn, ticks, config, EXPECTED_POPULATION)
@@ -780,9 +802,10 @@ def run_validation(
             verification_started = time.perf_counter()
             try:
                 replay_proof = verify_replay(source_path, replay_path, stats=verification_stats)
-            except ReplayResourceLimitError as exc:
+            except Exception as exc:
+                # Preserve completed execution evidence even if the verifier fails.
                 replay_proof = None
-                verification_error = {"type": type(exc).__name__, "message": str(exc)}
+                verification_error = verification_error_receipt(exc)
             finally:
                 verification_wall_s = time.perf_counter() - verification_started
         replay_wall_s = time.perf_counter() - replay_started

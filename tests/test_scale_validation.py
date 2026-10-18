@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -14,7 +15,9 @@ from scripts.run_scale_validation import (
     prepare_validation_config,
     run_validation,
     validate_receipt_safety,
+    verification_error_receipt,
 )
+from world.replay_storage import ReplayResourceLimitError
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -251,25 +254,63 @@ def test_one_tick_provider_free_validation_is_isolated_and_exact(tmp_path, profi
     assert any(artifact.endswith(".manifest.json") for artifact in artifact_ids)
 
 
-def test_verifier_resource_failure_preserves_runtime_and_immutability_receipts(tmp_path, monkeypatch):
-    from world.replay_storage import ReplayResourceLimitError
-
+@pytest.mark.parametrize("error_type", [
+    ReplayResourceLimitError, sqlite3.OperationalError, OSError, MemoryError, ValueError,
+])
+def test_verifier_failure_preserves_runtime_and_immutability_receipts(tmp_path, monkeypatch, error_type):
     def fail_verification(*args, **kwargs):
-        raise ReplayResourceLimitError("replay verification time limit exceeded")
+        raise error_type("private /home/test/world.db Bearer fixture-token")
 
     monkeypatch.setattr("scripts.run_scale_validation.verify_replay", fail_verification)
-    receipt = run_validation(REHEARSAL, ticks=1, label="verifier-timeout",
+    receipt = run_validation(REHEARSAL, ticks=1, label="verifier-failure",
                              output_dir=tmp_path / "output", data_dir=tmp_path / "runs",
                              approve_live=False)
     assert json.loads((tmp_path / receipt["artifacts"]["runtime_receipt"]).read_text()) == receipt
     assert not receipt["passed"] and not receipt["checks"]["exact_replay"]
     assert receipt["replay"]["proof"] is None
-    assert receipt["replay"]["verification_error"]["type"] == "ReplayResourceLimitError"
+    assert receipt["replay"]["verification_error"] == {
+        "type": error_type.__name__, "message": "replay verification failed"}
     assert receipt["checks"]["source_immutable_during_replay"]
     assert receipt["runtime"]["memory"]["peak_rss_mb"] > 0
     assert receipt["runtime"]["source_wall_s"] > 0
     assert receipt["replay"]["wall_s"] > 0
     validate_receipt_safety(receipt)
+
+
+@pytest.mark.parametrize("error", [
+    OSError(28, "private directory", "/home/test/private/world.db"),
+    PermissionError(13, "Bearer fixture-token", r"C:\Users\private\world.db"),
+    ValueError("/home/test/private/world.db"),
+    RuntimeError("fixture-token " * 10000),
+    type("/private/Bearer fixture-token", (Exception,), {})("secret"),
+])
+def test_verifier_error_receipts_omit_private_exception_material(error):
+    receipt = verification_error_receipt(error)
+    encoded = json.dumps(receipt)
+    assert len(encoded) < 250
+    assert all(value not in encoded for value in ("/home", "C:", "private", "fixture-token"))
+    validate_receipt_safety(receipt, secret_values=("fixture-token",))
+    if isinstance(error, OSError):
+        assert receipt["errno"] == error.errno
+
+
+def test_verifier_error_receipt_preserves_known_resource_failure_reason():
+    assert verification_error_receipt(ReplayResourceLimitError("replay verification time limit exceeded")) == {
+        "type": "ReplayResourceLimitError", "message": "replay verification time limit exceeded"}
+
+
+@pytest.mark.parametrize("acceptance", [None, {"scale_economic_health": None}])
+def test_null_optional_acceptance_retains_legacy_population_checks(tmp_path, monkeypatch, acceptance):
+    config = load_config(REHEARSAL)
+    config["acceptance"] = acceptance
+    monkeypatch.setattr("scripts.run_scale_validation.load_config", lambda _path: config)
+    receipt = run_validation(REHEARSAL, ticks=1, label="null-acceptance",
+                             output_dir=tmp_path / "output", data_dir=tmp_path / "runs",
+                             approve_live=False)
+    assert receipt["passed"] and receipt["checks"]["population_exact"]
+    assert receipt["replay"]["proof"]["exact"]
+    assert receipt["providers"]["cost_usd"] == 0
+    assert json.loads((tmp_path / receipt["artifacts"]["runtime_receipt"]).read_text()) == receipt
 
 
 def test_lifecycle_profile_changes_acceptance_only():

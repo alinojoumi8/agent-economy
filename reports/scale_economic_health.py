@@ -23,9 +23,8 @@ from engine.store import Store
 from reports import supply_recovery
 from reports.inventory_buffer import buffer_inventory_evidence, demand_evidence
 from run_config import load_config
-from scripts.run_scale_validation import ReceiptSafetyError, validate_receipt_safety
+from scripts.run_scale_validation import ReceiptSafetyError, validate_receipt_safety, verification_error_receipt
 from reports.scale_population import CONTRACT as POPULATION_CONTRACT, stable_population_evidence
-from world.replay_storage import ReplayResourceLimitError
 from world.replay_verify import verify_replay
 
 
@@ -965,8 +964,9 @@ def _replay_and_source_evidence(
     if verification_error is None:
         try:
             proof = verify_replay(source_path, replay_path)
-        except ReplayResourceLimitError as exc:
-            verification_error = {"type": type(exc).__name__, "message": str(exc)}
+        except Exception as exc:
+            # A verifier failure must not discard independent economic evidence.
+            verification_error = verification_error_receipt(exc)
     runtime_proof = _json_mapping(replay_section.get("proof"))
     source_before = source_section.get("artifact_manifest_before_replay")
     source_after = source_section.get("artifact_manifest_after_replay")

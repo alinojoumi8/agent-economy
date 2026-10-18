@@ -33,3 +33,16 @@ retained artifacts as a separately labelled read-only diagnostic, then freeze th
 validated exact commit and launch exactly one fresh corrected 1,000-tick run.
 Keep seed 42, initial 308 agents, checkpoint interval 100, retention two and the
 2,048-MiB RSS limit. No live providers, Hermes, observatory, merge or deletion.
+
+Retained engine evidence (2026-10-18): the v3 population reader was also checked
+against the original 1,000-tick source `60f83f125d`, not only hand-built fixtures.
+It reconciled six real deaths, six scheduled arrivals, all tier changes and 308
+living agents across 314 retained rows. The source SHA-256 is
+`8ca52adfb56adc633cf9c7b66572aa341c89d92304fdc5ffad4293277332d3b5`;
+the ignored `reports/out/blocker-repair/population-reconciliation-final.json`
+records the result and unchanged simulation policy. Semantics 7 stable lifecycle
+emits a NIGHT_CLOSE death followed by its subjectless replacement schedule
+(`Lifecycle._settle_death`/`schedule_arrival`); `World._spawn_due_arrivals` records
+the schedule event ID, and `RegionalEconomy._rebalance_tiers` uses the same phase.
+Keep these version-specific checks strict. This diagnostic is not a retroactive
+pass for the original v2 experiment or a substitute for the corrected run.

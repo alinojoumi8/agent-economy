@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 import pytest
+from world.replay_storage import ReplayResourceLimitError
 
 from engine.checkpoint_manifest import (
     checkpoint_manifest_path,
@@ -522,14 +523,15 @@ def test_healthy_persisted_fixture_produces_deterministic_all_green_receipt(
 
 
 @pytest.mark.parametrize("runtime_failed", [False, True])
+@pytest.mark.parametrize("error_type", [
+    ReplayResourceLimitError, sqlite3.OperationalError, OSError, MemoryError, ValueError,
+])
 def test_verifier_failure_retains_economic_evidence_without_repeating_failed_work(
-    tmp_path, monkeypatch, runtime_failed,
+    tmp_path, monkeypatch, runtime_failed, error_type,
 ):
-    from world.replay_storage import ReplayResourceLimitError
-
     fixture = _seed_fixture(tmp_path, profile=BASELINE_PROFILE)
     calls = []
-    error = {"type": "ReplayResourceLimitError", "message": "replay verification time limit exceeded"}
+    error = {"type": error_type.__name__, "message": "retained verification failure"}
     if runtime_failed:
         receipt = _read_runtime(fixture)
         receipt["replay"].update(proof=None, verification_error=error)
@@ -537,14 +539,15 @@ def test_verifier_failure_retains_economic_evidence_without_repeating_failed_wor
 
     def fail_verification(*args, **kwargs):
         calls.append(True)
-        raise ReplayResourceLimitError(error["message"])
+        raise error_type("private /home/test/world.db Bearer fixture-token")
 
     monkeypatch.setattr("reports.scale_economic_health.verify_replay", fail_verification)
     result = evaluate_scale_economic_health(fixture.source, fixture.replay, fixture.runtime)
     assert not result["passed"] and not result["checks"]["exact_replay"]
     assert result["checks"]["source_immutable"]
     assert result["evidence"]["replay"]["proof"] is None
-    assert result["evidence"]["replay"]["verification_error"] == error
+    assert result["evidence"]["replay"]["verification_error"] == (
+        error if runtime_failed else {"type": error_type.__name__, "message": "replay verification failed"})
     assert result["evidence"]["purchase_windows"]
     assert result["evidence"]["resources"]["peak_rss_mb"] > 0
     assert len(calls) == (0 if runtime_failed else 1)
