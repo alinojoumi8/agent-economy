@@ -407,8 +407,10 @@ When the bundle changed intentionally, review and commit every generated file.
 ## Scale-270 economic acceptance
 
 The maintained scale lane evaluates 270 sampled citizens, which Genesis expands
-to 308 persisted agents after institutional staff and health-economy founders.
-Its regional cohort is fixed at 184/69/55 throughout acceptance. Both diagnostic
+to 308 initial agents after institutional staff and health-economy founders.
+The initial regional cohort is 184/69/55. Historical v1/v2 acceptance requires
+that same persisted cohort throughout; the v3 long-horizon contract below
+reconciles stable-lifecycle replacements. Both diagnostic
 arms and their inherited canaries use
 `living_world.career_migration_enabled: false`, suppressing advertised career
 moves and rejecting requests and pending
@@ -482,19 +484,43 @@ Exit `0` is a pass. Exit `10` is reserved for an economic-only failure in a
 120-tick diagnostic arm after every operational, integrity, checkpoint, and
 replay gate passed. Exit `5` is an operational, artifact, replay, unexpected,
 or formal-horizon failure; exit `2` is command misuse. The formal provider-free
-v2 gate keeps the 120-tick buffer profile's economic policy and acceptance
+gate keeps the 120-tick buffer profile's economic policy and resource
 limits, requires exactly 1,000 ticks, and checkpoints every 100 ticks with two
 retained copies. The original v1 profile
-`runs/acceptance/scale-270-recovery-1000.yaml` remains available for historical
-reproduction. Run the v2 gate in a fresh artifact directory:
+`runs/acceptance/scale-270-recovery-1000.yaml` and v2 profile
+`runs/acceptance/scale-270-recovery-buffer-1000.yaml` remain available for
+historical reproduction.
+
+The prospective `scale-270-recovery-buffer-lifecycle-1000.yaml` profile changes
+only acceptance metadata to schema v3 and `population_contract: stable-lifecycle-v1`.
+It preserves the simulation's semantics 7, seed 42, stable lifecycle, disabled
+career migration, economic policy, audit settings and resource thresholds.
+The population gate reconstructs the initial cohort and tier history, matches
+every retained dead row to its death and replacement schedule, and matches
+every new citizen to one arrival. Only replacements scheduled after the completed
+tick may remain pending. Living counts and regions must reconcile to this
+history; replacement citizens may arrive in a different region from the deceased.
+Extra, missing, duplicate or unexplained records fail. The v2 buffer and demand
+checks still apply, and household demand adequacy remains uncertified.
+Compare contract versions explicitly: a v3 population pass does not relabel a
+historical v2 failure or make their acceptance verdicts interchangeable.
+
+Run the v3 gate in a fresh artifact directory:
 
 ```bash
 python scripts/run_scale_validation.py \
-  --profile runs/acceptance/scale-270-recovery-buffer-1000.yaml \
-  --ticks 1000 --label buffer-1000 \
-  --output-dir reports/out/scale-270/buffer-formal/output \
-  --data-dir reports/out/scale-270/buffer-formal/runs
+  --profile runs/acceptance/scale-270-recovery-buffer-lifecycle-1000.yaml \
+  --ticks 1000 --label buffer-lifecycle-1000 \
+  --output-dir reports/out/scale-270/buffer-lifecycle-formal/output \
+  --data-dir reports/out/scale-270/buffer-lifecycle-formal/runs
 ```
+
+If final replay verification reaches a resource limit, the harness saves a
+failed runtime receipt with the available measurements and source before/after
+hashes, `proof: null`, and `verification_error`. The economic reader retains
+that failure without automatically repeating the failed verification. Missing
+proof never passes exact replay. The verifier's 600-second limit and 2,048-MiB
+acceptance RSS limit are unchanged.
 
 Provider-free profiles reject `--approve-live-inference`; do not add that flag
 to any command above. Paid profiles require the flag and are limited to their

@@ -34,8 +34,10 @@ if str(ROOT) not in sys.path:
 from engine.checkpoint_manifest import finalize_sqlite_artifact
 from llm.readiness import validate_llm_config
 from reports.acceptance import uses_paid_providers
+from reports.scale_population import CONTRACT as POPULATION_CONTRACT, stable_population_evidence
 from run import open_run, provider_preflight, replay_headless
 from run_config import load_config
+from world.replay_storage import ReplayResourceLimitError
 from world.replay_verify import verify_replay
 
 
@@ -656,6 +658,9 @@ def run_validation(
     tick_records: list[dict[str, object]] = []
     source_path: Path | None = None
     replay_path: Path | None = None
+    verification_error = None
+    verification_stats: dict[str, Any] = {}
+    population_evidence = None
     try:
         sampler.stage = "genesis"
         genesis_started = time.perf_counter()
@@ -735,6 +740,12 @@ def run_validation(
         source_wall_s = time.perf_counter() - source_started
         source_meta = dict(source_store.get_meta())
         population = _inspect_population(source_store)
+        population_ok = population == EXPECTED_POPULATION
+        population_contract = config.get("acceptance", {}).get("scale_economic_health", {})
+        if population_contract.get("schema_version") == 3:
+            population_ok, population_evidence = stable_population_evidence(
+                source_store.conn, ticks, config, EXPECTED_POPULATION)
+            population_ok = population_ok and population_contract.get("population_contract") == POPULATION_CONTRACT
         communications = _inspect_communications(source_store)
         providers = _inspect_providers(source_store)
         ledger_ok, ledger_diagnostic = source_world.economy.ledger.reconcile()
@@ -766,7 +777,14 @@ def run_validation(
             replay_world = None
             replay_store = None
             finalize_sqlite_artifact(replay_path)
-            replay_proof = verify_replay(source_path, replay_path)
+            verification_started = time.perf_counter()
+            try:
+                replay_proof = verify_replay(source_path, replay_path, stats=verification_stats)
+            except ReplayResourceLimitError as exc:
+                replay_proof = None
+                verification_error = {"type": type(exc).__name__, "message": str(exc)}
+            finally:
+                verification_wall_s = time.perf_counter() - verification_started
         replay_wall_s = time.perf_counter() - replay_started
         source_hash_after = _sha256_file(source_path)
         source_manifest_after = _artifact_manifest(
@@ -806,7 +824,7 @@ def run_validation(
             and source_meta["active_tick"] is None
             and str(source_meta["status"]) == "finished"
         ),
-        "population_exact": population == EXPECTED_POPULATION,
+        "population_exact": population_ok,
         "communications_exact": (
             communications["conversations"] == ticks * conversation_pairs
             and communications["messages"]
@@ -842,7 +860,8 @@ def run_validation(
             > genesis_database["logical_used_bytes"]
         ),
         "exact_replay": (
-            replay_proof["exact"] is True
+            replay_proof is not None
+            and replay_proof["exact"] is True
             and replay_proof["differences"] == []
             and int(replay_proof["source_tick"]) == ticks
             and int(replay_proof["replay_tick"]) == ticks
@@ -906,6 +925,8 @@ def run_validation(
             "database": _artifact_id(replay_path, artifact_root),
             "wall_s": round(replay_wall_s, 6),
             "proof": replay_proof,
+            "verification_error": verification_error,
+            "verification": {"wall_s": round(verification_wall_s, 6), "storage": verification_stats},
             "execution": replay_tracker,
             "artifact_manifest": replay_manifest,
         },
@@ -925,6 +946,7 @@ def run_validation(
             },
         },
         "population": population,
+        "population_evidence": population_evidence,
         "communications": communications,
         "providers": providers,
         "governor": governor,
@@ -981,7 +1003,7 @@ def main() -> None:
         "tick": receipt["source"]["tick"],
         "calls": receipt["providers"]["calls"],
         "spend_usd": receipt["providers"]["cost_usd"],
-        "replay_exact": receipt["replay"]["proof"]["exact"],
+        "replay_exact": (receipt["replay"].get("proof") or {}).get("exact", False),
     }, indent=2, sort_keys=True))
     if not receipt["passed"]:
         raise SystemExit(5)

@@ -312,6 +312,12 @@ jobs:
           tests/test_recorded_replay_golden.py
           tests/test_replay_memory.py
           tests/test_replay_source_lifecycle.py
+          tests/test_bounded_replay.py
+          tests/test_replay_event_refs.py
+          tests/test_replay_equivalence.py
+          tests/test_scale_population.py
+          tests/test_scale_validation.py
+          tests/test_scale_economic_health.py
           --basetemp "${{ runner.temp }}/ae-population-export"
 
   research-population-commons:
