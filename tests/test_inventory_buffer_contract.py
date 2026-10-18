@@ -364,9 +364,10 @@ def test_audit_retry_is_idempotent_only_for_identical_payload(economy):
         audit.record_cohort(1, [])
 
 
-def test_v2_profile_preserves_all_unrelated_policy_and_threshold_values():
-    original = load_config(ROOT / "runs/acceptance/scale-270-recovery-inventory-120.yaml")
-    config = load_config(PROFILE)
+@pytest.mark.parametrize("ticks", [120, 1000])
+def test_v2_profile_preserves_all_unrelated_policy_and_threshold_values(ticks):
+    original = load_config(ROOT / f"runs/acceptance/scale-270-recovery-inventory-{ticks}.yaml")
+    config = load_config(ROOT / f"runs/acceptance/scale-270-recovery-buffer-{ticks}.yaml")
     expected = deepcopy(original)
     expected["observability"] = {**expected.get("observability", {}), "scale_inventory_contract": "buffer-demand-v2"}
     expected["acceptance"]["scale_economic_health"].update(
@@ -374,6 +375,24 @@ def test_v2_profile_preserves_all_unrelated_policy_and_threshold_values():
     assert config == expected
     assert _thresholds(config)["schema_version"] == 2
     assert _thresholds(original)["schema_version"] == 1
+
+
+def test_formal_buffer_receipt_rejects_a_short_run(tmp_path):
+    from tests.test_scale_economic_health import _seed_fixture
+
+    profile = ROOT / "runs/acceptance/scale-270-recovery-buffer-1000.yaml"
+    fixture = _seed_fixture(tmp_path, profile=profile)
+    receipt = evaluate_scale_economic_health(fixture.source, fixture.replay, fixture.runtime)
+
+    assert receipt["schema"] == "agent-economy-scale-economic-health-v2"
+    assert receipt["profile"]["required_ticks"] == 1000
+    assert receipt["profile"]["diagnostic"] is False
+    assert receipt["evidence"]["identity"]["checks"]["known_profile"] is True
+    assert receipt["evidence"]["identity"]["checks"]["threshold_contract"] is True
+    assert receipt["run"]["tick"] == 120
+    assert receipt["checks"]["horizon_completed"] is False
+    assert receipt["outcome"] == "failed"
+    assert receipt["passed"] is False
 
 
 def test_canonical_v2_receipt_requires_demand_and_does_not_promote_v1_comparisons(tmp_path):

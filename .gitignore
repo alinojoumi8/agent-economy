@@ -14,6 +14,8 @@ data/runs/*.db-wal
 data/runs/*.db-shm
 data/runs/*.jev-budget.json
 data/runs/preflight/
+# Private transient replay-call evidence; removed when its gateway closes.
+.replay-calls-*/
 data/runs/oracle-commitments/
 data/runs/oracle-locks/
 data/runs/oracle-pending/

@@ -243,14 +243,21 @@ def _incomplete_row(spec: StudySpec, seed: int, arm: str, status: str,
 
 
 def _disk_bytes(root: Path) -> int:
+    def scan_error(error):
+        # Workers can retire private replay directories between scan steps.
+        if not isinstance(error, FileNotFoundError):
+            raise error
+
     total = 0
-    for path in root.rglob("*"):
-        try:
-            if path.is_file() and not path.is_symlink():
-                total += path.stat().st_size
-        except FileNotFoundError:
-            # An atomic publisher can retire its own temporary link during a poll.
-            continue
+    for directory, _subdirectories, files in os.walk(root, onerror=scan_error):
+        for name in files:
+            path = Path(directory) / name
+            try:
+                if path.is_file() and not path.is_symlink():
+                    total += path.stat().st_size
+            except FileNotFoundError:
+                # Atomic publishers can also retire individual temporary files.
+                continue
     return total
 
 

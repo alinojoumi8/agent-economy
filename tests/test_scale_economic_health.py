@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 import pytest
+from world.replay_storage import ReplayResourceLimitError
 
 from engine.checkpoint_manifest import (
     checkpoint_manifest_path,
@@ -519,6 +520,73 @@ def test_healthy_persisted_fixture_produces_deterministic_all_green_receipt(
     assert all(first["checks"].values())
     assert first["population"] == EXPECTED_POPULATION
     assert first["run"]["tick"] == 120
+
+
+@pytest.mark.parametrize("runtime_failed", [False, True])
+@pytest.mark.parametrize("error_type", [
+    ReplayResourceLimitError, sqlite3.OperationalError, OSError, MemoryError, ValueError,
+])
+def test_verifier_failure_retains_economic_evidence_without_repeating_failed_work(
+    tmp_path, monkeypatch, runtime_failed, error_type,
+):
+    fixture = _seed_fixture(tmp_path, profile=BASELINE_PROFILE)
+    calls = []
+    error = {"type": error_type.__name__, "message": "retained verification failure"}
+    if runtime_failed:
+        receipt = _read_runtime(fixture)
+        receipt["replay"].update(proof=None, verification_error=error)
+        _write_runtime(fixture, receipt)
+
+    def fail_verification(*args, **kwargs):
+        calls.append(True)
+        raise error_type("private /home/test/world.db Bearer fixture-token")
+
+    monkeypatch.setattr("reports.scale_economic_health.verify_replay", fail_verification)
+    result = evaluate_scale_economic_health(fixture.source, fixture.replay, fixture.runtime)
+    assert not result["passed"] and not result["checks"]["exact_replay"]
+    assert result["checks"]["source_immutable"]
+    assert result["evidence"]["replay"]["proof"] is None
+    assert result["evidence"]["replay"]["verification_error"] == (
+        error if runtime_failed else {"type": error_type.__name__, "message": "replay verification failed"})
+    assert result["evidence"]["purchase_windows"]
+    assert result["evidence"]["resources"]["peak_rss_mb"] > 0
+    assert len(calls) == (0 if runtime_failed else 1)
+
+
+def test_v3_population_reconciles_lifecycle_without_loosening_horizon_or_v2(tmp_path):
+    from reports.scale_economic_health import _population_evidence
+
+    fixture = _seed_fixture(
+        tmp_path, profile=ROOT / "runs/acceptance/scale-270-recovery-buffer-lifecycle-1000.yaml")
+
+    def add_lifecycle(connection):
+        connection.execute("INSERT INTO events(tick,kind,phase,payload_json) "
+                           "VALUES(0,'genesis','NIGHT_CLOSE','{\"agents\":308}')")
+        connection.execute("UPDATE agents SET alive=0,died_tick=90 WHERE id=200")
+        connection.execute("INSERT INTO events(tick,kind,phase,subject_type,subject_id,payload_json) "
+                           "VALUES(90,'death','NIGHT_CLOSE','agent',200,'{\"agent_id\":200}')")
+        schedule = connection.execute("INSERT INTO events(tick,kind,phase,payload_json) "
+                                      "VALUES(90,'arrival_scheduled','NIGHT_CLOSE','{\"due_tick\":95}')").lastrowid
+        connection.execute("INSERT INTO agents(id,name,kind,alive,population_tier,region_id,arrived_tick) "
+                           "VALUES(309,'Replacement','citizen',1,'periphery',3,95)")
+        connection.execute("INSERT INTO events(tick,kind,phase,subject_type,subject_id,payload_json) "
+                           "VALUES(95,'arrival','NIGHT_CLOSE','agent',309,?)",
+                           (json.dumps({"agent_id": 309, "schedule_event_id": schedule}),))
+
+    _mutate_both(fixture, add_lifecycle)
+    result = evaluate_scale_economic_health(fixture.source, fixture.replay, fixture.runtime)
+    assert result["schema_version"] == 3
+    assert result["schema"] == "agent-economy-scale-economic-health-v3"
+    assert result["checks"]["population_exact"]
+    assert result["population"]["agents"] == 309
+    assert result["evidence"]["population"]["living"]["agents"] == 308
+    assert not result["checks"]["horizon_completed"] and not result["passed"]
+    assert "inventory_accounting_valid" in result["checks"]
+    assert "demand_measurement_complete" in result["checks"]
+    with sqlite3.connect(fixture.source) as connection:
+        connection.row_factory = sqlite3.Row
+        assert not _population_evidence(connection)[0]
+    assert "Contract v3: stable lifecycle" in render_scale_economic_health_markdown(result)
 
 
 @pytest.mark.parametrize("last_sale_qty,sales,shortfall,passed", [
