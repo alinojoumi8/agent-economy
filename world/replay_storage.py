@@ -13,6 +13,7 @@ import sqlite3
 import tempfile
 import time
 from typing import Any, Callable
+from world.replay_encoding import CanonicalReference, ReferenceBytes, contains_reference, fragment_chunks
 
 
 class ReplayResourceLimitError(RuntimeError):
@@ -46,6 +47,55 @@ class ReplayVerificationLimits:
             raise ValueError("max_elapsed_seconds must be finite and positive")
 
 
+def _encoding_budget(value, remaining, depth=0):
+    """Conservative JSON byte bound without serializing or copying payloads.
+
+    A negative result selects the incremental encoder; it is not a rejection.
+    Six bytes cover every escaped Unicode code unit except supplementary
+    characters, which require twelve bytes with ensure_ascii=True.
+    """
+    if remaining < 0 or depth > 64:
+        return -1
+    kind = type(value)
+    if kind is str:
+        # A supplementary character needs at most two six-byte JSON escapes.
+        return remaining - 12 * len(value) - 2
+    if value is None or kind is bool:
+        return remaining - 5
+    if kind is int:
+        return remaining - value.bit_length() // 3 - 3
+    if kind is float:
+        return remaining - 32
+    if kind not in (dict, list, tuple):
+        return -1
+    remaining -= 2 + 2 * len(value)
+    if kind is dict:
+        for key in value:
+            if type(key) is not str:
+                return -1
+            remaining -= 12 * len(key) + 2
+        items = value.values()
+    else:
+        items = value
+    for item in items:
+        item_kind = type(item)
+        # Scalar leaves dominate large recorded prompts. Budget them here so
+        # only containers need a Python recursive call.
+        if item_kind is str:
+            remaining -= 12 * len(item) + 2
+        elif item is None or item_kind is bool:
+            remaining -= 5
+        elif item_kind is int:
+            remaining -= item.bit_length() // 3 + 3
+        elif item_kind is float:
+            remaining -= 32
+        else:
+            remaining = _encoding_budget(item, remaining, depth + 1)
+        if remaining < 0:
+            break
+    return remaining
+
+
 class ReplayStorage:
     """One owned SQLite file, bounded byte cache, and byte-ordered multiset."""
 
@@ -63,6 +113,8 @@ class ReplayStorage:
         self.cache_bytes = 0
         self.operations = 0
         self.expanded_reference_bytes = 0
+        self.input_bound = None
+        self.has_fragments = False
         self.parent = Path(scratch_dir or tempfile.gettempdir()).resolve()
 
     def __enter__(self):
@@ -81,7 +133,14 @@ class ReplayStorage:
             self.page_size = self.connection.execute("PRAGMA page_size").fetchone()[0]
             pages = self.limits.max_scratch_bytes // self.page_size
             self.connection.execute(f"PRAGMA max_page_count={pages}")
-            self.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, value BLOB NOT NULL)")
+            # Scratch data has no persistence contract. One transaction avoids
+            # flushing the B-tree cache on every indexed event or sorted row;
+            # SQLite still enforces the same page and cache limits.
+            self.connection.execute("BEGIN")
+            self.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, value BLOB NOT NULL, ascii_size INTEGER NOT NULL)")
+            self.execute("CREATE TABLE missing_event_refs(id INTEGER PRIMARY KEY)")
+            self.execute("CREATE TABLE call_refs(id INTEGER PRIMARY KEY, value BLOB NOT NULL, "
+                         "ascii_size INTEGER NOT NULL, metadata BLOB NOT NULL)")
             # BLOB primary-key order equals Python bytes order. The ordinal
             # retains duplicates without a second payload copy or a temp sort.
             self.execute("CREATE TABLE ordered_records("
@@ -152,8 +211,32 @@ class ReplayStorage:
         encoder = json.JSONEncoder(
             sort_keys=exact, separators=(",", ":"), ensure_ascii=not exact,
             allow_nan=not exact)
-        result = bytearray()
         self.check()
+        if self.has_fragments or isinstance(value, CanonicalReference) or (
+                self.input_bound is None and contains_reference(value)):
+            result = bytearray()
+            for chunk in fragment_chunks(value, exact=exact):
+                if len(result) + len(chunk) > self.limits.max_record_bytes:
+                    raise ReplayResourceLimitError("canonical replay record is too large")
+                result.extend(chunk)
+                self.check()
+            self.stats["largest_record_bytes"] = max(self.stats["largest_record_bytes"], len(result))
+            return bytes(result)
+        known_bound = (None if self.input_bound is None else
+                       self.input_bound + self.expanded_reference_bytes)
+        if ((known_bound is not None and known_bound <= self.limits.max_record_bytes)
+                or _encoding_budget(value, self.limits.max_record_bytes) >= 0):
+            # The bound is checked before allocation. JSONEncoder.encode uses
+            # the C encoder with the same byte contract; large/uncertain values
+            # retain the incremental, size-checked path below.
+            result = encoder.encode(value).encode("utf-8")
+            if len(result) > self.limits.max_record_bytes:
+                raise ReplayResourceLimitError("canonical replay record is too large")
+            self.check(force=len(result) >= 1024**2)
+            self.stats["largest_record_bytes"] = max(
+                self.stats["largest_record_bytes"], len(result))
+            return result
+        result = bytearray()
         next_check = 1024**2
         for chunk in encoder.iterencode(value):
             encoded = chunk.encode("utf-8")
@@ -167,19 +250,63 @@ class ReplayStorage:
             self.stats["largest_record_bytes"], len(result))
         return bytes(result)
 
-    def begin_record(self):
+    def begin_record(self, row=None):
         self.expanded_reference_bytes = 0
+        self.has_fragments = False
+        self.input_bound = None if row is None else 1024
+        if row is not None:
+            for column in row.keys():
+                self.account_input(column)
+                self.account_input(row[column])
         self.check()
+
+    def account_input(self, value):
+        """Bound canonical output from scalar SQLite cells, including unpacked JSON.
+
+        JSON strings need at most 12 bytes per input character; numeric reprs
+        and invalid-reference markers are also covered by 128 bytes per input
+        character/token. The fixed allowance covers event/call wrapper keys.
+        Expanded references are charged separately using their escaped encoded
+        bytes, which upper-bound their strict UTF-8 representation. Conservative
+        overestimates use the existing structural/incremental fallback.
+        """
+        if self.input_bound is None:
+            return
+        if isinstance(value, (str, bytes)):
+            size = len(value)
+        elif type(value) is int:
+            size = value.bit_length() // 3 + 3
+        elif value is None or type(value) in (bool, float):
+            size = 32
+        else:
+            self.input_bound = None
+            return
+        self.input_bound += 128 * (size + 1)
 
     def decode_reference(self, encoded):
         # Charge every expansion, including a repeated cached reference,
         # before allocating another Python object tree. An encoded output
         # limit alone would reject only after all copies had been built.
-        self.expanded_reference_bytes += len(encoded)
+        self.expanded_reference_bytes += (encoded.ascii_size if isinstance(encoded, ReferenceBytes) else len(encoded))
         if self.expanded_reference_bytes > self.limits.max_record_bytes:
             raise ReplayResourceLimitError("expanded replay reference record is too large")
         self.check()
+        if isinstance(encoded, ReferenceBytes):
+            self.has_fragments = True
+            return CanonicalReference(encoded)
         return json.loads(encoded)
+
+    def ascii_size(self, value):
+        if not self.has_fragments and not isinstance(value, CanonicalReference):
+            return len(self.encode(value, exact=False))
+        size = 0
+        for chunk in fragment_chunks(value, exact=False, measure_ascii=True):
+            size += chunk if isinstance(chunk, int) else len(chunk)
+            if size > self.limits.max_record_bytes:
+                raise ReplayResourceLimitError("canonical replay record is too large")
+            self.check()
+        self.stats["largest_record_bytes"] = max(self.stats["largest_record_bytes"], size)
+        return size
 
     def cached(self, key):
         value = self.cache.get(key)
@@ -224,6 +351,8 @@ class ReplayStorage:
     def reset(self):
         self.check(force=True)
         self.execute("DELETE FROM refs")
+        self.execute("DELETE FROM missing_event_refs")
+        self.execute("DELETE FROM call_refs")
         self.clear_sort()
         self.cache.clear()
         self.cache_bytes = 0
@@ -262,14 +391,35 @@ class CallReferences(Mapping):
         self.storage.check()
         encoded = self.storage.cached(("call", key))
         if encoded is None:
+            stored = self.storage.execute(
+                "SELECT value,ascii_size,metadata FROM call_refs WHERE id=?", (key,)).fetchone()
+            if stored is not None:
+                encoded = ReferenceBytes(stored[0], stored[1], "llm_call", stored[2])
+                self.storage.remember(("call", key), encoded)
+                self.storage.stats["reference_reads"] += 1
+                return self.storage.decode_reference(encoded)
             row = self.connection.execute(
                 "SELECT * FROM llm_calls WHERE id=?", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
-            value = {"llm_call": {
-                column: self.canonicalize(column, row[column])
-                for column in self.columns}}
-            encoded = self.storage.encode(value, exact=False)
+            prior = self.storage.input_bound, self.storage.expanded_reference_bytes, self.storage.has_fragments
+            try:
+                self.storage.begin_record(row)
+                value = {"llm_call": {
+                    column: self.canonicalize(column, row[column])
+                    for column in self.columns}}
+                canonical = self.storage.encode(value, exact=True)
+                ascii_size = self.storage.ascii_size(value)
+                small_values = {column: item for column, item in value["llm_call"].items()
+                                if item is None or type(item) in (bool, int, float)
+                                or (isinstance(item, str) and len(item) <= 256)}
+                metadata = json.dumps({"fields": self.columns, "values": small_values},
+                                      separators=(",", ":"), ensure_ascii=True).encode("ascii")
+                encoded = ReferenceBytes(canonical, ascii_size, "llm_call", metadata)
+                self.storage.execute("INSERT INTO call_refs VALUES (?,?,?,?)",
+                                     (key, canonical, ascii_size, metadata))
+            finally:
+                self.storage.input_bound, self.storage.expanded_reference_bytes, self.storage.has_fragments = prior
             self.storage.remember(("call", key), encoded)
             self.storage.stats["reference_reads"] += 1
         return self.storage.decode_reference(encoded)
@@ -294,17 +444,19 @@ class EventReferences(MutableMapping):
             raise KeyError(key)
         encoded = self.storage.cached(("event", key))
         if encoded is None:
-            row = self.storage.execute("SELECT value FROM refs WHERE id=?", (key,)).fetchone()
+            row = self.storage.execute("SELECT value,ascii_size FROM refs WHERE id=?", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
-            encoded = row[0]
+            encoded = ReferenceBytes(row[0], row[1], None)
             self.storage.remember(("event", key), encoded)
             self.storage.stats["reference_reads"] += 1
         return self.storage.decode_reference(encoded)
 
     def __setitem__(self, key, value):
-        encoded = self.storage.encode(value, exact=False)
-        self.storage.execute("INSERT OR REPLACE INTO refs VALUES (?,?)", (key, encoded))
+        canonical = self.storage.encode(value, exact=True)
+        ascii_size = self.storage.ascii_size(value)
+        encoded = ReferenceBytes(canonical, ascii_size, None)
+        self.storage.execute("INSERT OR REPLACE INTO refs VALUES (?,?,?)", (key, canonical, ascii_size))
         self.storage.remember(("event", key), encoded)
 
     def __delitem__(self, key):
