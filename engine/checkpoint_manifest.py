@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -255,3 +256,47 @@ def write_checkpoint_manifest(database_path: str | Path) -> Path:
     finally:
         temporary.unlink(missing_ok=True)
     return target
+
+
+def publish_checkpoint(staged: Path, destination: Path) -> None:
+    """Publish a validated snapshot, restoring the old pair on ordinary errors.
+
+    The two replacements cannot be atomic together. Readers must still validate
+    their binding: a crash between replacements fails closed.
+    """
+    manifest = checkpoint_manifest_path(staged)
+    target_manifest = checkpoint_manifest_path(destination)
+    payload = json.loads(manifest.read_text(encoding="utf-8"))
+    payload["database"] = str(destination.resolve())
+    with manifest.open("wb") as handle:
+        handle.write(canonical_json_bytes(payload))
+        handle.flush()
+        os.fsync(handle.fileno())
+    # Windows FlushFileBuffers requires a writable file handle.
+    with staged.open("r+b") as handle:
+        os.fsync(handle.fileno())
+    backups = {}
+    for target in (destination, target_manifest):
+        if target.is_symlink():
+            raise SQLiteArtifactError("checkpoint publication refuses symlinks")
+        if target.exists():
+            backup = staged.parent / f"previous-{target.name}"
+            try:
+                os.link(target, backup)
+            except OSError:
+                shutil.copyfile(target, backup)
+            backups[target] = backup
+    published = []
+    try:
+        for source, target in ((staged, destination), (manifest, target_manifest)):
+            os.replace(source, target)
+            published.append(target)
+        _fsync_directory(destination.parent)
+    except BaseException:
+        for target in reversed(published):
+            if target in backups:
+                os.replace(backups[target], target)
+            else:
+                target.unlink(missing_ok=True)
+        _fsync_directory(destination.parent)
+        raise

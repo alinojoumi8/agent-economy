@@ -1,0 +1,8 @@
+# Same simulation as buffer-1000; acceptance v3 reconciles stable lifecycle history.
+# Historical v2 profiles and failed receipts retain their fixed-cohort contract.
+extends: scale-270-recovery-buffer-1000.yaml
+
+acceptance:
+  scale_economic_health:
+    schema_version: 3
+    population_contract: stable-lifecycle-v1

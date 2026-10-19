@@ -1,0 +1,12 @@
+# Bounded storage/replay regression only; not scale or household acceptance.
+extends: ../scale-270-rehearsal.yaml
+seed: 42
+budget:
+  cap_usd: 0
+  oracle_reserve_usd: 0
+llm:
+  default_route: {provider: scripted, model: scripted}
+  routes: {}
+checkpoint_format: incremental-v2
+checkpoint_every: 5
+checkpoint_keep_last: 2
