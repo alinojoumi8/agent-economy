@@ -121,7 +121,6 @@ def test_world_retains_dependencies_and_pinned_roots(world, tmp_path):
 
 
 def test_world_same_tick_and_storage_budget(world, tmp_path):
-    from engine.storage_policy import StorageBudgetExceeded
     world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_keep_last=2,
                         checkpoint_format='incremental-v2')
     world.checkpoint_format = 'incremental-v2'
@@ -129,9 +128,9 @@ def test_world_same_tick_and_storage_budget(world, tmp_path):
     assert world.checkpoint(0) == str(first)
     assert len(world.store.query('SELECT * FROM checkpoints')) == 1
     before = first.read_bytes()
-    with pytest.raises(StorageBudgetExceeded):
-        save_incremental(world.store.path, first, base=first, max_archive_bytes=1)
-    assert first.read_bytes() == before
+    receipt = save_incremental(world.store.path, first, base=first, max_archive_bytes=1)
+    assert receipt['budget_exceeded']
+    assert first.exists()
     with pytest.raises(IncrementalCheckpointError, match='restore size limit'):
         restore_incremental(first, tmp_path / 'too-large.db', max_bytes=1)
     assert not (tmp_path / 'too-large.db').exists()
@@ -186,3 +185,153 @@ def test_concurrent_archive_operation_refuses(world, tmp_path):
     with process_lock(archive / '.lock'):
         with pytest.raises(ProcessLockBusy):
             save_incremental(world.store.path, first, base=first)
+
+
+def test_archive_budget_preserves_legacy_soft_retention_contract(world, tmp_path):
+    from engine.storage_policy import StoragePolicy
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2')
+    world.checkpoint_format = 'incremental-v2'
+    world.storage_policy = StoragePolicy(checkpoint_keep_last=2, checkpoint_max_bytes=1,
+                                         min_free_bytes=0)
+    assert world.checkpoint(0) is not None
+
+
+def test_reader_uses_disk_scratch_beside_archive(world, tmp_path):
+    from engine.checkpoint_formats import checkpoint_database
+    source = tmp_path / 'a.icp.json'
+    save_incremental(world.store.path, source)
+    with checkpoint_database(source) as restored:
+        assert restored.parent.parent == source.parent
+
+
+def test_collection_keeps_complete_immutable_base(world, tmp_path):
+    from engine.incremental_checkpoint import prune_incremental
+    world.store.execute('CREATE TABLE changed_blob(value)')
+    world.store.execute('INSERT INTO changed_blob VALUES (randomblob(3100000))')
+    first, second = tmp_path / 'a.icp.json', tmp_path / 'b.icp.json'
+    save_incremental(world.store.path, first)
+    base, chunks, archive, _ = read_incremental(first)
+    base_packs = {e[1] for e in chunks}
+    world.store.execute('UPDATE changed_blob SET value=randomblob(3100000)')
+    world.store.set_meta(tick=1)
+    save_incremental(world.store.path, second, base=first)
+    prune_incremental(tmp_path, discard=[first])
+    assert all((archive / (pack + '.pack')).exists() for pack in base_packs)
+
+
+def test_same_tick_collection_does_not_accumulate_unreferenced_roots(world, tmp_path):
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2',
+                        checkpoint_keep_last=2)
+    world.checkpoint_format = 'incremental-v2'
+    for _ in range(4):
+        assert world.checkpoint(0) is not None
+    root = tmp_path / 'checkpoints/.checkpoint-v2'
+    assert len(list(root.glob('*.root'))) <= 2
+
+
+def test_retention_failure_preserves_successful_published_checkpoint(world, tmp_path):
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2',
+                        checkpoint_keep_last=2)
+    world.checkpoint_format = 'incremental-v2'
+    assert world.checkpoint(1) and world.checkpoint(2)
+    unknown = tmp_path / 'checkpoints/unknown.icp.json'
+    unknown.write_text('{}')
+    third = world.checkpoint(3)
+    assert third is not None
+    assert unknown.exists()
+    assert world.store.scalar("SELECT count(*) FROM events WHERE kind='checkpoint_prune_failed'") > 0
+
+
+def test_compressed_output_allocation_is_bounded():
+    import io
+    import lz4.block
+    from engine.incremental_checkpoint import _chunk, CHUNK_SIZE
+    raw = b'x' * (CHUNK_SIZE * 4)
+    compressed = lz4.block.compress(raw, store_size=False)
+    forged = ['0' * 64, '1' * 64, 0, len(compressed), CHUNK_SIZE, 1]
+    with pytest.raises(IncrementalCheckpointError, match='compressed'):
+        _chunk(io.BytesIO(compressed), forged)
+
+
+def test_raw_and_compressed_chunks_round_trip(world, tmp_path):
+    from engine.incremental_checkpoint import CHUNK_SIZE
+    world.store.execute('CREATE TABLE compression_probe(value)')
+    world.store.execute('INSERT INTO compression_probe VALUES (randomblob(?))', (CHUNK_SIZE * 3,))
+    world.store.execute('INSERT INTO compression_probe VALUES (zeroblob(?))', (CHUNK_SIZE * 3,))
+    path = tmp_path / 'mixed.icp.json'
+    save_incremental(world.store.path, path)
+    _, entries, _, _ = read_incremental(path)
+    assert {entry[5] for entry in entries} == {0, 1}
+    target = tmp_path / 'mixed.db'
+    restore_incremental(path, target)
+    db = sqlite3.connect(target.as_uri() + '?immutable=1', uri=True)
+    assert db.execute('SELECT value FROM compression_probe').fetchall() == [tuple(r) for r in world.store.query('SELECT value FROM compression_probe')]
+    db.close()
+
+
+def test_async_checkpoint_keeps_readers_and_event_loop_responsive(world, tmp_path, monkeypatch):
+    import asyncio
+    import time
+    import engine.incremental_checkpoint as module
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2')
+    world.checkpoint_format = 'incremental-v2'
+    original = module.save_incremental
+    def delayed(*args, **kwargs):
+        time.sleep(.08)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, 'save_incremental', delayed)
+    async def check():
+        task = asyncio.create_task(world.checkpoint_async(0))
+        reads = 0
+        while not task.done():
+            assert world.store.scalar('SELECT count(*) FROM agents') > 0
+            reads += 1
+            await asyncio.sleep(.005)
+        assert await task is not None
+        assert reads >= 5
+    asyncio.run(check())
+
+
+def test_parallel_native_integrity_failure_prevents_publication(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    monkeypatch.setattr(module, '_source_quick_check', lambda source: ['ok', 'corrupt second result'])
+    target = tmp_path / 'failed.icp.json'
+    with pytest.raises(IncrementalCheckpointError, match='integrity'):
+        save_incremental(world.store.path, target)
+    assert not target.exists()
+
+
+def test_serial_and_parallel_native_evidence_agree(world, tmp_path):
+    import engine.incremental_checkpoint as module
+    from engine.checkpoint_image import logical_image
+    with logical_image(world.store.path) as (db, _):
+        assert module._evidence(db) == module._evidence(
+            db, quick_check=lambda: module._source_quick_check(world.store.path))
+
+
+def test_base_survives_when_every_current_chunk_is_repacked(world, tmp_path):
+    import hashlib
+    from blake3 import blake3
+    import engine.incremental_checkpoint as module
+    first, second = tmp_path / 'base.icp.json', tmp_path / 'repacked.icp.json'
+    save_incremental(world.store.path, first)
+    _, entries, archive, base_digest = read_incremental(first)
+    base_packs = {entry[1] for entry in entries}
+    payload = json.loads((archive / (base_digest + '.root')).read_bytes())
+    # A valid complete overlay may store the same verified chunks in another
+    # immutable pack. Base recoverability must not depend on accidental sharing.
+    assert len(payload['packs']) == 1
+    original = (archive / (payload['packs'][0] + '.pack')).read_bytes()
+    alternate = original + b'unreferenced pack tail'
+    alternate_digest = blake3(alternate).hexdigest()
+    module._immutable(archive / (alternate_digest + '.pack'), alternate)
+    payload['base'] = base_digest
+    payload['packs'] = [alternate_digest]
+    payload['changes'] = {str(i): entry for i, entry in enumerate(payload.pop('chunks'))}
+    encoded = json.dumps(payload, sort_keys=True, separators=(',', ':')).encode()
+    digest = hashlib.sha256(encoded).hexdigest()
+    module._immutable(archive / (digest + '.root'), encoded)
+    module._publish(second, {'kind': module.KIND, 'version': 2, 'root_sha256': digest})
+    module.prune_incremental(tmp_path, discard=[first])
+    assert all((archive / (pack + '.pack')).exists() for pack in base_packs)
+    restore_incremental(second, tmp_path / 'repacked.db')

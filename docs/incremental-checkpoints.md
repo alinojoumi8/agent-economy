@@ -15,8 +15,8 @@ Each `RUN_tTICK.icp.json` descriptor points to a SHA256-bound immutable root in
 the adjacent `.checkpoint-v2` directory. The first root indexes an immutable
 base. Subsequent roots contain changes relative to that base, with complete
 coverage reconstructed in bounded space; delta chains do not grow with time.
-Page-aligned 1 MiB chunks have BLAKE3 hashes. New chunks are appended to a private
-pack, flushed, read back and verified, then published immutably. Unchanged chunks
+Page-aligned 64 KiB chunks have BLAKE3 hashes. Changed chunks use bounded lossless LZ4 blocks (or raw bytes for incompressible
+input). New blocks are appended to a private pack, flushed, read back and verified, then published immutably. Unchanged chunks
 are independently read and verified on each save. Root and descriptor publication
 comes last. No arbitrary file paths are accepted from manifests.
 
@@ -54,8 +54,13 @@ roots, preserves pins and other runs in the same directory, and only then
 collects unreferenced packs/roots. Invalid metadata or corrupted referenced bytes
 stop collection. Capture, restore, pinning and collection share an archive lock.
 An interrupted save may leave an unreferenced immutable object; it cannot replace
-a valid published checkpoint. Storage-policy byte/free-space limits still apply.
-Shared archives count their physical packs once against the archive limit.
+a valid published checkpoint. Storage-policy free-space limits still apply. As with legacy rotation, the byte
+budget is a retention target: pinned points and the minimum two recovery points
+are protected, with excess bytes reported rather than blocking every future save.
+Shared archives count their physical packs once against the archive target. The
+v2 logical image is bounded to 16 GiB and metadata to 64 MiB. Larger historical
+v1 images are unaffected. Scratch copies default beside the archive on disk,
+with an explicit reader scratch override; they never default to RAM-backed `/tmp`.
 
 ## Measurement boundary
 
@@ -67,3 +72,8 @@ restore. Those are **prototype diagnostics**, before final integration and new
 pack readback; they do not certify current-code p95, realistic 100-tick growth,
 cold-cache behavior, production concurrency or another 1,000-tick acceptance run.
 Current validation receipts must retain any remaining latency failures.
+
+The first full-size tick-900→1000 trial at commit `0c71927` failed: 53.82s
+for a 3.40 GiB rewrite, and 8.10–12.40s for unchanged/retention saves. Its
+1 MiB uncompressed format was a prototype, not a released v2 contract. Finer
+64 KiB LZ4 blocks are under validation; no current target pass is claimed.

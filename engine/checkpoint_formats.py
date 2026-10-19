@@ -24,7 +24,8 @@ def is_incremental(path: str | Path) -> bool:
 
 
 @contextmanager
-def checkpoint_database(path: str | Path, *, max_bytes: int = 64 * 1024**3):
+def checkpoint_database(path: str | Path, *, max_bytes: int = 64 * 1024**3,
+                        scratch_dir: str | Path | None = None):
     """Resolve a v2 artifact into a verified private SQLite copy for readers.
 
     Materialization is intentionally explicit: restore has its own measured
@@ -36,7 +37,8 @@ def checkpoint_database(path: str | Path, *, max_bytes: int = 64 * 1024**3):
         yield source
         return
     from engine.incremental_checkpoint import restore_incremental
-    with tempfile.TemporaryDirectory(prefix="manyworld-checkpoint-") as directory:
+    parent = Path(scratch_dir) if scratch_dir is not None else source.absolute().parent
+    with tempfile.TemporaryDirectory(prefix=".manyworld-checkpoint-", dir=parent) as directory:
         target = Path(directory) / "checkpoint.db"
         restore_incremental(source, target, max_bytes=max_bytes)
         yield target

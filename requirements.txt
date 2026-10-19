@@ -21,6 +21,8 @@ prometheus-client>=0.21,<1
 psutil>=7,<8
 # Opt-in versioned incremental checkpoint chunk hashes.
 blake3==1.0.10
+# Bounded, lossless native compression for changed checkpoint chunks.
+lz4==4.4.5
 # dev / test
 # Starlette TestClient transport; runtime provider adapters retain httpx.
 httpx2>=2.13.1,<3

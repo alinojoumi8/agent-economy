@@ -11,6 +11,7 @@ import sqlite3
 import struct
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
+from engine.storage_policy import _is_link
 
 
 class CheckpointImageError(ValueError):
@@ -37,7 +38,7 @@ def _read_at(handle, offset: int, size: int) -> bytes:
 
 
 def _open_regular(stack: ExitStack, path: Path):
-    if path.is_symlink() or not path.is_file():
+    if _is_link(path) or not path.is_file() or path.stat().st_nlink != 1:
         raise CheckpointImageError("SQLite image must be a regular file")
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
     handle = os.fdopen(fd, "rb")
@@ -98,6 +99,8 @@ def logical_image(path: str | Path, *, max_bytes: int = 64 * 1024**3,
     database = Path(path).absolute()
     if database.is_symlink() or not database.is_file():
         raise CheckpointImageError("source database must already exist")
+    if any(_is_link(p) for p in (database, *database.parents)):
+        raise CheckpointImageError("source database may not be aliased")
     with ExitStack() as stack:
         db = sqlite3.connect(database.as_uri() + "?mode=rw", uri=True,
                              timeout=0, isolation_level=None)
