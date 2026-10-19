@@ -22,6 +22,7 @@ import json
 import logging
 import random
 import shutil
+import tempfile
 import time
 import uuid
 from contextlib import suppress
@@ -34,6 +35,7 @@ from llm.completion_guard import CompletionGuard
 from engine.core import Economy
 from engine.checkpoint_manifest import (
     finalize_sqlite_artifact,
+    publish_checkpoint,
     write_checkpoint_manifest,
 )
 from engine.ledger import (
@@ -1217,31 +1219,39 @@ class World:
         ordinary checkpoints incur no clock reads or persisted observations.
         """
         import sqlite3
-        started = time.perf_counter() if phase_timings is not None else None
-        try:
-            src = sqlite3.connect(source_path)
-            dst = sqlite3.connect(str(dest))
+        dest = Path(dest).resolve()
+        # A fresh destination avoids journaling the previous same-tick snapshot.
+        # Keep both old artifacts until backup and manifest validation succeed.
+        with tempfile.TemporaryDirectory(prefix=f".{dest.name}.", dir=dest.parent) as directory:
+            staged = Path(directory) / dest.name
+            started = time.perf_counter() if phase_timings is not None else None
             try:
-                with dst:
-                    src.backup(dst)
+                src = sqlite3.connect(f"{Path(source_path).resolve().as_uri()}?mode=ro", uri=True)
+                try:
+                    dst = sqlite3.connect(str(staged))
+                    try:
+                        with dst:
+                            src.backup(dst)
+                    finally:
+                        dst.close()
+                finally:
+                    src.close()
             finally:
-                src.close()
-                dst.close()
-        finally:
-            if started is not None:
-                phase_timings["write_backup"] = round(time.perf_counter() - started, 6)
-        started = time.perf_counter() if phase_timings is not None else None
-        try:
-            finalize_sqlite_artifact(dest)
-        finally:
-            if started is not None:
-                phase_timings["write_finalize"] = round(time.perf_counter() - started, 6)
-        started = time.perf_counter() if phase_timings is not None else None
-        try:
-            write_checkpoint_manifest(dest)
-        finally:
-            if started is not None:
-                phase_timings["write_manifest"] = round(time.perf_counter() - started, 6)
+                if started is not None:
+                    phase_timings["write_backup"] = round(time.perf_counter() - started, 6)
+            started = time.perf_counter() if phase_timings is not None else None
+            try:
+                finalize_sqlite_artifact(staged)
+            finally:
+                if started is not None:
+                    phase_timings["write_finalize"] = round(time.perf_counter() - started, 6)
+            started = time.perf_counter() if phase_timings is not None else None
+            try:
+                write_checkpoint_manifest(staged)
+                publish_checkpoint(staged, dest)
+            finally:
+                if started is not None:
+                    phase_timings["write_manifest"] = round(time.perf_counter() - started, 6)
 
     def _checkpoint_failed(self, tick: int, reason: str, exc: Exception) -> None:
         self.store.log_event(

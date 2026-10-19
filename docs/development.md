@@ -569,6 +569,15 @@ and `write_manifest` measure those operations separately inside `write`.
 Do not add these nested samples to the writer or total duration. They include
 failed operations and preserve the original exceptions. Custom legacy writers
 without the optional timing argument retain just the overall writer sample.
+Legacy checkpoints are staged in a fresh sibling directory before publication,
+including repeated checkpoints at the same tick. Backup no longer rewrites an
+existing SQLite destination and its rollback journal. Full manifest validation
+still runs; publication binds the manifest to the final path and restores the
+previous pair on ordinary replacement errors. Database and manifest cannot be
+replaced atomically together; readers still validate their hash binding and
+refuse a pair interrupted by a process crash. Private staging is removed after
+success or a handled error. A fresh snapshot still copies and validates the
+entire database; this change does not establish a size-independent latency cap.
 Storage-policy writers bypass
 the legacy method and have no `write` sample. Total `duration_s` remains the
 resource-gate measurement, including Stop checkpoints; phase samples are only
