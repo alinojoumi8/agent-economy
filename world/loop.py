@@ -1227,11 +1227,16 @@ class World:
             unpinned = [p for p in ordered if not pin_path(p).exists()]
             discard = tuple(p for p in unpinned[keep:] if p != dest)
         return {"base": base, "discard": discard,
+                "recover_base": True,
                 "collect": type(keep) is int and keep > 0,
                 "max_archive_bytes": self.storage_policy.checkpoint_max_bytes if self.storage_policy else 0,
                 "min_free_bytes": self.storage_policy.min_free_bytes if self.storage_policy else 0}
 
     def _incremental_catalog_cleanup(self, receipt: dict) -> None:
+        if receipt.get("base_rejected"):
+            operational_log(logger, logging.WARNING, "world.checkpoint.base_rejected",
+                            run_id=self.store.get_meta()["run_id"], tick=self.store.tick,
+                            recovery="fresh_base", reason=receipt.get("base_rejection_reason"))
         for path in (receipt.get("retention") or {}).get("removed", []):
             self.store.execute("DELETE FROM checkpoints WHERE path=?", (path,))
         if receipt.get("retention_error"):

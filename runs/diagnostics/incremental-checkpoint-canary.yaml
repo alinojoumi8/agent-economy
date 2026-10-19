@@ -1,17 +1,9 @@
 # Bounded storage/replay regression only; not scale or household acceptance.
-extends: ../base.yaml
+extends: ../scale-270-rehearsal.yaml
 seed: 42
-population:
-  size: 6
-banks:
-  count: 2
-firms:
-  count: 1
-  listed: 0
 budget:
   cap_usd: 0
   oracle_reserve_usd: 0
-  conversation_pairs: 0
 llm:
   default_route: {provider: scripted, model: scripted}
   routes: {}

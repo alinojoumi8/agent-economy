@@ -20,6 +20,20 @@ input). New blocks are appended to a private pack, flushed, read back and verifi
 are independently read and verified on each save. Root and descriptor publication
 comes last. No arbitrary file paths are accepted from manifests.
 
+Pack headers include an independent storage nonce, which consumes no simulation
+randomness. This allows a fresh recovery base to preserve an existing corrupt
+object instead of overwriting it. World checkpointing logs a rejected base and
+attempts one fresh base; source-integrity failures are never retried this way.
+The low-level save API stays strict unless base recovery is explicitly enabled.
+Rejected descriptors and corrupt objects remain evidence. They can stop
+collection and require operator attention even after a new recovery point works.
+
+Packs below half live utilization are compacted within the save operation.
+Compacted blocks receive full stored-byte verification. Immutable base packs and
+pinned roots remain protected; live cold appends cannot indefinitely pin large
+obsolete hot rewrites. Metadata caches are bounded and last only for one archive
+lock operation; each save independently verifies its stored bytes.
+
 Capture excludes SQLite writers while reading a logical image of the main file
 and its committed WAL frames. Native SQLite integrity, schema, state, PRNG and
 ledger checks run at that same cut. The complete save timer includes all checks,
@@ -27,6 +41,11 @@ durability and requested retention. A small bounded thread pool overlaps native
 checks, hashing and verification; world ticks remain sequential. This does not
 add simulation multiprocessing. Long saves remain off the async serving loop,
 although other SQLite writers must wait for the capture boundary.
+Hashing and compression use two workers with at most three ordered 1 MiB input
+batches. The source file handles have one reader; no full-image work queue exists.
+SQLite integrity and ledger checks have separate native readers at the same
+writer-excluded cut. Common state/core SHA256 fields keep v1 canonical semantics;
+the storage root digest is not relabelled as a raw SQLite database SHA256.
 
 Keep descriptors **and the entire referenced archive together** when moving a
 world. A descriptor alone is not a standalone SQLite database. The regular fork
@@ -77,3 +96,26 @@ The first full-size tick-900→1000 trial at commit `0c71927` failed: 53.82s
 for a 3.40 GiB rewrite, and 8.10–12.40s for unchanged/retention saves. Its
 1 MiB uncompressed format was a prototype, not a released v2 contract. Finer
 64 KiB LZ4 blocks are under validation; no current target pass is claimed.
+
+The next compressed prototype (`87a9974`) measured 8.15s for the real interval,
+6.00s unchanged and 8.81s with retention; these still failed five seconds. Its
+15.00s base and 25.87s restore were separately measured, with 231.20 MiB RSS and
+exact restored bytes. Later buffering, bounded parallel batches, compaction and
+operation-local metadata reuse require their own retained measurements.
+
+The maintained `runs/diagnostics/incremental-checkpoint-canary.yaml` uses the
+existing scripted scale rehearsal's population/communications contract for a
+bounded storage regression. The earlier six-citizen fixture completed exact
+20-tick replay but failed the runner's fixed population/communications guards;
+that failed receipt is retained rather than changing the guards.
+
+A separately authorized full validation can use
+`runs/acceptance/scale-270-recovery-buffer-lifecycle-incremental-1000.yaml`.
+It changes only checkpoint storage selection from the existing v3 lifecycle
+profile. Seed, simulation policy, interval, retention and acceptance limits stay
+unchanged. Preparing that profile does not launch or certify a full experiment.
+
+The format requires a local filesystem with hard links and atomic rename.
+Whole immutable-pack digests cover headers and dead packed bytes in addition to
+per-chunk logical hashes. Large verification plans use two bounded native workers;
+no full-history future queue or verification cache survives an operation.

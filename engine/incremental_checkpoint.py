@@ -14,13 +14,16 @@ import shutil
 import sqlite3
 import tempfile
 import time
+from collections import deque
 from concurrent.futures import ThreadPoolExecutor
+from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 
 from engine.checkpoint_image import logical_image
 from engine.checkpoint_manifest import (
     _fsync_directory, canonical_json_bytes, checkpoint_core_evidence,
-    checkpoint_state_binding, sqlite_schema_evidence,
+    checkpoint_state_binding, sqlite_schema_evidence, canonical_sha256,
 )
 from research.process_lock import process_lock
 from engine.storage_policy import StorageBudgetExceeded, _is_link
@@ -30,10 +33,20 @@ MAX_BYTES = 16 * 1024**3
 MAX_ROOT_BYTES = 64 * 1024**2
 KIND = "world_checkpoint_chunks_v2"
 HEX = re.compile(r"[0-9a-f]{64}\Z")
+PACK_MAGIC = b"MANYWORLD.PACK2\0"
+PACK_HEADER_SIZE = len(PACK_MAGIC) + 16
 
 
 class IncrementalCheckpointError(ValueError):
     """Invalid, corrupted or unsupported incremental checkpoint."""
+
+
+class CheckpointBaseError(IncrementalCheckpointError):
+    """Existing base evidence failed; the current source has not been rejected."""
+
+    def __init__(self, message, *, reason="metadata"):
+        super().__init__(message)
+        self.reason = reason
 
 
 def _linked(path: Path) -> bool:
@@ -43,10 +56,21 @@ def _linked(path: Path) -> bool:
         return False
 
 
-def _hash(data: bytes) -> str:
+@lru_cache(maxsize=1)
+def _hash_implementation():
     # Loaded only for the explicitly selected v2 format.
     from blake3 import blake3
-    return blake3(data).hexdigest()
+    return blake3
+
+
+@lru_cache(maxsize=1)
+def _block_implementation():
+    import lz4.block
+    return lz4.block
+
+
+def _hash(data: bytes) -> str:
+    return _hash_implementation()(data).hexdigest()
 
 
 def _regular(path: Path, limit: int) -> bytes:
@@ -87,7 +111,7 @@ def _immutable(path: Path, data: bytes) -> bool:
         if _regular(path, len(data)) != data:
             raise IncrementalCheckpointError("immutable object content mismatch")
         return False
-    fd, name = tempfile.mkstemp(dir=path.parent)
+    fd, name = tempfile.mkstemp(prefix=".stage-", dir=path.parent)
     temporary = Path(name)
     try:
         with os.fdopen(fd, "wb") as handle:
@@ -121,14 +145,17 @@ def _json(data: bytes) -> dict:
     return value
 
 
-def _root(archive: Path, digest: str) -> dict:
+def _root(archive: Path, digest: str, cache=None) -> dict:
+    key = ("root", archive, _digest(digest))
+    if cache is not None and key in cache:
+        return cache[key]
     data = _regular(archive / (_digest(digest) + ".root"), MAX_ROOT_BYTES)
     if hashlib.sha256(data).hexdigest() != digest:
         raise IncrementalCheckpointError("checkpoint root checksum mismatch")
     root = _json(data)
     if (root.get("kind") != KIND or root.get("version") != 2
             or root.get("chunk_size") != CHUNK_SIZE
-            or root.get("packing") != "lz4-blocks-v1"
+            or root.get("packing") != "lz4-blocks-v2"
             or type(root.get("size")) is not int
             or not 0 < root["size"] <= MAX_BYTES
             or type(root.get("page_size")) is not int
@@ -148,38 +175,50 @@ def _root(archive: Path, digest: str) -> dict:
                 or type(entry[1]) is not int or not 0 <= entry[1] < len(packs)):
             raise IncrementalCheckpointError("invalid checkpoint pack reference")
         entry[1] = packs[entry[1]]
+    if cache is not None:
+        # Bound metadata even when an operator protects many old roots. Cache
+        # eviction causes revalidation; it never changes an integrity verdict.
+        if len(cache) >= 8:
+            cache.clear()
+        cache[key] = root
     return root
 
 
 def _entry(value):
     if (not isinstance(value, list) or len(value) != 6
-            or type(value[2]) is not int or value[2] < 0
+            or type(value[2]) is not int or value[2] < PACK_HEADER_SIZE
             or type(value[3]) is not int or not 0 < value[3] <= CHUNK_SIZE
             or type(value[4]) is not int or not 0 < value[4] <= CHUNK_SIZE
             or type(value[5]) is not int or value[5] not in (0, 1)
             or (value[5] == 0 and value[3] != value[4])
             or (value[5] == 1 and value[3] >= value[4])
-            or value[2] + value[3] > MAX_BYTES):
+            or value[2] + value[3] > MAX_BYTES + PACK_HEADER_SIZE):
         raise IncrementalCheckpointError("invalid checkpoint chunk entry")
     _digest(value[0])
     _digest(value[1])
     return value
 
 
-def _index(archive: Path, root: dict) -> tuple[list[list], str | None]:
+def _index(archive: Path, root: dict, cache=None) -> tuple[list[list], str | None]:
+    cache_key = ("index", archive, id(root))
+    if cache is not None and cache_key in cache:
+        return cache[cache_key][1]
     count = (root["size"] + CHUNK_SIZE - 1) // CHUNK_SIZE
     base_digest = root.get("base")
     if base_digest is None:
         chunks = root.get("chunks")
         if not isinstance(chunks, list) or len(chunks) != count:
             raise IncrementalCheckpointError("invalid base chunk index")
-        return [_entry(d) for d in chunks], None
-    base = _root(archive, _digest(base_digest))
+        result = ([_entry(d) for d in chunks], None)
+        if cache is not None:
+            cache[cache_key] = (root, result)
+        return result
+    base = _root(archive, _digest(base_digest), cache)
     if base.get("base") is not None:
         raise IncrementalCheckpointError("checkpoint delta chains are unsupported")
     if base["page_size"] != root["page_size"]:
         raise IncrementalCheckpointError("checkpoint base page size mismatch")
-    chunks, _ = _index(archive, base)
+    chunks, _ = _index(archive, base, cache)
     chunks = chunks[:count] + [None] * max(0, count - len(chunks))
     changes = root.get("changes")
     if not isinstance(changes, dict) or len(changes) > count:
@@ -193,26 +232,54 @@ def _index(archive: Path, root: dict) -> tuple[list[list], str | None]:
         chunks[index] = _entry(digest)
     if any(d is None for d in chunks):
         raise IncrementalCheckpointError("incomplete checkpoint chunk index")
-    return chunks, base_digest
+    result = (chunks, base_digest)
+    if cache is not None:
+        cache[cache_key] = (root, result)
+    return result
 
 
-def read_incremental(path: str | Path) -> tuple[dict, list[list], Path, str]:
+def read_incremental(path: str | Path, *, _cache=None) -> tuple[dict, list[list], Path, str]:
     descriptor = Path(path).absolute()
     archive = _archive(descriptor)
     declaration = _json(_regular(descriptor, 4096))
     if declaration.get("kind") != KIND or declaration.get("version") != 2:
         raise IncrementalCheckpointError("unsupported checkpoint descriptor")
     digest = _digest(declaration.get("root_sha256"))
-    root = _root(archive, digest)
-    chunks, _ = _index(archive, root)
+    root = _root(archive, digest, _cache)
+    chunks, _ = _index(archive, root, _cache)
     return root, chunks, archive, digest
 
 
 def _pack(path: Path):
     if (_linked(path) or not path.is_file() or path.stat().st_nlink != 1
-            or not 0 < path.stat().st_size <= MAX_BYTES):
+            or not PACK_HEADER_SIZE < path.stat().st_size <= MAX_BYTES + PACK_HEADER_SIZE):
         raise IncrementalCheckpointError("missing or invalid checkpoint pack")
-    return path.open("rb")
+    handle = path.open("rb", buffering=1024 * 1024)
+    if handle.read(len(PACK_MAGIC)) != PACK_MAGIC:
+        handle.close()
+        raise IncrementalCheckpointError("invalid checkpoint pack header")
+    return handle
+
+
+def _pack_prefix(output, digest):
+    prefix = PACK_MAGIC + os.urandom(16)
+    output.write(prefix)
+    digest.update(prefix)
+
+
+def _seal_pack(temporary, archive, digest):
+    """Publish immutable bytes; even corrupt previous objects are preserved."""
+    from blake3 import blake3
+    try:
+        os.link(temporary, archive / (digest + ".pack"))
+    except FileExistsError:
+        actual = blake3()
+        with _pack(archive / (digest + ".pack")) as handle:
+            handle.seek(0)
+            for data in iter(lambda: handle.read(1024 * 1024), b""):
+                actual.update(data)
+        if actual.hexdigest() != digest:
+            raise IncrementalCheckpointError("immutable pack content mismatch")
 
 
 def _chunk(handle, entry):
@@ -222,29 +289,95 @@ def _chunk(handle, entry):
     if len(data) != length:
         raise IncrementalCheckpointError("checkpoint chunk checksum mismatch")
     if codec == 1:
-        import lz4.block
+        block = _block_implementation()
         try:
             # Never use a stored compressor size header. The independently
             # bounded root length fixes the maximum native output allocation.
-            data = lz4.block.decompress(data, uncompressed_size=raw_length)
-        except lz4.block.LZ4BlockError as exc:
+            data = block.decompress(data, uncompressed_size=raw_length)
+        except block.LZ4BlockError as exc:
             raise IncrementalCheckpointError("invalid compressed checkpoint chunk") from exc
     if len(data) != raw_length or _hash(data) != digest:
         raise IncrementalCheckpointError("checkpoint chunk checksum mismatch")
     return data
 
 
-def _verify_objects(archive: Path, chunks: list[list], size: int, *, verified=frozenset()) -> None:
+def _verify_pack_hash(archive: Path, digest: str) -> None:
+    hasher = _hash_implementation()()
+    with _pack(archive / (digest + ".pack")) as handle:
+        handle.seek(0)
+        for data in iter(lambda: handle.read(1024 * 1024), b""):
+            hasher.update(data)
+    if hasher.hexdigest() != digest:
+        raise IncrementalCheckpointError("checkpoint pack checksum mismatch")
+
+
+def _verify_entries(archive, entries):
     packs = {}
-    for index, entry in enumerate(chunks):
-        if entry[4] != min(CHUNK_SIZE, size - index * CHUNK_SIZE):
-            raise IncrementalCheckpointError("checkpoint chunk length mismatch")
-        if tuple(entry) not in verified:
-            packs.setdefault(entry[1], {})[tuple(entry)] = entry
+    for entry in entries:
+        packs.setdefault(entry[1], []).append(entry)
     for pack, entries in packs.items():
         with _pack(archive / (pack + ".pack")) as handle:
-            for entry in sorted(entries.values(), key=lambda e: e[2]):
+            for entry in sorted(entries, key=lambda e: e[2]):
                 _chunk(handle, entry)
+
+
+def _verify_pack_group(archive, packs):
+    for pack in packs:
+        _verify_pack_hash(archive, pack)
+
+
+def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None):
+    """Verify all bytes, with bounded native parallelism for large plans."""
+    pack_proofs = set() if pack_proofs is None else pack_proofs
+    all_packs, entries = set(), {}
+    for chunks, size in images:
+        if len(chunks) != (size + CHUNK_SIZE - 1) // CHUNK_SIZE:
+            raise IncrementalCheckpointError("incomplete checkpoint image coverage")
+        for index, entry in enumerate(chunks):
+            if entry[4] != min(CHUNK_SIZE, size - index * CHUNK_SIZE):
+                raise IncrementalCheckpointError("checkpoint chunk length mismatch")
+            all_packs.add(entry[1])
+            key = tuple(entry)
+            if key not in verified:
+                entries[key] = entry
+    pending_packs = all_packs - pack_proofs
+    ordered = sorted(entries.values(), key=lambda e: (e[1], e[2]))
+    if len(ordered) >= 256:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            pack_list = list(pending_packs)
+            hashes = [pool.submit(_verify_pack_group, archive, part)
+                      for part in (pack_list[::2], pack_list[1::2])]
+            middle = len(ordered) // 2
+            decoded = [pool.submit(_verify_entries, archive, part)
+                       for part in (ordered[:middle], ordered[middle:])]
+            for future in [*hashes, *decoded]:
+                future.result()
+    else:
+        for pack in pending_packs:
+            _verify_pack_hash(archive, pack)
+        _verify_entries(archive, ordered)
+    if len(pack_proofs) + len(pending_packs) > 2 * MAX_BYTES // CHUNK_SIZE:
+        pack_proofs.clear()
+    pack_proofs.update(pending_packs)
+
+
+def _verify_objects(archive: Path, chunks: list[list], size: int, *, verified=frozenset(),
+                    pack_proofs=None) -> None:
+    _verify_plan(archive, [(chunks, size)], verified=verified, pack_proofs=pack_proofs)
+
+
+def _verify_base_objects(archive, previous_chunks, previous_size, base_chunks, base_size, pack_proofs):
+    _verify_plan(archive, [(previous_chunks, previous_size), (base_chunks, base_size)],
+                 pack_proofs=pack_proofs)
+
+
+def _verify_root_objects(archive, root, chunks):
+    if root.get("base"):
+        base = _root(archive, root["base"])
+        base_chunks, _ = _index(archive, base)
+        _verify_base_objects(archive, chunks, root["size"], base_chunks, base["size"], set())
+    else:
+        _verify_objects(archive, chunks, root["size"])
 
 
 def _source_quick_check(source: str | Path) -> list[str]:
@@ -266,7 +399,8 @@ def _evidence(db: sqlite3.Connection, *, quick_check=None) -> dict:
     if quick != ["ok"] or any(core["ledger"].values()):
         raise IncrementalCheckpointError("checkpoint integrity or ledger check failed")
     return {"quick_check": "ok", "schema": sqlite_schema_evidence(db),
-            "state": state, "core": core}
+            "state": state, "state_sha256": canonical_sha256(state),
+            "core": core, "core_sha256": canonical_sha256(core)}
 
 
 def _publish(descriptor: Path, declaration: dict) -> None:
@@ -288,18 +422,129 @@ def _publish(descriptor: Path, declaration: dict) -> None:
 def save_incremental(source: str | Path, descriptor: str | Path,
                      *, base: str | Path | None = None,
                      max_archive_bytes: int = 0, min_free_bytes: int = 0,
-                     discard: tuple[Path, ...] = (), collect: bool = False) -> dict:
+                     discard: tuple[Path, ...] = (), collect: bool = False,
+                     recover_base: bool = False) -> dict:
     started = time.perf_counter()
+    if type(recover_base) is not bool or type(collect) is not bool:
+        raise ValueError("checkpoint recovery and collection switches must be boolean")
     archive = _archive(Path(descriptor), create=True)
     with process_lock(archive / ".lock"):
         pin = Path(str(descriptor) + ".pin.json")
         if pin.exists() or _linked(pin):
             raise IncrementalCheckpointError("cannot replace a pinned checkpoint")
-        receipt = _save_incremental(source, descriptor, base=base,
-                                    max_archive_bytes=max_archive_bytes,
-                                    min_free_bytes=min_free_bytes, discard=discard, collect=collect)
+        options = {"max_archive_bytes": max_archive_bytes, "min_free_bytes": min_free_bytes,
+                   "discard": discard, "collect": collect}
+        try:
+            receipt = _save_incremental(source, descriptor, base=base, **options)
+        except CheckpointBaseError as exc:
+            if not recover_base or base is None:
+                raise
+            # Retain rejected descriptor bytes before a same-slot replacement.
+            # Existing corrupt packs/roots are never overwritten or relabelled.
+            try:
+                rejected = _regular(Path(base), 4096)
+            except (OSError, ValueError):
+                rejected = None
+            if rejected is None:
+                rejected = canonical_json_bytes({"kind": "unreadable_checkpoint_base",
+                                                 "name": Path(base).name, "reason": exc.reason})
+            name = hashlib.sha256(rejected).hexdigest() + ".rejected"
+            _immutable(archive / name, rejected)
+            receipt = _save_incremental(source, descriptor, base=None, **options)
+            receipt["base_rejected"] = True
+            receipt["base_rejection_reason"] = exc.reason
     receipt["seconds"] = time.perf_counter() - started
     return receipt
+
+
+def _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes):
+    """Copy verified live blocks from packs below half utilization.
+
+    The immutable base is protected. Compaction is inside the save timer and
+    new locations receive the same subsequent disk readback as changed blocks.
+    It prevents a small cold append from pinning a large obsolete hot rewrite.
+    """
+    from blake3 import blake3
+    base_packs = {e[1] for e in base_chunks}
+    live = {}
+    for entry in chunks:
+        if entry[1] not in base_packs:
+            live.setdefault(entry[1], {})[tuple(entry)] = entry
+    stale = {}
+    for pack, entries in live.items():
+        payload_bytes = (archive / (pack + ".pack")).stat().st_size - PACK_HEADER_SIZE
+        if sum(e[3] for e in entries.values()) * 2 < payload_bytes:
+            stale[pack] = entries
+    if not stale:
+        return chunks
+    fd, name = tempfile.mkstemp(prefix=".stage-", dir=archive)
+    temporary = Path(name)
+    digest, replacements = blake3(), {}
+    try:
+        with os.fdopen(fd, "wb") as output:
+            _pack_prefix(output, digest)
+            for pack, entries in stale.items():
+                with _pack(archive / (pack + ".pack")) as original:
+                    for entry in sorted(entries.values(), key=lambda e: e[2]):
+                        original.seek(entry[2])
+                        data = original.read(entry[3])
+                        if len(data) != entry[3]:
+                            raise IncrementalCheckpointError("truncated compaction input")
+                        free = shutil.disk_usage(archive).free
+                        if free < min_free_bytes + len(data):
+                            raise StorageBudgetExceeded("free_space", free, min_free_bytes + len(data))
+                        replacements[tuple(entry)] = [entry[0], None, output.tell(), *entry[3:]]
+                        output.write(data)
+                        digest.update(data)
+            output.flush()
+            os.fsync(output.fileno())
+            counts["compacted_written_bytes"] = output.tell()
+        pack_digest = digest.hexdigest()
+        _seal_pack(temporary, archive, pack_digest)
+        for entry in replacements.values():
+            entry[1] = pack_digest
+        counts["written_bytes"] += counts["compacted_written_bytes"]
+        counts["compacted_chunks"] = len(replacements)
+        return [replacements.get(tuple(e), e) for e in chunks]
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _encoded_chunks(image, known):
+    """Two native workers, three ordered 1-MiB batches, no full-image queue.
+
+    Only the producer reads file handles. Workers receive immutable byte
+    chunks; the consumer publishes results in original logical page order.
+    """
+    hasher, block = _hash_implementation(), _block_implementation()
+
+    def encode(batch):
+        result = []
+        for data in batch:
+            digest = hasher(data).hexdigest()
+            if digest in known:
+                result.append((digest, None, len(data), 0))
+            else:
+                compressed = block.compress(data, store_size=False)
+                stored, codec = (compressed, 1) if len(compressed) < len(data) else (data, 0)
+                result.append((digest, stored, len(data), codec))
+        return result
+
+    chunks = iter(image.chunks(CHUNK_SIZE))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        pending = deque()
+
+        def enqueue():
+            batch = list(islice(chunks, 16))
+            if batch:
+                pending.append(pool.submit(encode, batch))
+
+        for _ in range(3):
+            enqueue()
+        while pending:
+            for result in pending.popleft().result():
+                yield result
+            enqueue()
 
 
 def _save_incremental(source: str | Path, descriptor: str | Path,
@@ -315,37 +560,43 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
             raise ValueError("checkpoint storage limits must be nonnegative integers")
     base_root = None
     base_chunks = []
+    # Never survives a save/lock boundary. Immutable SHA256 identities are
+    # decoded once, while every referenced stored byte is still reverified.
+    cache = {}
+    pack_proofs = set()
     if base is not None:
-        previous, previous_chunks, previous_archive, previous_digest = read_incremental(base)
+        try:
+            previous, previous_chunks, previous_archive, previous_digest = read_incremental(base, _cache=cache)
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise CheckpointBaseError(f"checkpoint base rejected: {exc}") from exc
         if previous_archive != archive:
             raise IncrementalCheckpointError("checkpoint base belongs to another archive")
         base_root = previous.get("base") or previous_digest
-        original = _root(archive, base_root)
-        base_chunks, _ = _index(archive, original)
-    counts = {"new_chunks": 0, "written_bytes": 0, "new_logical_bytes": 0}
+        original = _root(archive, base_root, cache)
+        base_chunks, _ = _index(archive, original, cache)
+    counts = {"new_chunks": 0, "written_bytes": 0, "new_logical_bytes": 0,
+              "compacted_chunks": 0, "compacted_written_bytes": 0}
 
     def capture(image):
         from blake3 import blake3
-        import lz4.block
-        known = {entry[0]: entry for entry in base_chunks}
-        if base is not None:
-            known.update({entry[0]: entry for entry in previous_chunks})
+        known = {entry[0]: entry for entry in previous_chunks} if base is not None else {}
+        known.update({entry[0]: entry for entry in base_chunks})
         chunks, pending = [], {}
-        fd, name = tempfile.mkstemp(dir=archive)
+        fd, name = tempfile.mkstemp(prefix=".stage-", dir=archive)
         temporary = Path(name)
         pack_hash = blake3()
         try:
             with os.fdopen(fd, "wb") as output:
-                for data in image.chunks(CHUNK_SIZE):
-                    digest = _hash(data)
+                for digest, stored, raw_length, codec in _encoded_chunks(image, known):
                     if digest in known:
                         entry = known[digest]
                     elif digest in pending:
                         entry = pending[digest]
                     else:
-                        compressed = lz4.block.compress(data, store_size=False)
-                        stored, codec = (compressed, 1) if len(compressed) < len(data) else (data, 0)
-                        entry = [digest, None, output.tell(), len(stored), len(data), codec]
+                        if not pending:
+                            _pack_prefix(output, pack_hash)
+                            counts["written_bytes"] += PACK_HEADER_SIZE
+                        entry = [digest, None, output.tell(), len(stored), raw_length, codec]
                         pending[digest] = entry
                         free = shutil.disk_usage(archive).free
                         if free < min_free_bytes + len(stored):
@@ -354,44 +605,44 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
                         pack_hash.update(stored)
                         counts["new_chunks"] += 1
                         counts["written_bytes"] += len(stored)
-                        counts["new_logical_bytes"] += len(data)
+                        counts["new_logical_bytes"] += raw_length
                     chunks.append(entry)
                 output.flush()
                 os.fsync(output.fileno())
             if pending:
                 pack_digest = pack_hash.hexdigest()
-                pack_path = archive / (pack_digest + ".pack")
-                try:
-                    os.link(temporary, pack_path)
-                except FileExistsError:
-                    actual = blake3()
-                    with _pack(pack_path) as handle:
-                        for data in iter(lambda: handle.read(CHUNK_SIZE), b""):
-                            actual.update(data)
-                    if actual.hexdigest() != pack_digest:
-                        raise IncrementalCheckpointError("immutable pack content mismatch")
+                _seal_pack(temporary, archive, pack_digest)
                 for entry in pending.values():
                     entry[1] = pack_digest
             return chunks
         finally:
             temporary.unlink(missing_ok=True)
     with logical_image(source, max_bytes=MAX_BYTES) as (db, image):
+        if base is not None and image.page_size != original["page_size"]:
+            raise CheckpointBaseError("checkpoint base page size mismatch", reason="geometry")
         with ThreadPoolExecutor(max_workers=3) as pool:
-            verify = (pool.submit(_verify_objects, archive, previous_chunks, previous["size"])
+            verify = (pool.submit(_verify_base_objects, archive, previous_chunks, previous["size"],
+                                  base_chunks, original["size"], pack_proofs)
                       if base is not None else None)
             captured = pool.submit(capture, image)
             quick = pool.submit(_source_quick_check, source)
             evidence = _evidence(db, quick_check=quick.result)
             chunks = captured.result()
             if verify is not None:
-                verify.result()
-            prior_verified = {tuple(entry) for entry in previous_chunks} if base is not None else set()
-            _verify_objects(archive, chunks, image.size, verified=prior_verified)
+                try:
+                    verify.result()
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    raise CheckpointBaseError(f"checkpoint base verification failed: {exc}",
+                                              reason="objects") from exc
+            prior_verified = ({tuple(entry) for entry in previous_chunks + base_chunks}
+                              if base is not None else set())
+            chunks = _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes)
+            _verify_objects(archive, chunks, image.size, verified=prior_verified, pack_proofs=pack_proofs)
         if base is not None and (previous["evidence"]["state"]["run_id"]
                                  != evidence["state"]["run_id"]):
-            raise IncrementalCheckpointError("checkpoint base run mismatch")
+            raise CheckpointBaseError("checkpoint base run mismatch", reason="identity")
         root = {"kind": KIND, "version": 2, "chunk_size": CHUNK_SIZE,
-                "packing": "lz4-blocks-v1",
+                "packing": "lz4-blocks-v2",
                 "size": image.size, "page_size": image.page_size,
                 "evidence": evidence}
         if base_root is None:
@@ -428,7 +679,8 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
         # persisted/stat-only cache can turn corrupt bytes into verified data.
         verified = prior_verified | {tuple(entry) for entry in chunks}
         try:
-            retention = _prune_incremental(target.parent, discard=list(discard), verified=verified)
+            retention = _prune_incremental(target.parent, discard=list(discard), verified=verified,
+                                           cache=cache, pack_proofs=pack_proofs)
         except (OSError, ValueError, KeyError, TypeError) as exc:
             # Publication is complete. Failed maintenance must be observable
             # without turning a valid new recovery point into a failed save.
@@ -464,6 +716,7 @@ def _restore_incremental(descriptor: str | Path, destination: str | Path,
     _directory(target.parent)
     if target.exists() or target.is_symlink():
         raise IncrementalCheckpointError("restore destination already exists")
+    _verify_root_objects(archive, root, chunks)
     with tempfile.TemporaryDirectory(dir=target.parent) as directory:
         staged = Path(directory) / "restore.db"
         with staged.open("wb") as out:
@@ -513,16 +766,23 @@ def prune_incremental(directory: str | Path, *, discard: list[Path]) -> dict:
         return _prune_incremental(parent, discard=discard)
 
 
-def _prune_incremental(parent: Path, *, discard: list[Path], verified=frozenset()) -> dict:
+def _prune_incremental(parent: Path, *, discard: list[Path], verified=frozenset(), cache=None,
+                       pack_proofs=None) -> dict:
     archive = _archive(parent / "unused.icp.json")
+    if any(archive.glob("*.rejected")):
+        raise IncrementalCheckpointError("rejected checkpoint evidence requires operator review")
     requested = {Path(p).absolute() for p in discard}
     if any(p.parent != parent or not p.name.endswith(".icp.json") for p in requested):
         raise IncrementalCheckpointError("invalid checkpoint retention path")
     roots, packs, removed = set(), set(), []
+    checked = set(verified)
+    cache = {} if cache is None else cache
+    pack_proofs = set() if pack_proofs is None else pack_proofs
     descriptors = list(parent.glob("*.icp.json"))
     for descriptor in descriptors:
-        root, chunks, _, digest = read_incremental(descriptor)
-        _verify_objects(archive, chunks, root["size"], verified=verified)
+        root, chunks, _, digest = read_incremental(descriptor, _cache=cache)
+        _verify_objects(archive, chunks, root["size"], verified=checked, pack_proofs=pack_proofs)
+        checked.update(tuple(e) for e in chunks)
         pin = Path(str(descriptor) + ".pin.json")
         if descriptor in requested and not (pin.exists() or _linked(pin)):
             removed.append(descriptor)
@@ -530,10 +790,15 @@ def _prune_incremental(parent: Path, *, discard: list[Path], verified=frozenset(
         roots.add(digest)
         if root.get("base"):
             roots.add(root["base"])
-            base = _root(archive, root["base"])
-            base_chunks, _ = _index(archive, base)
-            _verify_objects(archive, base_chunks, base["size"], verified=verified)
+            base = _root(archive, root["base"], cache)
+            base_chunks, _ = _index(archive, base, cache)
+            _verify_objects(archive, base_chunks, base["size"], verified=checked, pack_proofs=pack_proofs)
+            checked.update(tuple(e) for e in base_chunks)
             packs.update(entry[1] for entry in base_chunks)
+        if len(checked) > 2 * MAX_BYTES // CHUNK_SIZE:
+            # Protected historical roots may be numerous. Eviction repeats
+            # work rather than retaining full-history proof sets in memory.
+            checked = set(verified)
         packs.update(entry[1] for entry in chunks)
     members = list(archive.iterdir())
     for candidate in members:
@@ -542,6 +807,12 @@ def _prune_incremental(parent: Path, *, discard: list[Path], verified=frozenset(
     for descriptor in removed:
         descriptor.unlink()
     deleted_bytes = 0
+    # No archive writer is active under this lock. Unpublished scratch is not
+    # a recovery point; named immutable objects and uncertain roots stay safe.
+    for candidate in members:
+        if candidate.name.startswith(".stage-") and candidate.is_file():
+            deleted_bytes += candidate.stat().st_size
+            candidate.unlink()
     for candidate in members:
         suffix = candidate.suffix
         digest = candidate.stem
@@ -573,7 +844,7 @@ def unpin_incremental(descriptor: str | Path) -> None:
     archive = _archive(path)
     with process_lock(archive / ".lock"):
         root, chunks, _, _ = read_incremental(path)
-        _verify_objects(archive, chunks, root["size"])
+        _verify_root_objects(archive, root, chunks)
         target = Path(str(path) + ".pin.json")
         if _linked(target):
             raise IncrementalCheckpointError("linked checkpoint pin")

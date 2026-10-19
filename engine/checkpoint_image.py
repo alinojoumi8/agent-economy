@@ -41,7 +41,7 @@ def _open_regular(stack: ExitStack, path: Path):
     if _is_link(path) or not path.is_file() or path.stat().st_nlink != 1:
         raise CheckpointImageError("SQLite image must be a regular file")
     fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
-    handle = os.fdopen(fd, "rb")
+    handle = os.fdopen(fd, "rb", buffering=1024 * 1024)
     stack.callback(handle.close)
     return handle
 
@@ -171,5 +171,9 @@ def logical_image(path: str | Path, *, max_bytes: int = 64 * 1024**3,
                         _read_at(wal, pos + 24, page_size)
         image = LogicalImage(main, wal, page_size, page_count, frames)
         yield db, image
-        if index is not None and _read_at(shm, 0, 96) != index:
-            raise CheckpointImageError("WAL changed during capture")
+        if index is not None:
+            # A buffered seek to zero may return the original cached header.
+            # Read the final boundary directly from the descriptor instead.
+            os.lseek(shm.fileno(), 0, os.SEEK_SET)
+            if os.read(shm.fileno(), 96) != index:
+                raise CheckpointImageError("WAL changed during capture")

@@ -64,10 +64,10 @@ def test_corrupt_reused_chunk_fails_capture_and_restore(world, tmp_path):
     _, chunks, archive, _ = read_incremental(descriptor)
     object_path = archive / (chunks[0][1] + ".pack")
     object_path.write_bytes(b'bad')
-    with pytest.raises(IncrementalCheckpointError, match='checksum'):
+    with pytest.raises(IncrementalCheckpointError):
         save_incremental(world.store.path, descriptor, base=descriptor)
     assert descriptor.read_bytes() == before
-    with pytest.raises(IncrementalCheckpointError, match='checksum'):
+    with pytest.raises(IncrementalCheckpointError):
         restore_incremental(descriptor, tmp_path / 'restored.db')
     assert not (tmp_path / 'restored.db').exists()
 
@@ -335,3 +335,191 @@ def test_base_survives_when_every_current_chunk_is_repacked(world, tmp_path):
     module.prune_incremental(tmp_path, discard=[first])
     assert all((archive / (pack + '.pack')).exists() for pack in base_packs)
     restore_incremental(second, tmp_path / 'repacked.db')
+
+
+def test_missing_latest_base_does_not_disable_future_recovery(world, tmp_path, caplog):
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2',
+                        checkpoint_keep_last=2)
+    world.checkpoint_format = 'incremental-v2'
+    first = Path(world.checkpoint(1))
+    first.unlink()
+    second = world.checkpoint(2)
+    assert second is not None
+    restore_incremental(second, tmp_path / 'recovered.db')
+    assert any('base_rejected' in record.message for record in caplog.records)
+
+
+def test_corrupt_latest_pack_can_rebuild_without_overwriting_failure(world, tmp_path):
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2',
+                        checkpoint_keep_last=2)
+    world.checkpoint_format = 'incremental-v2'
+    first = Path(world.checkpoint(1))
+    _, entries, archive, _ = read_incremental(first)
+    damaged = archive / (entries[0][1] + '.pack')
+    damaged.write_bytes(b'original corruption evidence')
+    second = world.checkpoint(2)
+    assert second is not None
+    assert damaged.read_bytes() == b'original corruption evidence'
+    restore_incremental(second, tmp_path / 'after-corruption.db')
+
+
+def test_append_and_hot_rewrite_cycles_do_not_pin_all_historical_packs(world, tmp_path):
+    world.store.execute('CREATE TABLE hot_payload(value)')
+    world.store.execute('INSERT INTO hot_payload VALUES(randomblob(786432))')
+    world.store.execute('CREATE TABLE cold_payload(value)')
+    previous = tmp_path / 'point0.icp.json'
+    save_incremental(world.store.path, previous)
+    paths = [previous]
+    for index in range(1, 19):
+        world.store.execute('UPDATE hot_payload SET value=randomblob(786432)')
+        world.store.execute('INSERT INTO cold_payload VALUES(randomblob(65536))')
+        target = tmp_path / f'point{index}.icp.json'
+        discard = tuple(paths[:-1])
+        receipt = save_incremental(world.store.path, target, base=previous,
+                                   discard=discard, collect=True)
+        paths = [previous, target]
+        previous = target
+    assert receipt['retained_bytes'] <= 3 * receipt['bytes']
+    restore_incremental(previous, tmp_path / 'rotated.db')
+
+
+def test_operation_cache_reuses_verified_delta_index_only_within_call(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    first, second = tmp_path / 'first.icp.json', tmp_path / 'second.icp.json'
+    save_incremental(world.store.path, first)
+    world.store.set_meta(tick=1)
+    save_incremental(world.store.path, second, base=first)
+    count = [0]
+    original = module._entry
+    def counted(value):
+        count[0] += 1
+        return original(value)
+    monkeypatch.setattr(module, '_entry', counted)
+    cache = {}
+    module.read_incremental(second, _cache=cache)
+    before = count[0]
+    module.read_incremental(second, _cache=cache)
+    assert count[0] == before
+    module.read_incremental(second)  # A new operation must revalidate.
+    assert count[0] > before
+
+
+def test_source_integrity_failure_is_not_retried_as_base_recovery(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    base = tmp_path / 'base.icp.json'
+    save_incremental(world.store.path, base)
+    calls = []
+    def reject(source):
+        calls.append(source)
+        return ['source corruption']
+    monkeypatch.setattr(module, '_source_quick_check', reject)
+    target = tmp_path / 'rejected.icp.json'
+    with pytest.raises(IncrementalCheckpointError, match='integrity'):
+        save_incremental(world.store.path, target, base=base, recover_base=True)
+    assert len(calls) == 1
+    assert not target.exists()
+
+
+def test_final_wal_index_boundary_is_read_from_disk(world):
+    from engine.checkpoint_image import logical_image, CheckpointImageError
+    world.store.execute('CREATE TABLE final_boundary_probe(value)')
+    shm = Path(str(world.store.path) + '-shm')
+    original = shm.read_bytes()[:96]
+    try:
+        with pytest.raises(CheckpointImageError, match='changed during capture'):
+            with logical_image(world.store.path) as (_, image):
+                b''.join(image.chunks())
+                with shm.open('r+b') as output:
+                    output.seek(4)  # unused WAL-index header byte, not database rows
+                    output.write(bytes([original[4] ^ 1]))
+    finally:
+        with shm.open('r+b') as output:
+            output.write(original)
+
+
+def test_hash_compression_pipeline_is_ordered_and_bounded():
+    from engine.incremental_checkpoint import _encoded_chunks, _hash, CHUNK_SIZE
+    import lz4.block
+    produced = [0]
+    class Image:
+        def chunks(self, size):
+            assert size == CHUNK_SIZE
+            for index in range(160):
+                produced[0] += 1
+                yield index.to_bytes(4, 'big') + b'x' * (CHUNK_SIZE - 4)
+    for consumed, (digest, stored, raw_size, codec) in enumerate(_encoded_chunks(Image(), {}), 1):
+        assert produced[0] - consumed <= 64
+        raw = lz4.block.decompress(stored, uncompressed_size=raw_size) if codec else stored
+        assert int.from_bytes(raw[:4], 'big') == consumed - 1
+        assert _hash(raw) == digest
+    assert produced[0] == 160
+
+
+def test_metadata_cache_is_bounded_across_protected_roots(world, tmp_path):
+    cache = {}
+    paths = []
+    for tick in range(12):
+        world.store.set_meta(tick=tick)
+        path = tmp_path / f'root{tick}.icp.json'
+        save_incremental(world.store.path, path, base=paths[-1] if paths else None)
+        paths.append(path)
+    for tick, path in enumerate(paths):
+        root, _, _, _ = read_incremental(path, _cache=cache)
+        assert root['evidence']['state']['tick'] == tick
+        assert len(cache) <= 12
+
+
+def test_pack_digest_covers_header_even_when_image_bytes_are_unchanged(world, tmp_path):
+    import engine.incremental_checkpoint as module
+    source = tmp_path / 'origin.icp.json'
+    save_incremental(world.store.path, source)
+    _, entries, archive, _ = read_incremental(source)
+    pack = archive / (entries[0][1] + '.pack')
+    data = bytearray(pack.read_bytes())
+    data[len(module.PACK_MAGIC)] ^= 1  # only the storage nonce, not SQLite bytes
+    pack.write_bytes(data)
+    with pytest.raises(IncrementalCheckpointError, match='pack checksum'):
+        restore_incremental(source, tmp_path / 'must-not-publish.db')
+
+
+def test_unpublished_owned_staging_is_collected_only_after_validation(world, tmp_path):
+    from engine.incremental_checkpoint import prune_incremental
+    path = tmp_path / 'valid.icp.json'
+    save_incremental(world.store.path, path)
+    _, _, archive, _ = read_incremental(path)
+    scratch = archive / '.stage-interrupted-owned-write'
+    scratch.write_bytes(b'unpublished scratch')
+    prune_incremental(tmp_path, discard=[])
+    assert not scratch.exists()
+    restore_incremental(path, tmp_path / 'still-valid.db')
+
+
+def test_incomplete_pipeline_image_is_refused_before_publication(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    original = module._encoded_chunks
+    def drop_last(image, known):
+        iterator = iter(original(image, known))
+        pending = next(iterator)
+        for item in iterator:
+            yield pending
+            pending = item
+    monkeypatch.setattr(module, '_encoded_chunks', drop_last)
+    target = tmp_path / 'incomplete.icp.json'
+    with pytest.raises(IncrementalCheckpointError, match='coverage'):
+        save_incremental(world.store.path, target)
+    assert not target.exists()
+
+
+def test_same_slot_base_recovery_preserves_rejected_objects(world, tmp_path):
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2',
+                        checkpoint_keep_last=2)
+    world.checkpoint_format = 'incremental-v2'
+    first = Path(world.checkpoint(1))
+    _, entries, archive, digest = read_incremental(first)
+    damaged = archive / (entries[0][1] + '.pack')
+    damaged.write_bytes(b'forensic failed object')
+    assert world.checkpoint(1) == str(first)
+    assert damaged.read_bytes() == b'forensic failed object'
+    assert (archive / (digest + '.root')).exists()
+    assert list(archive.glob('*.rejected'))
+    restore_incremental(first, tmp_path / 'same-slot-recovered.db')
