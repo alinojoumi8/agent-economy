@@ -566,3 +566,36 @@ def test_large_spawned_verification_restores_and_rejects_corrupt_chunks(world, t
     forged[-1][0] = '0' * 64
     with pytest.raises(module.IncrementalCheckpointError, match='checksum mismatch'):
         module._verify_objects(archive, forged, root['size'])
+
+
+def test_one_verifier_pool_is_reused_for_changed_save(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    original = module.ProcessPoolExecutor
+    verification_pools = []
+    def counted(*args, **kwargs):
+        if kwargs.get('initializer') is None:
+            verification_pools.append(kwargs['max_workers'])
+        return original(*args, **kwargs)
+    monkeypatch.setattr(module, 'ProcessPoolExecutor', counted)
+    world.store.execute('CREATE TABLE pool_probe(value BLOB)')
+    world.store.execute('INSERT INTO pool_probe VALUES(randomblob(?))', (20 * 1024**2,))
+    world.store.commit()
+    first, second = tmp_path / 'pool1.icp.json', tmp_path / 'pool2.icp.json'
+    save_incremental(world.store.path, first)
+    world.store.execute('UPDATE pool_probe SET value=randomblob(?)', (20 * 1024**2,))
+    world.store.commit()
+    save_incremental(world.store.path, second, base=first)
+    assert verification_pools == [2, 2]
+
+
+def test_spawned_capture_refuses_replaced_source_identity(world):
+    import os
+    import engine.incremental_checkpoint as module
+    from engine.checkpoint_image import logical_image
+    with logical_image(world.store.path) as (_, image):
+        stat = os.fstat(image.main.fileno())
+        spec = {'source': str(world.store.path), 'main': (stat.st_dev, stat.st_ino + 1),
+                'wal': None, 'page_size': image.page_size,
+                'page_count': image.size // image.page_size, 'frames': {}}
+        with pytest.raises(module.IncrementalCheckpointError, match='identity changed'):
+            module._capture_initialize(spec, set())

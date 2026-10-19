@@ -17,12 +17,13 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from collections import deque
+from contextlib import ExitStack, nullcontext
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import lru_cache
 from itertools import islice
 from pathlib import Path
 
-from engine.checkpoint_image import logical_image
+from engine.checkpoint_image import LogicalImage, _open_regular, logical_image
 from engine.checkpoint_manifest import (
     _fsync_directory, canonical_json_bytes, checkpoint_core_evidence,
     checkpoint_state_binding, sqlite_schema_evidence, canonical_sha256,
@@ -328,7 +329,7 @@ def _verify_pack_group(archive, packs):
         _verify_pack_hash(archive, pack)
 
 
-def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None):
+def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None, executor=None):
     """Verify all bytes, with two spawned read-only workers for large plans.
 
     Spawn avoids forking a multithreaded SQLite owner. Only bounded metadata
@@ -349,8 +350,10 @@ def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None):
     pending_packs = all_packs - pack_proofs
     ordered = sorted(entries.values(), key=lambda e: (e[1], e[2]))
     if len(ordered) >= 256:
-        with ProcessPoolExecutor(max_workers=2,
-                                 mp_context=multiprocessing.get_context("spawn")) as pool:
+        context = (nullcontext(executor) if executor is not None else
+                   ProcessPoolExecutor(max_workers=2,
+                                       mp_context=multiprocessing.get_context("spawn")))
+        with context as pool:
             pack_list = list(pending_packs)
             hashes = [pool.submit(_verify_pack_group, archive, part)
                       for part in (pack_list[::2], pack_list[1::2])]
@@ -369,13 +372,15 @@ def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None):
 
 
 def _verify_objects(archive: Path, chunks: list[list], size: int, *, verified=frozenset(),
-                    pack_proofs=None) -> None:
-    _verify_plan(archive, [(chunks, size)], verified=verified, pack_proofs=pack_proofs)
+                    pack_proofs=None, executor=None) -> None:
+    _verify_plan(archive, [(chunks, size)], verified=verified, pack_proofs=pack_proofs,
+                 executor=executor)
 
 
-def _verify_base_objects(archive, previous_chunks, previous_size, base_chunks, base_size, pack_proofs):
+def _verify_base_objects(archive, previous_chunks, previous_size, base_chunks, base_size, pack_proofs,
+                         *, executor=None):
     _verify_plan(archive, [(previous_chunks, previous_size), (base_chunks, base_size)],
-                 pack_proofs=pack_proofs)
+                 pack_proofs=pack_proofs, executor=executor)
 
 
 def _verify_root_objects(archive, root, chunks):
@@ -554,40 +559,86 @@ def _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes):
         temporary.unlink(missing_ok=True)
 
 
-def _encoded_chunks(image, known):
-    """Two native workers, three ordered 1-MiB batches, no full-image queue.
+_CAPTURE_STATE = None
 
-    Only the producer reads file handles. Workers receive immutable byte
-    chunks; the consumer publishes results in original logical page order.
-    """
+
+def _encode_batch(batch, known):
     hasher, block = _hash_implementation(), _block_implementation()
+    result = []
+    for data in batch:
+        digest = hasher(data).hexdigest()
+        if digest in known:
+            result.append((digest, None, len(data), 0))
+        else:
+            compressed = block.compress(data, store_size=False)
+            stored, codec = (compressed, 1) if len(compressed) < len(data) else (data, 0)
+            result.append((digest, stored, len(data), codec))
+    return result
 
-    def encode(batch):
-        result = []
-        for data in batch:
-            digest = hasher(data).hexdigest()
-            if digest in known:
-                result.append((digest, None, len(data), 0))
-            else:
-                compressed = block.compress(data, store_size=False)
-                stored, codec = (compressed, 1) if len(compressed) < len(data) else (data, 0)
-                result.append((digest, stored, len(data), codec))
-        return result
 
-    chunks = iter(image.chunks(CHUNK_SIZE))
-    with ThreadPoolExecutor(max_workers=2) as pool:
+def _capture_initialize(spec, known):
+    """Open the parent's excluded cut, never a new SQLite transaction."""
+    global _CAPTURE_STATE
+    from multiprocessing.util import Finalize
+    stack = ExitStack()
+    try:
+        main = _open_regular(stack, Path(spec["source"]))
+        wal = _open_regular(stack, Path(spec["source"] + "-wal")) if spec["wal"] else None
+        for handle, expected in ((main, spec["main"]), (wal, spec["wal"])):
+            if handle is not None:
+                stat = os.fstat(handle.fileno())
+                if (stat.st_dev, stat.st_ino) != expected:
+                    raise IncrementalCheckpointError("capture source identity changed")
+        image = LogicalImage(main, wal, spec["page_size"], spec["page_count"], spec["frames"])
+        finalizer = Finalize(None, stack.close, exitpriority=10)
+        _CAPTURE_STATE = image, known, finalizer
+    except BaseException:
+        stack.close()
+        raise
+
+
+def _encode_image_range(bounds):
+    image, known, _ = _CAPTURE_STATE
+    return _encode_batch(image.chunks(CHUNK_SIZE, start=bounds[0], stop=bounds[1]), known)
+
+
+def _encoded_chunks(image, known):
+    """Two workers and three ordered batches; never queue the whole image.
+
+    Large owned images use read-only spawned readers of the same writer-excluded
+    cut. Only metadata and new encoded bytes cross process boundaries. Small or
+    synthetic images retain native threads and a single producer file reader.
+    """
+    source = getattr(image, "source", None)
+    if source is not None and image.size >= 256 * CHUNK_SIZE:
+        def identity(handle):
+            stat = os.fstat(handle.fileno())
+            return stat.st_dev, stat.st_ino
+        spec = {"source": str(source), "main": identity(image.main),
+                "wal": identity(image.wal) if image.wal else None,
+                "page_size": image.page_size, "page_count": image.size // image.page_size,
+                "frames": image.frames}
+        count = (image.size + CHUNK_SIZE - 1) // CHUNK_SIZE
+        jobs = iter((start, min(start + 128, count)) for start in range(0, count, 128))
+        context = ProcessPoolExecutor(max_workers=2,
+                                      mp_context=multiprocessing.get_context("spawn"),
+                                      initializer=_capture_initialize, initargs=(spec, set(known)))
+        submit = lambda pool, job: pool.submit(_encode_image_range, job)
+    else:
+        chunks = iter(image.chunks(CHUNK_SIZE))
+        jobs = iter(lambda: list(islice(chunks, 16)), [])
+        context = ThreadPoolExecutor(max_workers=2)
+        submit = lambda pool, job: pool.submit(_encode_batch, job, known)
+    with context as pool:
         pending = deque()
-
         def enqueue():
-            batch = list(islice(chunks, 16))
-            if batch:
-                pending.append(pool.submit(encode, batch))
-
+            job = next(jobs, None)
+            if job is not None:
+                pending.append(submit(pool, job))
         for _ in range(3):
             enqueue()
         while pending:
-            for result in pending.popleft().result():
-                yield result
+            yield from pending.popleft().result()
             enqueue()
 
 
@@ -662,12 +713,13 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
             return chunks
         finally:
             temporary.unlink(missing_ok=True)
-    with logical_image(source, max_bytes=MAX_BYTES) as (db, image):
+    with logical_image(source, max_bytes=MAX_BYTES) as (db, image), ProcessPoolExecutor(
+            max_workers=2, mp_context=multiprocessing.get_context("spawn")) as verifier:
         if base is not None and image.page_size != original["page_size"]:
             raise CheckpointBaseError("checkpoint base page size mismatch", reason="geometry")
         with ThreadPoolExecutor(max_workers=3) as pool:
             verify = (pool.submit(_verify_base_objects, archive, previous_chunks, previous["size"],
-                                  base_chunks, original["size"], pack_proofs)
+                                  base_chunks, original["size"], pack_proofs, executor=verifier)
                       if base is not None else None)
             captured = pool.submit(capture, image)
             quick = pool.submit(_source_quick_check, source)
@@ -682,7 +734,8 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
             prior_verified = ({tuple(entry) for entry in previous_chunks + base_chunks}
                               if base is not None else set())
             chunks = _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes)
-            _verify_objects(archive, chunks, image.size, verified=prior_verified, pack_proofs=pack_proofs)
+            _verify_objects(archive, chunks, image.size, verified=prior_verified,
+                            pack_proofs=pack_proofs, executor=verifier)
         if base is not None and (previous["evidence"]["state"]["run_id"]
                                  != evidence["state"]["run_id"]):
             raise CheckpointBaseError("checkpoint base run mismatch", reason="identity")

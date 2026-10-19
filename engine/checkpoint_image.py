@@ -49,7 +49,10 @@ def _open_regular(stack: ExitStack, path: Path):
 class LogicalImage:
     """Sequential chunk reader over main bytes and committed WAL page images."""
 
-    def __init__(self, main, wal, page_size, page_count, frames):
+    def __init__(self, main, wal, page_size, page_count, frames, *, source=None):
+        self.source = source
+        self._overlay_size = None
+        self._overlays = None
         self.main = main
         self.wal = wal
         self.page_size = page_size
@@ -57,14 +60,23 @@ class LogicalImage:
         self.frames = frames
         self.main_size = os.fstat(main.fileno()).st_size
 
-    def chunks(self, chunk_size: int = 1024 * 1024):
+    def chunks(self, chunk_size: int = 1024 * 1024, *, start=0, stop=None):
         if chunk_size < self.page_size or chunk_size % self.page_size:
             raise ValueError("chunk size must be page aligned")
-        overlays = {}
-        for page, frame in self.frames.items():
-            offset = (page - 1) * self.page_size
-            overlays.setdefault(offset // chunk_size, []).append((offset, frame))
-        for offset in range(0, self.size, chunk_size):
+        count = (self.size + chunk_size - 1) // chunk_size
+        stop = count if stop is None else stop
+        if (type(start) is not int or type(stop) is not int
+                or not 0 <= start <= stop <= count):
+            raise ValueError("invalid logical chunk range")
+        if self._overlay_size != chunk_size:
+            overlays = {}
+            for page, frame in self.frames.items():
+                offset = (page - 1) * self.page_size
+                overlays.setdefault(offset // chunk_size, []).append((offset, frame))
+            self._overlays, self._overlay_size = overlays, chunk_size
+        overlays = self._overlays
+        for index in range(start, stop):
+            offset = index * chunk_size
             length = min(chunk_size, self.size - offset)
             available = min(length, max(0, self.main_size - offset))
             data = _read_at(self.main, offset, available)
@@ -169,7 +181,7 @@ def logical_image(path: str | Path, *, max_bytes: int = 64 * 1024**3,
                                 "=II", first[24:32]):
                             raise CheckpointImageError("invalid WAL commit boundary")
                         _read_at(wal, pos + 24, page_size)
-        image = LogicalImage(main, wal, page_size, page_count, frames)
+        image = LogicalImage(main, wal, page_size, page_count, frames, source=database)
         yield db, image
         if index is not None:
             # A buffered seek to zero may return the original cached header.

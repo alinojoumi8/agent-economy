@@ -29,3 +29,7 @@ No new full 1,000-tick run, live provider calls, merges or observatory work.
 - Large plans exercise real spawned verification, including worker corruption
   exceptions and aggregate parent-plus-descendant memory accounting. Spawned
   work must finish before publication and remain inside total checkpoint time.
+
+- Large capture uses bounded read-only ranges from the same excluded WAL cut,
+  rejects source identity changes, and never sends the full raw image through
+  interprocess queues. Reuse verification workers only within one operation.

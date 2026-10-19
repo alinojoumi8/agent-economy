@@ -41,8 +41,13 @@ durability and requested retention. A small bounded thread pool overlaps native
 checks, hashing and verification; world ticks remain sequential. This does not
 add simulation multiprocessing. Long saves remain off the async serving loop,
 although other SQLite writers must wait for the capture boundary.
-Hashing and compression use two workers with at most three ordered 1 MiB input
-batches. The source file handles have one reader; no full-image work queue exists.
+Hashing and compression of large owned images use two spawned read-only readers
+and at most three ordered 8 MiB ranges. Only new encoded blocks and metadata
+cross process boundaries; no full-image work queue exists. Each reader binds
+main/WAL file identities to the parent's writer-excluded cut, holds no SQLite
+connection, and closes its handles when the operation ends. Small images use
+two native threads and three 1 MiB batches. The two verification workers are
+reused for existing and newly stored objects within a save, then joined.
 SQLite integrity and ledger checks have separate native readers at the same
 writer-excluded cut. Common state/core SHA256 fields keep v1 canonical semantics;
 the storage root digest is not relabelled as a raw SQLite database SHA256.
@@ -131,3 +136,10 @@ The low-level API leaves source rows untouched unless catalog registration is
 explicitly requested. Descriptors must use `.icp.json` and cannot replace their
 source database. Rejected evidence prevents collection until operator review;
 a fresh recovery point does not relabel or erase the older failure.
+
+At `061cd71`, spawned verification improved unchanged API saves to4.48–4.56s,
+but actual interval8.33s and complete World saves4.54–5.33s still failed the
+unchanged target. Aggregate sampled process-tree RSS was369.98MiB; restore bytes
+and private input anchors matched. Follow-up read-only range and worker-reuse
+changes require fresh complete measurements; private5.36s phase diagnostics
+are not acceptance proof. All earlier failures remain retained.

@@ -101,3 +101,24 @@ def test_frame_budget_refuses_without_publication(tmp_path):
         with logical_image(path, max_wal_frames=0):
             pytest.fail('unbounded WAL was accepted')
     db.close()
+
+
+def test_logical_chunk_ranges_match_complete_wal_image(tmp_path):
+    from engine.checkpoint_image import logical_image
+    path = tmp_path / 'ranges.db'
+    db = sqlite3.connect(path, isolation_level=None)
+    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('CREATE TABLE range_probe(value BLOB)')
+    db.execute('INSERT INTO range_probe VALUES(randomblob(?))', (1024 * 1024,))
+    with logical_image(path) as (_, image):
+        full = list(image.chunks(65536))
+        assert list(image.chunks(65536, start=1, stop=4)) == full[1:4]
+        assert list(image.chunks(65536, start=len(full))) == []
+        # Changing granularity rebuilds a single bounded overlay index.
+        assert b''.join(image.chunks(131072)) == b''.join(full)
+        assert list(image.chunks(65536, start=2, stop=3)) == full[2:3]
+        for bounds in ({'start': -1}, {'stop': len(full) + 1}, {'start': True},
+                       {'start': 2, 'stop': 1}):
+            with pytest.raises(ValueError, match='range'):
+                list(image.chunks(65536, **bounds))
+    db.close()
