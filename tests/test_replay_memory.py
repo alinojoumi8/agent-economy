@@ -268,6 +268,7 @@ def test_memory_store_replay_uses_system_temp_not_working_directory(gateway, tmp
 
 def test_memory_sampler_preserves_receipt_extrema_without_sample_history(monkeypatch):
     sampler = _MemorySampler()
+    monkeypatch.setattr(sampler.process, 'children', lambda recursive: [])
     rss = iter([10.125, 12.875, 9.25])
     available = iter([80.125, 78.375, 90.25])
     percent = iter([25.125, 30.875, 15.25])
@@ -294,6 +295,7 @@ def test_memory_sampler_preserves_receipt_extrema_without_sample_history(monkeyp
 
 def test_memory_sampler_retention_does_not_grow_per_sample(monkeypatch):
     sampler = _MemorySampler()
+    monkeypatch.setattr(sampler.process, 'children', lambda recursive: [])
     monkeypatch.setattr(sampler.process, 'memory_info', lambda: SimpleNamespace(rss=128 * 1024**2))
     monkeypatch.setattr('scripts.run_scale_validation.psutil.virtual_memory',
                         lambda: SimpleNamespace(available=80 * 1024**3, percent=25.0))
@@ -308,3 +310,26 @@ def test_memory_sampler_retention_does_not_grow_per_sample(monkeypatch):
     assert sampler.stop()['samples'] == 20000
     assert current < 256 * 1024
     assert peak < 512 * 1024
+
+
+def test_memory_sampler_counts_checkpoint_children(monkeypatch):
+    from types import SimpleNamespace
+    sampler = _MemorySampler()
+    monkeypatch.setattr(sampler.process, 'memory_info', lambda: SimpleNamespace(rss=100 * 1024**2))
+    child = SimpleNamespace(memory_info=lambda: SimpleNamespace(rss=80 * 1024**2))
+    monkeypatch.setattr(sampler.process, 'children', lambda recursive: [child, child])
+    monkeypatch.setattr(sampler._thread, 'join', lambda **kwargs: None)
+    sampler._take_sample()
+    assert sampler.stop()['peak_rss_mb'] == 260
+
+
+def test_memory_sampler_does_not_accept_incomplete_process_tree(monkeypatch):
+    import psutil
+    sampler = _MemorySampler()
+    def inaccessible(recursive):
+        raise psutil.AccessDenied(123)
+    monkeypatch.setattr(sampler.process, 'children', inaccessible)
+    sampler.start()
+    sampler._thread.join(timeout=2)
+    with pytest.raises(RuntimeError, match='memory sampling failed'):
+        sampler.stop()

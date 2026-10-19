@@ -375,6 +375,7 @@ def _read_only_tree(root: Path):
 class _MemorySampler:
     def __init__(self) -> None:
         self.process = psutil.Process()
+        self._sampling_error: Exception | None = None
         self._totals = self._empty_totals()
         self._by_stage: dict[str, dict[str, float | int]] = {}
         self._lock = threading.Lock()
@@ -384,7 +385,15 @@ class _MemorySampler:
 
     def _take_sample(self) -> None:
         memory = psutil.virtual_memory()
-        rss = self.process.memory_info().rss / (1024 ** 2)
+        rss_bytes = self.process.memory_info().rss
+        # Native checkpoint verification uses short-lived spawned workers.
+        # Count the process tree rather than hiding their memory from the cap.
+        for child in self.process.children(recursive=True):
+            try:
+                rss_bytes += child.memory_info().rss
+            except psutil.NoSuchProcess:
+                pass  # A worker exited between enumeration and its RSS read.
+        rss = rss_bytes / (1024 ** 2)
         available = memory.available / (1024 ** 3)
         with self._lock:
             stage = str(self.stage)
@@ -410,9 +419,13 @@ class _MemorySampler:
                 for key, value in totals.items()}
 
     def _sample(self) -> None:
-        while not self._stop.is_set():
-            self._take_sample()
-            self._stop.wait(0.05)
+        try:
+            while not self._stop.is_set():
+                self._take_sample()
+                self._stop.wait(0.05)
+        except Exception as exc:
+            self._sampling_error = exc
+            self._stop.set()
 
     def start(self) -> None:
         self._thread.start()
@@ -420,6 +433,8 @@ class _MemorySampler:
     def stop(self) -> dict[str, object]:
         self._stop.set()
         self._thread.join(timeout=2.0)
+        if self._sampling_error is not None:
+            raise RuntimeError("memory sampling failed") from self._sampling_error
         if not self._totals["samples"]:
             self._take_sample()
         with self._lock:

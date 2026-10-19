@@ -25,3 +25,7 @@
 ## Boundaries
 Use private copies of retained late-run data and bounded simulations/tests.
 No new full 1,000-tick run, live provider calls, merges or observatory work.
+
+- Large plans exercise real spawned verification, including worker corruption
+  exceptions and aggregate parent-plus-descendant memory accounting. Spawned
+  work must finish before publication and remain inside total checkpoint time.

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import multiprocessing
 import os
 import re
 import shutil
@@ -16,7 +17,7 @@ import tempfile
 import time
 from datetime import datetime, timezone
 from collections import deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from functools import lru_cache
 from itertools import islice
 from pathlib import Path
@@ -328,7 +329,11 @@ def _verify_pack_group(archive, packs):
 
 
 def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None):
-    """Verify all bytes, with bounded native parallelism for large plans."""
+    """Verify all bytes, with two spawned read-only workers for large plans.
+
+    Spawn avoids forking a multithreaded SQLite owner. Only bounded metadata
+    crosses the process boundary; workers read immutable archive bytes.
+    """
     pack_proofs = set() if pack_proofs is None else pack_proofs
     all_packs, entries = set(), {}
     for chunks, size in images:
@@ -344,7 +349,8 @@ def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None):
     pending_packs = all_packs - pack_proofs
     ordered = sorted(entries.values(), key=lambda e: (e[1], e[2]))
     if len(ordered) >= 256:
-        with ThreadPoolExecutor(max_workers=2) as pool:
+        with ProcessPoolExecutor(max_workers=2,
+                                 mp_context=multiprocessing.get_context("spawn")) as pool:
             pack_list = list(pending_packs)
             hashes = [pool.submit(_verify_pack_group, archive, part)
                       for part in (pack_list[::2], pack_list[1::2])]

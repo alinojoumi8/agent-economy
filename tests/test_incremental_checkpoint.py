@@ -542,3 +542,27 @@ def test_save_refuses_to_replace_its_source_database(world):
     with pytest.raises(IncrementalCheckpointError, match='source'):
         save_incremental(source, source)
     assert source.read_bytes() == before
+
+
+def test_large_spawned_verification_restores_and_rejects_corrupt_chunks(world, tmp_path):
+    """Exercise the real subprocess path, not mocked executor submission."""
+    import engine.incremental_checkpoint as module
+    world.store.execute('CREATE TABLE process_probe(value BLOB)')
+    world.store.execute('INSERT INTO process_probe VALUES(randomblob(?))', (20 * 1024**2,))
+    world.store.commit()
+    point = tmp_path / 'large.icp.json'
+    save_incremental(world.store.path, point)
+    restored = tmp_path / 'restored-large.db'
+    module.restore_incremental(point, restored)
+    import sqlite3
+    with sqlite3.connect(restored) as copy:
+        assert copy.execute('SELECT hex(value) FROM process_probe').fetchone() == tuple(
+            world.store.execute('SELECT hex(value) FROM process_probe').fetchone())
+    root, chunks, archive, _ = read_incremental(point)
+    assert len(chunks) >= 256
+    # The pack remains valid, but a logical hash is wrong. Worker exceptions
+    # must propagate independently of whole-pack verification.
+    forged = [list(entry) for entry in chunks]
+    forged[-1][0] = '0' * 64
+    with pytest.raises(module.IncrementalCheckpointError, match='checksum mismatch'):
+        module._verify_objects(archive, forged, root['size'])
