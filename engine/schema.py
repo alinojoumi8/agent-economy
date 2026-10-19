@@ -1343,6 +1343,13 @@ CREATE INDEX IF NOT EXISTS ix_mem_agent_kind_tick
     ON memories(agent_id, kind, tick, demoted);
 CREATE INDEX IF NOT EXISTS ix_mem_tick_importance
     ON memories(tick, importance, agent_id);
+-- Match the historical kind/id tie order of ix_mem_agent_kind_tick while
+-- reading only the bounded active-memory window, rather than sorting a lifetime.
+CREATE INDEX IF NOT EXISTS ix_mem_active_recent
+    ON memories(agent_id, tick DESC, kind, id) WHERE demoted=0;
+-- Revenue windows must not inspect every historical sale for every citizen.
+CREATE INDEX IF NOT EXISTS ix_goods_sales_tick
+    ON events(kind, tick, id) WHERE kind='goods_sale';
 CREATE INDEX IF NOT EXISTS ix_events_subject_tick
     ON events(subject_type, subject_id, tick);
 CREATE INDEX IF NOT EXISTS ix_events_kind_subject_tick

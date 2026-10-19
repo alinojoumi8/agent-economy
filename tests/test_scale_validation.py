@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -14,13 +15,17 @@ from scripts.run_scale_validation import (
     prepare_validation_config,
     run_validation,
     validate_receipt_safety,
+    verification_error_receipt,
 )
+from world.replay_storage import ReplayResourceLimitError
 
 
 ROOT = Path(__file__).resolve().parents[1]
 RUNS = ROOT / "runs"
 REHEARSAL = RUNS / "scale-270-rehearsal.yaml"
 MINIMAX = RUNS / "scale-270-minimax-live.yaml"
+BUFFER_FORMAL = RUNS / "acceptance/scale-270-recovery-buffer-1000.yaml"
+LIFECYCLE_FORMAL = RUNS / "acceptance/scale-270-recovery-buffer-lifecycle-1000.yaml"
 
 
 @pytest.mark.parametrize("ticks", (0, -1, True))
@@ -69,27 +74,46 @@ def test_prepare_validation_enforces_live_approval_matrix(tmp_path):
         )
 
 
+@pytest.mark.parametrize("profile_path,ticks,checkpoint_every,keep_last", [
+    (REHEARSAL, 1, 7, 4),
+    (BUFFER_FORMAL, 1000, 100, 2),
+    (LIFECYCLE_FORMAL, 1000, 100, 2),
+])
 def test_prepare_validation_preserves_profile_contract_and_rehomes_only_paths(
-    tmp_path,
+    tmp_path, profile_path, ticks, checkpoint_every, keep_last,
 ):
     source_root = tmp_path / "runs" / "source"
     prepared = prepare_validation_config(
-        REHEARSAL,
-        ticks=1,
+        profile_path,
+        ticks=ticks,
         output_dir=tmp_path / "output",
         data_dir=tmp_path / "runs",
         approve_live=False,
     )
-    profile = load_config(REHEARSAL)
+    profile = load_config(profile_path)
 
     assert prepared["population"] == profile["population"]
     assert prepared["living_world"] == profile["living_world"]
     assert prepared["budget"] == profile["budget"]
     assert prepared["conversations"] == profile["conversations"]
-    assert prepared["checkpoint_every"] == profile["checkpoint_every"] == 7
-    assert prepared["checkpoint_keep_last"] == profile["checkpoint_keep_last"] == 4
+    assert prepared["llm"] == profile["llm"]
+    assert prepared["llm"]["default_route"] == {"provider": "scripted", "model": "scripted"}
+    assert prepared["checkpoint_every"] == profile["checkpoint_every"] == checkpoint_every
+    assert prepared["checkpoint_keep_last"] == profile["checkpoint_keep_last"] == keep_last
     assert prepared["checkpoint_dir"] == str(source_root / "checkpoints")
     assert prepared["report_dir"] == str(tmp_path / "output" / "reports")
+
+
+@pytest.mark.parametrize("ticks", [120, 999, 1001])
+def test_formal_buffer_profile_rejects_any_other_horizon(tmp_path, ticks):
+    with pytest.raises(ValidationInputError, match="profile requires exactly 1000 ticks"):
+        prepare_validation_config(
+            BUFFER_FORMAL,
+            ticks=ticks,
+            output_dir=tmp_path / "output",
+            data_dir=tmp_path / "runs",
+            approve_live=False,
+        )
 
 
 @pytest.mark.parametrize(
@@ -138,12 +162,19 @@ def test_receipt_safety_accepts_sanitized_receipt_shapes(payload):
     validate_receipt_safety(payload, secret_values=("credential-canary",))
 
 
-def test_one_tick_provider_free_validation_is_isolated_and_exact(tmp_path):
+@pytest.mark.parametrize("profile", [REHEARSAL, LIFECYCLE_FORMAL])
+def test_one_tick_provider_free_validation_is_isolated_and_exact(tmp_path, profile, monkeypatch):
+    if profile == LIFECYCLE_FORMAL:
+        # Exercise v3 receipt wiring with a bounded fixture, not a formal run.
+        fixture_config = load_config(profile)
+        fixture_config["acceptance"]["min_ticks"] = 1
+        fixture_config["acceptance"]["scale_economic_health"]["required_ticks"] = 1
+        monkeypatch.setattr("scripts.run_scale_validation.load_config", lambda path: fixture_config)
     output_dir = tmp_path / "output"
     data_dir = tmp_path / "runs"
 
     receipt = run_validation(
-        REHEARSAL,
+        profile,
         ticks=1,
         label="one-tick-rehearsal",
         output_dir=output_dir,
@@ -190,6 +221,9 @@ def test_one_tick_provider_free_validation_is_isolated_and_exact(tmp_path):
         assert measured <= checkpoint["duration_s"] + 0.000003
     assert receipt["replay"]["proof"]["exact"] is True
     assert receipt["replay"]["proof"]["differences"] == []
+    if profile == LIFECYCLE_FORMAL:
+        assert receipt["population_evidence"]["contract"] == "stable-lifecycle-v1"
+        assert receipt["population_evidence"]["initial"] == receipt["population"]
     assert next(
         row for row in receipt["replay"]["artifact_manifest"]
         if row["artifact"] == receipt["replay"]["database"]
@@ -218,6 +252,81 @@ def test_one_tick_provider_free_validation_is_isolated_and_exact(tmp_path):
     assert all((tmp_path / artifact).is_file() for artifact in artifact_ids)
     assert all((tmp_path / artifact).resolve().is_relative_to(tmp_path) for artifact in artifact_ids)
     assert any(artifact.endswith(".manifest.json") for artifact in artifact_ids)
+
+
+@pytest.mark.parametrize("error_type", [
+    ReplayResourceLimitError, sqlite3.OperationalError, OSError, MemoryError, ValueError,
+])
+def test_verifier_failure_preserves_runtime_and_immutability_receipts(tmp_path, monkeypatch, error_type):
+    def fail_verification(*args, **kwargs):
+        raise error_type("private /home/test/world.db Bearer fixture-token")
+
+    monkeypatch.setattr("scripts.run_scale_validation.verify_replay", fail_verification)
+    receipt = run_validation(REHEARSAL, ticks=1, label="verifier-failure",
+                             output_dir=tmp_path / "output", data_dir=tmp_path / "runs",
+                             approve_live=False)
+    assert json.loads((tmp_path / receipt["artifacts"]["runtime_receipt"]).read_text()) == receipt
+    assert not receipt["passed"] and not receipt["checks"]["exact_replay"]
+    assert receipt["replay"]["proof"] is None
+    assert receipt["replay"]["verification_error"] == {
+        "type": error_type.__name__, "message": "replay verification failed"}
+    assert receipt["checks"]["source_immutable_during_replay"]
+    assert receipt["runtime"]["memory"]["peak_rss_mb"] > 0
+    assert receipt["runtime"]["source_wall_s"] > 0
+    assert receipt["replay"]["wall_s"] > 0
+    validate_receipt_safety(receipt)
+
+
+@pytest.mark.parametrize("error", [
+    OSError(28, "private directory", "/home/test/private/world.db"),
+    PermissionError(13, "Bearer fixture-token", r"C:\Users\private\world.db"),
+    ValueError("/home/test/private/world.db"),
+    RuntimeError("fixture-token " * 10000),
+    type("/private/Bearer fixture-token", (Exception,), {})("secret"),
+])
+def test_verifier_error_receipts_omit_private_exception_material(error):
+    receipt = verification_error_receipt(error)
+    encoded = json.dumps(receipt)
+    assert len(encoded) < 250
+    assert all(value not in encoded for value in ("/home", "C:", "private", "fixture-token"))
+    validate_receipt_safety(receipt, secret_values=("fixture-token",))
+    if isinstance(error, OSError):
+        assert receipt["errno"] == error.errno
+
+
+def test_verifier_error_receipt_preserves_known_resource_failure_reason():
+    assert verification_error_receipt(ReplayResourceLimitError("replay verification time limit exceeded")) == {
+        "type": "ReplayResourceLimitError", "message": "replay verification time limit exceeded"}
+
+
+@pytest.mark.parametrize("acceptance", [None, {"scale_economic_health": None}])
+def test_null_optional_acceptance_retains_legacy_population_checks(tmp_path, monkeypatch, acceptance):
+    config = load_config(REHEARSAL)
+    config["acceptance"] = acceptance
+    monkeypatch.setattr("scripts.run_scale_validation.load_config", lambda _path: config)
+    receipt = run_validation(REHEARSAL, ticks=1, label="null-acceptance",
+                             output_dir=tmp_path / "output", data_dir=tmp_path / "runs",
+                             approve_live=False)
+    assert receipt["passed"] and receipt["checks"]["population_exact"]
+    assert receipt["replay"]["proof"]["exact"]
+    assert receipt["providers"]["cost_usd"] == 0
+    assert json.loads((tmp_path / receipt["artifacts"]["runtime_receipt"]).read_text()) == receipt
+
+
+def test_lifecycle_profile_changes_acceptance_only():
+    old, new = load_config(BUFFER_FORMAL), load_config(LIFECYCLE_FORMAL)
+    old_acceptance, new_acceptance = old.pop("acceptance"), new.pop("acceptance")
+    assert old == new
+    assert old_acceptance["scale_economic_health"].pop("schema_version") == 2
+    assert new_acceptance["scale_economic_health"].pop("schema_version") == 3
+    assert new_acceptance["scale_economic_health"].pop("population_contract") == "stable-lifecycle-v1"
+    assert old_acceptance == new_acceptance
+
+
+def test_lifecycle_formal_profile_still_requires_1000_ticks(tmp_path):
+    with pytest.raises(ValidationInputError, match="requires exactly 1000 ticks"):
+        prepare_validation_config(LIFECYCLE_FORMAL, ticks=1, output_dir=tmp_path / "output",
+                                  data_dir=tmp_path / "runs", approve_live=False)
 
 
 def test_cli_reports_the_persisted_runtime_artifact(monkeypatch, capsys, tmp_path):
