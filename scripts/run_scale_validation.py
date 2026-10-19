@@ -309,6 +309,10 @@ def _database_snapshot(store: Any) -> dict[str, int]:
 
 
 def _artifact_kind(path: Path, run_root: Path, role: str) -> str:
+    if path.name.endswith(".icp.json"):
+        return "checkpoint_descriptor_v2"
+    if path.parent.name == ".checkpoint-v2" and path.suffix in (".pack", ".root"):
+        return "checkpoint_pack_v2" if path.suffix == ".pack" else "checkpoint_root_v2"
     if path.suffix == ".db":
         return f"{role}_database" if path.parent == run_root else "checkpoint_database"
     if path.name.endswith(".db.manifest.json"):
@@ -704,6 +708,8 @@ def run_validation(
             checkpoint_path = Path(result).resolve() if result else None
             manifest = Path(f"{checkpoint_path}.manifest.json") \
                 if checkpoint_path else None
+            if checkpoint_path and checkpoint_path.name.endswith(".icp.json"):
+                manifest = checkpoint_path
             checkpoint_records.append({
                 "tick": int(tick),
                 "reason": reason,

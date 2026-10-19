@@ -19,6 +19,8 @@ boto3>=1.35,<2
 prometheus-client>=0.21,<1
 # Versioned release benchmarks record peak process-tree RSS.
 psutil>=7,<8
+# Opt-in versioned incremental checkpoint chunk hashes.
+blake3==1.0.10
 # dev / test
 # Starlette TestClient transport; runtime provider adapters retain httpx.
 httpx2>=2.13.1,<3

@@ -86,6 +86,8 @@ class World:
                  completion_guard: CompletionGuard | None = None):
         self.store = store
         self.config = config
+        from engine.checkpoint_formats import checkpoint_format
+        self.checkpoint_format = checkpoint_format(config)
         self.storage_policy = StoragePolicy.from_mapping(config.get("storage_policy"))
         self.storage_guard = None  # optional hosted tenant-budget check
         self.engine_semantics_version = semantics_version(config, default=2)
@@ -1203,7 +1205,35 @@ class World:
             self.storage_policy.check_free(
                 ckpt_dir, additional_bytes=2 * database_bytes(self.store.path))
         run_id = self.store.get_meta()["run_id"]
-        return ckpt_dir / f"{run_id}_t{tick}.db", run_id
+        from engine.checkpoint_formats import checkpoint_path
+        return checkpoint_path(ckpt_dir, run_id, tick, self.config), run_id
+
+    def _incremental_request(self, dest: Path, run_id: str) -> dict:
+        """Read the catalog on its owner before dispatching archive I/O."""
+        from engine.checkpoint_formats import checkpoint_path
+        candidates = []
+        for row in self.store.query("SELECT tick,path FROM checkpoints ORDER BY tick DESC,id DESC"):
+            candidate = checkpoint_path(dest.parent, run_id, int(row["tick"]), self.config)
+            if str(candidate) == row["path"] and candidate not in candidates:
+                candidates.append(candidate)
+        base = candidates[0] if candidates else None
+        keep = (self.storage_policy.checkpoint_keep_last if self.storage_policy
+                else self.config.get("checkpoint_keep_last"))
+        discard = ()
+        if type(keep) is int and keep > 0:
+            ordered = sorted(set(candidates + [dest]),
+                             key=lambda p: int(p.name.rsplit("_t", 1)[1].split(".", 1)[0]),
+                             reverse=True)
+            unpinned = [p for p in ordered if not pin_path(p).exists()]
+            discard = tuple(p for p in unpinned[keep:] if p != dest)
+        return {"base": base, "discard": discard,
+                "max_archive_bytes": self.storage_policy.checkpoint_max_bytes if self.storage_policy else 0,
+                "min_free_bytes": self.storage_policy.min_free_bytes if self.storage_policy else 0}
+
+    def _incremental_catalog_cleanup(self, receipt: dict) -> None:
+        for path in (receipt.get("retention") or {}).get("removed", []):
+            self.store.execute("DELETE FROM checkpoints WHERE path=?", (path,))
+        self.store.commit()
 
     @staticmethod
     def _checkpoint_write(
@@ -1270,6 +1300,12 @@ class World:
         """
         try:
             dest, run_id = self._checkpoint_prepare(tick)
+            if self.checkpoint_format == "incremental-v2":
+                from engine.incremental_checkpoint import save_incremental
+                request = self._incremental_request(dest, run_id)
+                receipt = await asyncio.to_thread(save_incremental, self.store.path, dest, **request)
+                self._incremental_catalog_cleanup(receipt)
+                return self._checkpoint_record(tick, dest, run_id, reason)
             writer = write_recovery_checkpoint if self.storage_policy else self._checkpoint_write
             await asyncio.to_thread(writer, self.store.path, dest)
             if self.storage_policy is not None:
@@ -1288,6 +1324,12 @@ class World:
         """Blocking checkpoint, for the CLI and halt paths that have no loop."""
         try:
             dest, run_id = self._checkpoint_prepare(tick)
+            if self.checkpoint_format == "incremental-v2":
+                from engine.incremental_checkpoint import save_incremental
+                receipt = save_incremental(self.store.path, dest,
+                                           **self._incremental_request(dest, run_id))
+                self._incremental_catalog_cleanup(receipt)
+                return self._checkpoint_record(tick, dest, run_id, reason)
             writer = write_recovery_checkpoint if self.storage_policy else self._checkpoint_write
             writer(self.store.path, dest)
             return self._checkpoint_record(tick, dest, run_id, reason)
@@ -1318,7 +1360,8 @@ class World:
             keep_last = (self.storage_policy.checkpoint_keep_last
                          if self.storage_policy is not None
                          else self.config.get("checkpoint_keep_last"))
-            if type(keep_last) is int and keep_last > 0:
+            if (self.checkpoint_format != "incremental-v2"
+                    and type(keep_last) is int and keep_last > 0):
                 try:
                     if self.storage_policy is not None:
                         receipt = prune_checkpoints(self.store, dest.parent, self.storage_policy,

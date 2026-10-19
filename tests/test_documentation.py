@@ -31,7 +31,7 @@ MAINTAINED_ROOT_DOCS = (
     "CONTRIBUTING.md", "SECURITY.md",
 )
 HANDBOOK_DOCS = (
-    "storage-and-recovery.md", "hostinger-vps.md",
+    "storage-and-recovery.md", "hostinger-vps.md", "incremental-checkpoints.md",
     "jev.md",
     "jev-domains.md",
     "hermes-diagnostics.md",

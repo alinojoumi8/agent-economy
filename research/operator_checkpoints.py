@@ -29,7 +29,8 @@ class OperatorCheckpoints:
         # Only immediate children of the operator-configured directory. No
         # recursion, user-supplied paths or writes to the checkpoint directory.
         entries = list(islice(self.root.iterdir(), self.MAX_SCAN + 1))
-        return sorted(path for path in entries[:self.MAX_SCAN] if path.suffix == ".db"), len(entries) > self.MAX_SCAN
+        return sorted(path for path in entries[:self.MAX_SCAN]
+                      if path.suffix == ".db" or path.name.endswith(".icp.json")), len(entries) > self.MAX_SCAN
 
     @staticmethod
     def identity(path: Path) -> str:
