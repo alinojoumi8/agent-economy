@@ -230,3 +230,32 @@ def test_checkpoint_failure_preserves_previous_pair(store, tmp_path, monkeypatch
     assert caught.value is failure
     assert (dest.read_bytes(), manifest.read_bytes()) == before
     assert list(tmp_path.glob('.preserved.db.*')) == []
+
+
+def test_checkpoint_sync_uses_writable_handle(store, tmp_path, monkeypatch):
+    """Windows FlushFileBuffers requires a handle opened for writing."""
+    import engine.checkpoint_manifest as manifests
+
+    store.commit()
+    original_open = Path.open
+    original_sync = manifests.os.fsync
+    opened_modes = {}
+    modes_synced = []
+
+    def open_path(path, mode='r', *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        opened_modes[handle.fileno()] = (path, mode, handle)
+        return handle
+
+    def sync(descriptor):
+        path, mode, handle = opened_modes.get(descriptor, (None, None, None))
+        if path is not None and path.name == 'windows.db' and not handle.closed:
+            modes_synced.append(mode)
+            if '+' not in mode and not any(letter in mode for letter in 'wax'):
+                raise OSError('simulated Windows read-only FlushFileBuffers failure')
+        original_sync(descriptor)
+
+    monkeypatch.setattr(Path, 'open', open_path)
+    monkeypatch.setattr(manifests.os, 'fsync', sync)
+    World._checkpoint_write(store.path, tmp_path / 'windows.db')
+    assert modes_synced == ['r+b']

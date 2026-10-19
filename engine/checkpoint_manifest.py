@@ -272,7 +272,8 @@ def publish_checkpoint(staged: Path, destination: Path) -> None:
         handle.write(canonical_json_bytes(payload))
         handle.flush()
         os.fsync(handle.fileno())
-    with staged.open("rb") as handle:
+    # Windows FlushFileBuffers requires a writable file handle.
+    with staged.open("r+b") as handle:
         os.fsync(handle.fileno())
     backups = {}
     for target in (destination, target_manifest):
