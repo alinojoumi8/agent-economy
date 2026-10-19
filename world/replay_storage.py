@@ -137,10 +137,10 @@ class ReplayStorage:
             # flushing the B-tree cache on every indexed event or sorted row;
             # SQLite still enforces the same page and cache limits.
             self.connection.execute("BEGIN")
-            self.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, value BLOB NOT NULL, ascii_size INTEGER NOT NULL)")
+            self.execute("CREATE TABLE refs(id INTEGER PRIMARY KEY, value BLOB NOT NULL, ascii_size INTEGER NOT NULL, canonical INTEGER NOT NULL)")
             self.execute("CREATE TABLE missing_event_refs(id INTEGER PRIMARY KEY)")
             self.execute("CREATE TABLE call_refs(id INTEGER PRIMARY KEY, value BLOB NOT NULL, "
-                         "ascii_size INTEGER NOT NULL, metadata BLOB NOT NULL)")
+                         "ascii_size INTEGER NOT NULL, metadata BLOB NOT NULL, canonical INTEGER NOT NULL)")
             # BLOB primary-key order equals Python bytes order. The ordinal
             # retains duplicates without a second payload copy or a temp sort.
             self.execute("CREATE TABLE ordered_records("
@@ -292,9 +292,23 @@ class ReplayStorage:
             raise ReplayResourceLimitError("expanded replay reference record is too large")
         self.check()
         if isinstance(encoded, ReferenceBytes):
+            if not encoded.canonical:
+                return json.loads(encoded.encoded)
             self.has_fragments = True
             return CanonicalReference(encoded)
         return json.loads(encoded)
+
+    def reference_bytes(self, value, *, root=None, metadata=b""):
+        # Indexing is not the strict comparison boundary. Historical references
+        # can contain ignored non-finite/surrogate values. Keep those as decoded
+        # values so exact comparison still rejects them, never as opaque leaves.
+        try:
+            encoded = self.encode(value, exact=True)
+            canonical = True
+        except (ValueError, UnicodeEncodeError):
+            encoded = self.encode(value, exact=False)
+            canonical = False
+        return ReferenceBytes(encoded, self.ascii_size(value), root, metadata, canonical)
 
     def ascii_size(self, value):
         if not self.has_fragments and not isinstance(value, CanonicalReference):
@@ -392,9 +406,9 @@ class CallReferences(Mapping):
         encoded = self.storage.cached(("call", key))
         if encoded is None:
             stored = self.storage.execute(
-                "SELECT value,ascii_size,metadata FROM call_refs WHERE id=?", (key,)).fetchone()
+                "SELECT value,ascii_size,metadata,canonical FROM call_refs WHERE id=?", (key,)).fetchone()
             if stored is not None:
-                encoded = ReferenceBytes(stored[0], stored[1], "llm_call", stored[2])
+                encoded = ReferenceBytes(stored[0], stored[1], "llm_call", stored[2], bool(stored[3]))
                 self.storage.remember(("call", key), encoded)
                 self.storage.stats["reference_reads"] += 1
                 return self.storage.decode_reference(encoded)
@@ -408,16 +422,14 @@ class CallReferences(Mapping):
                 value = {"llm_call": {
                     column: self.canonicalize(column, row[column])
                     for column in self.columns}}
-                canonical = self.storage.encode(value, exact=True)
-                ascii_size = self.storage.ascii_size(value)
                 small_values = {column: item for column, item in value["llm_call"].items()
                                 if item is None or type(item) in (bool, int, float)
                                 or (isinstance(item, str) and len(item) <= 256)}
                 metadata = json.dumps({"fields": self.columns, "values": small_values},
                                       separators=(",", ":"), ensure_ascii=True).encode("ascii")
-                encoded = ReferenceBytes(canonical, ascii_size, "llm_call", metadata)
-                self.storage.execute("INSERT INTO call_refs VALUES (?,?,?,?)",
-                                     (key, canonical, ascii_size, metadata))
+                encoded = self.storage.reference_bytes(value, root="llm_call", metadata=metadata)
+                self.storage.execute("INSERT INTO call_refs VALUES (?,?,?,?,?)",
+                                     (key, encoded.encoded, encoded.ascii_size, metadata, encoded.canonical))
             finally:
                 self.storage.input_bound, self.storage.expanded_reference_bytes, self.storage.has_fragments = prior
             self.storage.remember(("call", key), encoded)
@@ -444,19 +456,18 @@ class EventReferences(MutableMapping):
             raise KeyError(key)
         encoded = self.storage.cached(("event", key))
         if encoded is None:
-            row = self.storage.execute("SELECT value,ascii_size FROM refs WHERE id=?", (key,)).fetchone()
+            row = self.storage.execute("SELECT value,ascii_size,canonical FROM refs WHERE id=?", (key,)).fetchone()
             if row is None:
                 raise KeyError(key)
-            encoded = ReferenceBytes(row[0], row[1], None)
+            encoded = ReferenceBytes(row[0], row[1], None, canonical=bool(row[2]))
             self.storage.remember(("event", key), encoded)
             self.storage.stats["reference_reads"] += 1
         return self.storage.decode_reference(encoded)
 
     def __setitem__(self, key, value):
-        canonical = self.storage.encode(value, exact=True)
-        ascii_size = self.storage.ascii_size(value)
-        encoded = ReferenceBytes(canonical, ascii_size, None)
-        self.storage.execute("INSERT OR REPLACE INTO refs VALUES (?,?,?)", (key, canonical, ascii_size))
+        encoded = self.storage.reference_bytes(value)
+        self.storage.execute("INSERT OR REPLACE INTO refs VALUES (?,?,?,?)",
+                             (key, encoded.encoded, encoded.ascii_size, encoded.canonical))
         self.storage.remember(("event", key), encoded)
 
     def __delitem__(self, key):

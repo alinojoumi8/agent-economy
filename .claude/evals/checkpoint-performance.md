@@ -14,3 +14,8 @@
 
 ## Validation
 Focused correctness/failure tests, copied full-size checkpoint benchmark, restore/integrity/hash checks, required repository local gates and CI, full-diff CodeRabbit against actual PR base. No full simulation rerun or increased limits.
+
+## Review compatibility regression
+Reference indexing accepts historical non-finite and surrogate values; strict
+comparison still rejects them. Cache-hit and scratch-read paths agree; finite
+reference fragments keep exact historical bytes and bounded expansion.

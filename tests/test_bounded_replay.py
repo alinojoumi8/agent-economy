@@ -338,3 +338,38 @@ def test_fragment_record_limits_reject_combined_size_and_cycles(tmp_path):
         with pytest.raises(ValueError, match="Circular reference"):
             storage.encode(cycle, exact=True)
     assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('value', [float('nan'), float('inf'), -float('inf'), '\ud800'])
+def test_reference_index_defers_strict_value_rejection_until_comparison(tmp_path, value):
+    import sqlite3
+    from world.replay_storage import CallReferences
+
+    leaf = {'payload': value, 'unicode': 'é'}
+    expected = json.dumps(leaf, separators=(',', ':'), ensure_ascii=True).encode('ascii')
+    connection = sqlite3.connect(':memory:')
+    connection.row_factory = sqlite3.Row
+    connection.execute('CREATE TABLE llm_calls(id INTEGER PRIMARY KEY,payload_json TEXT)')
+    connection.execute('INSERT INTO llm_calls VALUES(1,?)', (json.dumps(leaf),))
+    try:
+        with ReplayStorage(scratch_dir=tmp_path) as storage:
+            events = EventReferences(storage)
+            events[1] = leaf
+            calls = CallReferences(connection, ['payload_json'],
+                                   lambda _column, raw: json.loads(raw), storage)
+            for cache_round in range(2):
+                storage.begin_record()
+                restored = events[1]
+                assert storage.encode(restored, exact=False) == expected
+                with pytest.raises((ValueError, UnicodeEncodeError)):
+                    storage.encode(restored, exact=True)
+                storage.begin_record()
+                call = calls[1]
+                assert storage.encode(call, exact=False) == (
+                    b'{"llm_call":{"payload_json":' + expected + b'}}')
+                with pytest.raises((ValueError, UnicodeEncodeError)):
+                    storage.encode(call, exact=True)
+                storage.cache.clear()
+                storage.cache_bytes = 0
+    finally:
+        connection.close()

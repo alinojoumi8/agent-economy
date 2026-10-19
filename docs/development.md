@@ -560,6 +560,12 @@ counts for each stage rather than every 50 ms observation, with unchanged
 receipt fields and acceptance limits.
 In-memory replay stores use the operating system's temporary directory;
 ordinary non-replay gateways create no journal files.
+Internal replay-reference indexing retains non-finite and surrogate values from
+historical rows without making them valid comparison bytes. Only finite,
+strict-UTF-8 canonical references use the opaque fragment fast path; other
+references decode to ordinary values and retain strict rejection if compared.
+This distinction lets ignored references be indexed without weakening exact
+canonical comparison or its resource bounds.
 
 Runtime checkpoint entries include `phases_s`: preparation, legacy writer,
 and catalog recording, plus legacy retention when it runs. Recording includes

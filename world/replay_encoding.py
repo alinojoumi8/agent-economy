@@ -10,6 +10,7 @@ class ReferenceBytes:
     ascii_size: int
     root: str | None
     metadata: bytes = b""
+    canonical: bool = True
 
     def __len__(self):
         # Include the small descriptor as well as both retained byte strings.
