@@ -119,3 +119,10 @@ The format requires a local filesystem with hard links and atomic rename.
 Whole immutable-pack digests cover headers and dead packed bytes in addition to
 per-chunk logical hashes. Large verification plans use two bounded native workers;
 no full-history future queue or verification cache survives an operation.
+
+World saves register the durable new point using a worker-owned SQLite connection
+before any rotation. A catalog-write failure preserves previous recovery points.
+The low-level API leaves source rows untouched unless catalog registration is
+explicitly requested. Descriptors must use `.icp.json` and cannot replace their
+source database. Rejected evidence prevents collection until operator review;
+a fresh recovery point does not relabel or erase the older failure.

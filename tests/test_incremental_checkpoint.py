@@ -523,3 +523,22 @@ def test_same_slot_base_recovery_preserves_rejected_objects(world, tmp_path):
     assert (archive / (digest + '.root')).exists()
     assert list(archive.glob('*.rejected'))
     restore_incremental(first, tmp_path / 'same-slot-recovered.db')
+
+
+def test_catalog_failure_cannot_prune_preexisting_recovery_points(world, tmp_path):
+    world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_format='incremental-v2',
+                        checkpoint_keep_last=2)
+    world.checkpoint_format = 'incremental-v2'
+    first, second = Path(world.checkpoint(1)), Path(world.checkpoint(2))
+    world.store.execute("CREATE TRIGGER reject_checkpoint_catalog BEFORE INSERT ON checkpoints "
+                        "WHEN NEW.tick=3 BEGIN SELECT RAISE(FAIL,'catalog write failed'); END")
+    assert world.checkpoint(3) is None
+    assert first.exists() and second.exists()
+
+
+def test_save_refuses_to_replace_its_source_database(world):
+    source = Path(world.store.path)
+    before = source.read_bytes()
+    with pytest.raises(IncrementalCheckpointError, match='source'):
+        save_incremental(source, source)
+    assert source.read_bytes() == before

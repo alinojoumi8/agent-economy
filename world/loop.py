@@ -1316,6 +1316,7 @@ class World:
             if self.checkpoint_format == "incremental-v2":
                 from engine.incremental_checkpoint import save_incremental
                 request = self._incremental_request(dest, run_id)
+                request["catalog_tick"] = tick
                 receipt = await asyncio.to_thread(save_incremental, self.store.path, dest, **request)
                 self._incremental_catalog_cleanup(receipt)
                 return self._checkpoint_record(tick, dest, run_id, reason)
@@ -1340,7 +1341,7 @@ class World:
             if self.checkpoint_format == "incremental-v2":
                 from engine.incremental_checkpoint import save_incremental
                 receipt = save_incremental(self.store.path, dest,
-                                           **self._incremental_request(dest, run_id))
+                                           catalog_tick=tick, **self._incremental_request(dest, run_id))
                 self._incremental_catalog_cleanup(receipt)
                 return self._checkpoint_record(tick, dest, run_id, reason)
             writer = write_recovery_checkpoint if self.storage_policy else self._checkpoint_write

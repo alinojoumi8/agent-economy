@@ -14,6 +14,7 @@ import shutil
 import sqlite3
 import tempfile
 import time
+from datetime import datetime, timezone
 from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
@@ -419,12 +420,49 @@ def _publish(descriptor: Path, declaration: dict) -> None:
         temporary.unlink(missing_ok=True)
 
 
+def _record_catalog(source, target, tick, run_id):
+    """Register a durable new recovery point before deleting any old point.
+
+    This connection belongs to this worker. It changes only checkpoint
+    bookkeeping, never economic state or a shared Store connection.
+    """
+    if target.name != f"{run_id}_t{tick}.icp.json":
+        raise IncrementalCheckpointError("checkpoint catalog target identity mismatch")
+    db = sqlite3.connect(Path(source).absolute().as_uri() + "?mode=rw", uri=True,
+                         isolation_level=None)
+    try:
+        db.execute("BEGIN IMMEDIATE")
+        actual = db.execute("SELECT run_id FROM run_meta WHERE id=1").fetchone()
+        if actual is None or actual[0] != run_id:
+            raise IncrementalCheckpointError("checkpoint catalog source identity changed")
+        existing = db.execute(
+            "SELECT id FROM checkpoints WHERE tick=? AND path=? ORDER BY id LIMIT 1",
+            (tick, str(target))).fetchone()
+        created = datetime.now(timezone.utc).isoformat()
+        if existing is None:
+            db.execute("INSERT INTO checkpoints(tick,path,created_at) VALUES(?,?,?)",
+                       (tick, str(target), created))
+        else:
+            db.execute("UPDATE checkpoints SET created_at=? WHERE id=?", (created, existing[0]))
+        db.commit()
+    finally:
+        if db.in_transaction:
+            db.rollback()
+        db.close()
+
+
 def save_incremental(source: str | Path, descriptor: str | Path,
                      *, base: str | Path | None = None,
                      max_archive_bytes: int = 0, min_free_bytes: int = 0,
                      discard: tuple[Path, ...] = (), collect: bool = False,
-                     recover_base: bool = False) -> dict:
+                     recover_base: bool = False, catalog_tick: int | None = None) -> dict:
     started = time.perf_counter()
+    if Path(source).resolve() == Path(descriptor).resolve():
+        raise IncrementalCheckpointError("checkpoint target must be separate from its source")
+    if not Path(descriptor).name.endswith(".icp.json"):
+        raise IncrementalCheckpointError("checkpoint descriptor must end in .icp.json")
+    if catalog_tick is not None and (type(catalog_tick) is not int or catalog_tick < 0):
+        raise ValueError("checkpoint catalog tick must be a nonnegative integer")
     if type(recover_base) is not bool or type(collect) is not bool:
         raise ValueError("checkpoint recovery and collection switches must be boolean")
     archive = _archive(Path(descriptor), create=True)
@@ -433,7 +471,7 @@ def save_incremental(source: str | Path, descriptor: str | Path,
         if pin.exists() or _linked(pin):
             raise IncrementalCheckpointError("cannot replace a pinned checkpoint")
         options = {"max_archive_bytes": max_archive_bytes, "min_free_bytes": min_free_bytes,
-                   "discard": discard, "collect": collect}
+                   "discard": discard, "collect": collect, "catalog_tick": catalog_tick}
         try:
             receipt = _save_incremental(source, descriptor, base=base, **options)
         except CheckpointBaseError as exc:
@@ -550,7 +588,8 @@ def _encoded_chunks(image, known):
 def _save_incremental(source: str | Path, descriptor: str | Path,
                       *, base: str | Path | None = None,
                       max_archive_bytes: int = 0, min_free_bytes: int = 0,
-                      discard: tuple[Path, ...] = (), collect: bool = False) -> dict:
+                      discard: tuple[Path, ...] = (), collect: bool = False,
+                      catalog_tick: int | None = None) -> dict:
     """Capture, validate and durably publish; all required work is timed."""
     started = time.perf_counter()
     target = Path(descriptor).absolute()
@@ -672,6 +711,8 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
     _immutable(archive / (digest + ".root"), encoded)
     _fsync_directory(archive)
     _publish(target, {"kind": KIND, "version": 2, "root_sha256": digest})
+    if catalog_tick is not None:
+        _record_catalog(source, target, catalog_tick, evidence["state"]["run_id"])
     retention = None
     retention_error = None
     if discard or collect:
