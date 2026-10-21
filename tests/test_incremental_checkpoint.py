@@ -196,12 +196,17 @@ def test_archive_budget_preserves_legacy_soft_retention_contract(world, tmp_path
     assert world.checkpoint(0) is not None
 
 
-def test_reader_uses_disk_scratch_beside_archive(world, tmp_path):
+def test_reader_uses_explicit_private_disk_scratch(world, tmp_path):
     from engine.checkpoint_formats import checkpoint_database
-    source = tmp_path / 'a.icp.json'
+    source_tree = tmp_path / 'source-tree'
+    source_tree.mkdir()
+    source = source_tree / 'a.icp.json'
+    scratch = tmp_path / 'reader-scratch'
+    scratch.mkdir()
     save_incremental(world.store.path, source)
-    with checkpoint_database(source) as restored:
-        assert restored.parent.parent == source.parent
+    with checkpoint_database(source, scratch_dir=scratch) as restored:
+        assert restored.parent.parent == scratch
+        assert not restored.is_relative_to(source_tree)
 
 
 def test_collection_keeps_complete_immutable_base(world, tmp_path):

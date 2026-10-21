@@ -93,15 +93,15 @@ research acceptance. Copying a large image and restoring it have their own cost.
 Pins protect descriptors and their dependencies. Retention validates current
 roots, preserves pins and other runs in the same directory, and only then
 collects unreferenced packs/roots. Invalid metadata or corrupted referenced bytes
-stop collection. Capture, restore, pinning and collection share an archive lock.
+stop collection. Capture, explicit restore, pinning and collection share an archive lock.
 An interrupted save may leave an unreferenced immutable object; it cannot replace
 a valid published checkpoint. Storage-policy free-space limits still apply. As with legacy rotation, the byte
 budget is a retention target: pinned points and the minimum two recovery points
 are protected, with excess bytes reported rather than blocking every future save.
 Shared archives count their physical packs once against the archive target. The
 v2 logical image is bounded to 16 GiB and metadata to 64 MiB. Larger historical
-v1 images are unaffected. Scratch copies default beside the archive on disk,
-with an explicit reader scratch override; they never default to RAM-backed `/tmp`.
+v1 images are unaffected. Scientific reader scratch uses `scratch_dir` or the system temporary directory;
+configure a private disk-backed `TMPDIR` when materializing large images.
 
 ## Measurement boundary
 
@@ -160,3 +160,10 @@ unchanged target. Aggregate sampled process-tree RSS was369.98MiB; restore bytes
 and private input anchors matched. Follow-up read-only range and worker-reuse
 changes require fresh complete measurements; private5.36s phase diagnostics
 are not acceptance proof. All earlier failures remain retained.
+
+Scientific readers materialize into private external scratch (`scratch_dir` or
+`TMPDIR`), never beside the descriptor. They open no writer lock in the source
+archive. All immutable pack, decoded-chunk and SQLite proofs remain mandatory;
+concurrent pruning can reject a reader, but cannot publish an unverified copy.
+Select a disk-backed private `TMPDIR` with enough space for large restores.
+The explicit restore command retains its archive-lock behavior.
