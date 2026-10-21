@@ -62,3 +62,26 @@ def test_concurrent_pruning_rejects_reader_without_publishing(world, tmp_path, m
         with checkpoint_database(descriptor, scratch_dir=scratch):
             pytest.fail('a pruned checkpoint must not be published')
     assert not list(scratch.iterdir())
+
+
+def test_materialization_resolves_aliased_scratch_for_admission(world, tmp_path, monkeypatch):
+    import tempfile
+    from research.checkpoint_origins import inspect_checkpoint
+    source = tmp_path / 'checkpoint.icp.json'
+    world._save_prng_state()
+    world.store.set_meta(status='paused', active_tick=None, next_phase='NIGHT_CLOSE', phase_state_json='{}')
+    world.store.commit()
+    save_incremental(world.store.path, source)
+    actual = tmp_path / 'actual-scratch'
+    actual.mkdir()
+    alias = tmp_path / 'aliased-scratch'
+    try:
+        alias.symlink_to(actual, target_is_directory=True)
+    except OSError:
+        pytest.skip('directory symlink privileges unavailable')
+    monkeypatch.setattr(tempfile, 'tempdir', str(alias))
+    with checkpoint_database(source, scratch_dir=alias) as materialized:
+        assert materialized == materialized.resolve()
+        assert materialized.is_relative_to(actual)
+    inspect_checkpoint(source, max_bytes=16 * 1024**2)
+    assert not list(actual.iterdir())

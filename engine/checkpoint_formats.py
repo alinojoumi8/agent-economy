@@ -41,7 +41,7 @@ def checkpoint_database(path: str | Path, *, max_bytes: int = 64 * 1024**3,
     # select a private disk location; callers may also pass one explicitly.
     parent = Path(scratch_dir) if scratch_dir is not None else None
     with tempfile.TemporaryDirectory(prefix=".manyworld-checkpoint-", dir=parent) as directory:
-        target = Path(directory) / "checkpoint.db"
+        target = Path(directory).resolve() / "checkpoint.db"
         # Immutable roots/packs are fully verified without opening a source
         # writer lock. Concurrent pruning may reject this read; every chunk and
         # SQLite proof is checked before any materialized copy is published.
