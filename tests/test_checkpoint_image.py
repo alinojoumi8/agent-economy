@@ -122,3 +122,98 @@ def test_logical_chunk_ranges_match_complete_wal_image(tmp_path):
             with pytest.raises(ValueError, match='range'):
                 list(image.chunks(65536, **bounds))
     db.close()
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX byte-range locks")
+@pytest.mark.parametrize("abort_capture", [False, True])
+def test_capture_preserves_live_sqlite_locks(tmp_path, abort_capture):
+    """Raw image handles must never cancel another connection's POSIX locks."""
+    import json
+    import subprocess
+    import sys
+    path = tmp_path / "locked.db"
+    db = sqlite3.connect(path, isolation_level=None)
+    try:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute("CREATE TABLE lock_probe(value)")
+        db.execute("INSERT INTO lock_probe VALUES(1)")
+        probe = """import fcntl,json,os,sys
+result=[]
+for suffix,offset,length in [("",1073741826,510),("-shm",128,1)]:
+    fd=os.open(sys.argv[1]+suffix,os.O_RDWR)
+    try:
+        fcntl.lockf(fd,fcntl.LOCK_EX|fcntl.LOCK_NB,length,offset)
+        result.append(False)
+    except BlockingIOError:
+        result.append(True)
+    finally:
+        os.close(fd)
+print(json.dumps(result))
+"""
+        def locks():
+            return json.loads(subprocess.check_output(
+                [sys.executable, "-c", probe, str(path)], text=True))
+        assert locks() == [True, True]
+        try:
+            with logical_image(path) as (_, image):
+                assert b"".join(image.chunks()).startswith(b"SQLite format 3")
+                if abort_capture:
+                    raise RuntimeError("capture cancelled")
+        except RuntimeError as exc:
+            assert str(exc) == "capture cancelled"
+        assert locks() == [True, True]
+        db.execute("INSERT INTO lock_probe VALUES(2)")
+        assert db.execute("SELECT count(*) FROM lock_probe").fetchone()[0] == 2
+    finally:
+        db.close()
+
+
+@pytest.mark.skipif(__import__("os").name != "posix", reason="POSIX WAL-index race")
+def test_capture_with_external_reader_does_not_crash_writer(tmp_path):
+    """Exercise the former walIndexAppend SIGBUS in an isolated interpreter."""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    program = tmp_path / "race.py"
+    program.write_text('''import sqlite3,subprocess,sys,time
+from pathlib import Path
+from engine.checkpoint_image import logical_image
+
+def main():
+    path=Path(sys.argv[1])
+    db=sqlite3.connect(path,isolation_level=None)
+    db.execute('PRAGMA journal_mode=WAL')
+    db.execute('CREATE TABLE t(value)')
+    db.execute('INSERT INTO t VALUES(1)')
+    reader="""import sqlite3,sys,time
+for _ in range(1500):
+    connection=None
+    try:
+        connection=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True,timeout=0)
+        connection.execute('SELECT count(*) FROM t').fetchone()
+    except sqlite3.Error:pass
+    finally:
+        if connection is not None:connection.close()
+    time.sleep(.001)
+"""
+    child=subprocess.Popen([sys.executable,'-c',reader,str(path)])
+    try:
+        for i in range(12):
+            with logical_image(path) as (_,image):
+                list(image.chunks())
+            time.sleep(.005)
+            db.execute('INSERT INTO t VALUES(?)',(i,))
+        assert db.execute('SELECT count(*) FROM t').fetchone()[0]==13
+        assert db.execute('PRAGMA quick_check').fetchone()[0]=='ok'
+    finally:
+        child.wait(timeout=15)
+        db.close()
+if __name__=='__main__':main()
+''')
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+    completed = subprocess.run(
+        [sys.executable, "-X", "faulthandler", str(program), str(tmp_path / "race.db")],
+        capture_output=True, text=True, timeout=30, env=env)
+    assert completed.returncode == 0, completed.stderr

@@ -589,13 +589,13 @@ def test_one_verifier_pool_is_reused_for_changed_save(world, tmp_path, monkeypat
 
 
 def test_spawned_capture_refuses_replaced_source_identity(world):
-    import os
+    import multiprocessing
+    from concurrent.futures import ProcessPoolExecutor
     import engine.incremental_checkpoint as module
     from engine.checkpoint_image import logical_image
     with logical_image(world.store.path) as (_, image):
-        stat = os.fstat(image.main.fileno())
-        spec = {'source': str(world.store.path), 'main': (stat.st_dev, stat.st_ino + 1),
-                'wal': None, 'page_size': image.page_size,
-                'page_count': image.size // image.page_size, 'frames': {}}
-        with pytest.raises(module.IncrementalCheckpointError, match='identity changed'):
-            module._capture_initialize(spec, set())
+        device, inode = image.spec['main']
+        spec = dict(image.spec, main=(device, inode + 1))
+        with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn')) as pool:
+            with pytest.raises(module.IncrementalCheckpointError, match='identity changed'):
+                pool.submit(module._capture_initialize, spec, set()).result()

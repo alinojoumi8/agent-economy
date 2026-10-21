@@ -41,6 +41,14 @@ durability and requested retention. A small bounded thread pool overlaps native
 checks, hashing and verification; world ticks remain sequential. This does not
 add simulation multiprocessing. Long saves remain off the async serving loop,
 although other SQLite writers must wait for the capture boundary.
+Raw database, WAL and WAL-index file descriptors belong to a separate spawned
+reader with no SQLite connections. The parent retains SQLite's writer-exclusion
+transaction until that reader has verified the final WAL boundary and exited.
+Closing raw descriptors in the SQLite process cancels its POSIX advisory locks;
+another process can then invalidate a still-mapped WAL index and cause SIGBUS.
+The isolated reader prevents this lock loss, including when capture fails.
+Direct image reads cross the boundary in at most 8 MiB batches; reader startup,
+shutdown and verification remain inside the save timer and memory accounting.
 Hashing and compression of large owned images use two spawned read-only readers
 and at most three ordered 8 MiB ranges. Only new encoded blocks and metadata
 cross process boundaries; no full-image work queue exists. Each reader binds

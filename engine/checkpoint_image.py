@@ -7,9 +7,11 @@ context until all reads and SQLite evidence collection have completed.
 from __future__ import annotations
 
 import os
+import multiprocessing
 import sqlite3
 import struct
 from contextlib import ExitStack, contextmanager
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from engine.storage_policy import _is_link
 
@@ -98,35 +100,18 @@ class LogicalImage:
             yield bytes(data)
 
 
-@contextmanager
-def logical_image(path: str | Path, *, max_bytes: int = 64 * 1024**3,
-                  max_wal_frames: int = 262144):
-    """Exclude writers and expose native SQLite evidence and its exact image.
+# Raw descriptors must live outside every process holding SQLite connections.
+# POSIX close() on any descriptor cancels that process's locks on the inode,
+# including SQLite's database and WAL-index locks. A later reader may then
+# truncate a still-mapped WAL index and crash the writer with SIGBUS.
+_RAW_CAPTURE = None
 
-    Does not change rows, journal mode, checkpoint the WAL or create a database.
-    Opening an owned WAL database may update SQLite lock/read-mark sidecars.
-    No live connection is shared across threads. Connections must be closed
-    before releasing this context. A busy writer is an explicit failure.
-    """
-    database = Path(path).absolute()
-    if database.is_symlink() or not database.is_file():
-        raise CheckpointImageError("source database must already exist")
-    if any(_is_link(p) for p in (database, *database.parents)):
-        raise CheckpointImageError("source database may not be aliased")
-    with ExitStack() as stack:
-        db = sqlite3.connect(database.as_uri() + "?mode=rw", uri=True,
-                             timeout=0, isolation_level=None)
-        stack.callback(db.close)
-        db.row_factory = sqlite3.Row
-        db.execute("BEGIN IMMEDIATE")
-        stack.callback(db.rollback)
-        db.execute("PRAGMA query_only=ON")
-        page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
-        page_count = int(db.execute("PRAGMA page_count").fetchone()[0])
-        if page_size not in (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536):
-            raise CheckpointImageError("unsupported SQLite page size")
-        if page_count < 1 or page_count * page_size > max_bytes:
-            raise CheckpointImageError("SQLite image size exceeds limit")
+
+def _open_capture(source: str, page_size: int, page_count: int, max_wal_frames: int) -> dict:
+    global _RAW_CAPTURE
+    database = Path(source)
+    stack = ExitStack()
+    try:
         main = _open_regular(stack, database)
         header = _read_at(main, 0, 100)
         if header[:16] != b"SQLite format 3\0":
@@ -182,10 +167,95 @@ def logical_image(path: str | Path, *, max_bytes: int = 64 * 1024**3,
                             raise CheckpointImageError("invalid WAL commit boundary")
                         _read_at(wal, pos + 24, page_size)
         image = LogicalImage(main, wal, page_size, page_count, frames, source=database)
-        yield db, image
+        _RAW_CAPTURE = stack, image, shm, index
+        def identity(handle):
+            stat = os.fstat(handle.fileno())
+            return stat.st_dev, stat.st_ino
+        return {"source": source, "main": identity(main),
+                "wal": identity(wal) if wal else None,
+                "page_size": page_size, "page_count": page_count,
+                "frames": frames}
+    except BaseException:
+        stack.close()
+        raise
+
+
+def _capture_chunks(chunk_size: int, start: int, stop: int) -> list[bytes]:
+    return list(_RAW_CAPTURE[1].chunks(chunk_size, start=start, stop=stop))
+
+
+def _finish_capture() -> None:
+    global _RAW_CAPTURE
+    stack, _, shm, index = _RAW_CAPTURE
+    try:
         if index is not None:
-            # A buffered seek to zero may return the original cached header.
-            # Read the final boundary directly from the descriptor instead.
+            # Bypass the buffered header cached during initial validation.
             os.lseek(shm.fileno(), 0, os.SEEK_SET)
             if os.read(shm.fileno(), 96) != index:
                 raise CheckpointImageError("WAL changed during capture")
+    finally:
+        stack.close()
+        _RAW_CAPTURE = None
+
+
+class CapturedImage:
+    """Bounded access to raw bytes owned by a SQLite-free spawned reader."""
+
+    def __init__(self, pool, spec):
+        self._pool = pool
+        self.spec = spec
+        self.source = Path(spec["source"])
+        self.page_size = spec["page_size"]
+        self.size = self.page_size * spec["page_count"]
+        self.frames = spec["frames"]
+
+    def chunks(self, chunk_size=1024 * 1024, *, start=0, stop=None):
+        if chunk_size < self.page_size or chunk_size % self.page_size:
+            raise ValueError("chunk size must be page aligned")
+        count = (self.size + chunk_size - 1) // chunk_size
+        stop = count if stop is None else stop
+        if (type(start) is not int or type(stop) is not int
+                or not 0 <= start <= stop <= count):
+            raise ValueError("invalid logical chunk range")
+        batch = max(1, (8 * 1024 * 1024) // chunk_size)
+        for offset in range(start, stop, batch):
+            yield from self._pool.submit(
+                _capture_chunks, chunk_size, offset, min(offset + batch, stop)).result()
+
+
+@contextmanager
+def logical_image(path: str | Path, *, max_bytes: int = 64 * 1024**3,
+                  max_wal_frames: int = 262144):
+    """Exclude writers and capture the committed image without losing locks.
+
+    SQLite evidence and writer exclusion belong to this process; raw database,
+    WAL and WAL-index handles belong only to a spawned SQLite-free process.
+    All readers finish and close before writer exclusion is released.
+    """
+    database = Path(path).absolute()
+    if database.is_symlink() or not database.is_file():
+        raise CheckpointImageError("source database must already exist")
+    if any(_is_link(p) for p in (database, *database.parents)):
+        raise CheckpointImageError("source database may not be aliased")
+    with ExitStack() as stack:
+        db = sqlite3.connect(database.as_uri() + "?mode=rw", uri=True,
+                             timeout=0, isolation_level=None)
+        stack.callback(db.close)
+        db.row_factory = sqlite3.Row
+        db.execute("BEGIN IMMEDIATE")
+        stack.callback(db.rollback)
+        db.execute("PRAGMA query_only=ON")
+        page_size = int(db.execute("PRAGMA page_size").fetchone()[0])
+        page_count = int(db.execute("PRAGMA page_count").fetchone()[0])
+        if page_size not in (512, 1024, 2048, 4096, 8192, 16384, 32768, 65536):
+            raise CheckpointImageError("unsupported SQLite page size")
+        if page_count < 1 or page_count * page_size > max_bytes:
+            raise CheckpointImageError("SQLite image size exceeds limit")
+        pool = stack.enter_context(ProcessPoolExecutor(
+            max_workers=1, mp_context=multiprocessing.get_context("spawn")))
+        spec = pool.submit(_open_capture, str(database), page_size, page_count,
+                           max_wal_frames).result()
+        try:
+            yield db, CapturedImage(pool, spec)
+        finally:
+            pool.submit(_finish_capture).result()

@@ -611,13 +611,10 @@ def _encoded_chunks(image, known):
     """
     source = getattr(image, "source", None)
     if source is not None and image.size >= 256 * CHUNK_SIZE:
-        def identity(handle):
-            stat = os.fstat(handle.fileno())
-            return stat.st_dev, stat.st_ino
-        spec = {"source": str(source), "main": identity(image.main),
-                "wal": identity(image.wal) if image.wal else None,
-                "page_size": image.page_size, "page_count": image.size // image.page_size,
-                "frames": image.frames}
+        # The parent owns SQLite locks but no raw file handles. Metadata comes
+        # from its SQLite-free reader; encoding workers independently bind the
+        # same main/WAL inodes while that committed cut remains excluded.
+        spec = image.spec
         count = (image.size + CHUNK_SIZE - 1) // CHUNK_SIZE
         jobs = iter((start, min(start + 128, count)) for start in range(0, count, 128))
         context = ProcessPoolExecutor(max_workers=2,
