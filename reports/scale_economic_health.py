@@ -46,6 +46,12 @@ EXPECTED_POPULATION = {
     "regions": {"ironvale": 69, "northstar": 184, "suncoast": 55},
 }
 PROFILE_CONTRACTS = {
+    "runs/acceptance/scale-270-recovery-buffer-lifecycle-incremental-1000.yaml": {
+        "required_ticks": 1000,
+        "diagnostic": False,
+        "recovery_enabled": True,
+        "schema_version": 3,
+    },
     "runs/acceptance/scale-270-recovery-buffer-lifecycle-1000.yaml": {
         "required_ticks": 1000,
         "diagnostic": False,

@@ -8,6 +8,7 @@ from engine.incremental_checkpoint import read_incremental
 
 
 def checkpoint_evidence(store, run_id, config):
+    from reports.supply_recovery import _logical_checkpoint_directory
     keep = config.get("checkpoint_keep_last")
     configured = config.get("checkpoint_dir")
     if type(keep) is not int or keep < 1 or not isinstance(configured, str) or not configured:
@@ -73,7 +74,7 @@ def checkpoint_evidence(store, run_id, config):
     passed = bool(current and not excluded and matches and len(current) <= keep
                   and all(r["manifest_valid"] for r in current))
     return passed, {"storage_format": "incremental-v2", "configured_keep_last": keep,
-                    "configured_checkpoint_dir": configured, "current_rows": current,
+                    "configured_checkpoint_dir": _logical_checkpoint_directory(configured), "current_rows": current,
                     "current_row_count": len(current), "current_database_artifact_count": len(actual),
                     "current_manifest_artifact_count": len(actual),
                     "artifacts_match_current_rows": matches, "excluded_rows": excluded}

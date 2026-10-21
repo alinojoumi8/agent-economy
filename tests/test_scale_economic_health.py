@@ -956,3 +956,33 @@ def test_ab_writer_emits_atomic_json_and_markdown(tmp_path: Path):
     assert json.loads(output.with_suffix(".json").read_text(encoding="utf-8")) == receipt
     assert output.with_suffix(".md").read_text(encoding="utf-8").startswith(
         "# Scale-270 economic-health A/B")
+
+
+def test_incremental_formal_profile_identity_and_unweakened_horizon(tmp_path):
+    from reports.scale_economic_health import _identity_evidence
+    profile = ROOT / 'runs/acceptance/scale-270-recovery-buffer-lifecycle-incremental-1000.yaml'
+    fixture = _seed_fixture(tmp_path, profile=profile)
+    runtime = json.loads(fixture.runtime.read_text())
+    # This is a synthetic 120-tick database. Declare the formal requested
+    # horizon in its receipt, then independently require actual completion.
+    runtime['configuration']['ticks'] = 1000
+    fixture.runtime.write_text(json.dumps(runtime))
+    with sqlite3.connect(fixture.source) as source, sqlite3.connect(fixture.replay) as replay:
+        source.row_factory = replay.row_factory = sqlite3.Row
+        source_meta = source.execute('SELECT * FROM run_meta').fetchone()
+        replay_meta = replay.execute('SELECT * FROM run_meta').fetchone()
+        persisted = json.loads(source_meta['config_json'])
+        accepted, evidence, contract, thresholds = _identity_evidence(
+            runtime, source_meta, replay_meta, persisted)
+        assert accepted, evidence
+        assert contract['required_ticks'] == thresholds['required_ticks'] == 1000
+        assert contract['schema_version'] == thresholds['schema_version'] == 3
+        wrong_hash = deepcopy(runtime)
+        wrong_hash['profile_config_sha256'] = '0' * 64
+        assert not _identity_evidence(wrong_hash, source_meta, replay_meta, persisted)[0]
+        wrong_storage = dict(persisted, checkpoint_format='standalone-v1')
+        assert not _identity_evidence(runtime, source_meta, replay_meta, wrong_storage)[0]
+    result = evaluate_scale_economic_health(fixture.source, fixture.replay, fixture.runtime)
+    assert result['checks']['identity_exact']
+    assert not result['checks']['horizon_completed']
+    assert not result['passed']  # identity admission must not certify 120 as 1000

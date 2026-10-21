@@ -165,16 +165,20 @@ def test_corrupt_delta_and_unknown_directory_prevent_gc(world, tmp_path):
 
 def test_v2_report_authenticates_artifacts_and_detects_corruption(world, tmp_path):
     from reports.supply_recovery import _checkpoint_evidence
+    from scripts.run_scale_validation import validate_receipt_safety
     world.config.update(checkpoint_dir=str(tmp_path / 'checkpoints'), checkpoint_keep_last=2,
                         checkpoint_format='incremental-v2')
     world.checkpoint_format = 'incremental-v2'
     path = Path(world.checkpoint(0))
     passed, evidence = _checkpoint_evidence(world.store, 'chunk-test', world.config)
     assert passed and evidence['current_rows'][0]['manifest_valid']
+    validate_receipt_safety(evidence)
+    assert str(tmp_path) not in json.dumps(evidence)
     _, chunks, archive, _ = read_incremental(path)
     (archive / (chunks[0][1] + '.pack')).write_bytes(b'corrupted')
     passed, evidence = _checkpoint_evidence(world.store, 'chunk-test', world.config)
     assert not passed and not evidence['current_rows'][0]['manifest_valid']
+    validate_receipt_safety(evidence)
 
 
 def test_concurrent_archive_operation_refuses(world, tmp_path):
