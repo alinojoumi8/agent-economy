@@ -56,6 +56,15 @@ main/WAL file identities to the parent's writer-excluded cut, holds no SQLite
 connection, and closes its handles when the operation ends. Small images use
 two native threads and three 1 MiB batches. The two verification workers are
 reused for existing and newly stored objects within a save, then joined.
+Large fresh bases use at most eight spawned SQLite-free workers and nine
+ordered jobs. Each job reads at most 128 MiB of logical pages through the same
+committed cut, writes one immutable pack with an at most 8 MiB buffer, fsyncs it,
+hashes every stored byte and verifies every decoded chunk. Only metadata crosses
+process boundaries. All jobs finish and workers exit before root publication.
+The free-space reserve is checked before each bounded write; write, fsync or
+readback failures prevent publication. Existing-base saves retain two encoding
+workers and three ordered ranges. No validation or durability work is moved
+outside the save timer.
 SQLite integrity and ledger checks have separate native readers at the same
 writer-excluded cut. Common state/core SHA256 fields keep v1 canonical semantics;
 the storage root digest is not relabelled as a raw SQLite database SHA256.

@@ -599,3 +599,90 @@ def test_spawned_capture_refuses_replaced_source_identity(world):
         with ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context('spawn')) as pool:
             with pytest.raises(module.IncrementalCheckpointError, match='identity changed'):
                 pool.submit(module._capture_initialize, spec, set()).result()
+
+
+def test_large_base_workers_restore_exact_blocks(world, tmp_path, monkeypatch):
+    import os
+    import engine.incremental_checkpoint as module
+    monkeypatch.setattr(module, 'BASE_RANGE_CHUNKS', 128)
+    data = os.urandom(20 * 1024**2)
+    world.store.execute('CREATE TABLE base_probe(value BLOB)')
+    world.store.execute('INSERT INTO base_probe VALUES (?)', (data,))
+    world.store.commit()
+    descriptor = tmp_path / 'large.icp.json'
+    save_incremental(world.store.path, descriptor)
+    root, chunks, archive, _ = read_incremental(descriptor)
+    assert 'base' not in root
+    assert len(root['packs']) >= 3
+    assert all(p.stat().st_nlink == 1 for p in archive.glob('*.pack'))
+    assert not list(archive.glob('.stage-*'))
+    restored = tmp_path / 'large.db'
+    restore_incremental(descriptor, restored)
+    with sqlite3.connect(restored) as db:
+        assert db.execute('SELECT value FROM base_probe').fetchone()[0] == data
+
+
+def test_base_pipeline_durability_failure_prevents_publication(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    original = module._seal_pack
+    def corrupt(temporary, archive, digest):
+        original(temporary, archive, digest)
+        with (archive / (digest + '.pack')).open('r+b') as out:
+            out.seek(module.PACK_HEADER_SIZE)
+            value = out.read(1)
+            out.seek(module.PACK_HEADER_SIZE)
+            out.write(bytes([value[0] ^ 1]))
+    monkeypatch.setattr(module, '_seal_pack', corrupt)
+    descriptor = tmp_path / 'broken.icp.json'
+    with pytest.raises(IncrementalCheckpointError, match='checksum'):
+        save_incremental(world.store.path, descriptor)
+    assert not descriptor.exists()
+    assert not list((tmp_path / '.checkpoint-v2').glob('*.root'))
+
+
+def test_base_pipeline_space_reserve_checked_before_batch(world, tmp_path):
+    from engine.storage_policy import StorageBudgetExceeded
+    descriptor = tmp_path / 'no-space.icp.json'
+    with pytest.raises(StorageBudgetExceeded):
+        save_incremental(world.store.path, descriptor, min_free_bytes=2**63)
+    assert not descriptor.exists()
+
+
+def test_base_pipeline_failed_fsync_is_not_a_verified_checkpoint(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    def failed_fsync(*args):
+        raise OSError('durability failed')
+    monkeypatch.setattr(module.os, 'fsync', failed_fsync)
+    descriptor = tmp_path / 'not-durable.icp.json'
+    with pytest.raises(OSError, match='durability failed'):
+        save_incremental(world.store.path, descriptor)
+    assert not descriptor.exists()
+    assert not list((tmp_path / '.checkpoint-v2').glob('*.root'))
+
+
+def _corrupt_worker_pack(job):
+    # This helper runs only inside the spawned SQLite-free capture worker.
+    import engine.incremental_checkpoint as module
+    original = module._seal_pack
+    def corrupt(temporary, archive, digest):
+        original(temporary, archive, digest)
+        with (archive / (digest + '.pack')).open('r+b') as out:
+            out.seek(module.PACK_HEADER_SIZE)
+            byte = out.read(1)
+            out.seek(module.PACK_HEADER_SIZE)
+            out.write(bytes([byte[0] ^ 1]))
+    module._seal_pack = corrupt
+    return module._capture_base_range(job)
+
+
+def test_large_base_worker_corruption_prevents_publication(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    world.store.execute('CREATE TABLE large_probe(value BLOB)')
+    world.store.execute('INSERT INTO large_probe VALUES (zeroblob(20000000))')
+    world.store.commit()
+    monkeypatch.setattr(module, '_capture_base_range', _corrupt_worker_pack)
+    descriptor = tmp_path / 'corrupt-large.icp.json'
+    with pytest.raises(IncrementalCheckpointError, match='checksum'):
+        save_incremental(world.store.path, descriptor)
+    assert not descriptor.exists()
+    assert not list((tmp_path / '.checkpoint-v2').glob('*.root'))

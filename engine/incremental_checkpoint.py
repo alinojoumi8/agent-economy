@@ -32,6 +32,8 @@ from research.process_lock import process_lock
 from engine.storage_policy import StorageBudgetExceeded, _is_link
 
 CHUNK_SIZE = 64 * 1024
+BASE_WRITE_BYTES = 8 * 1024**2
+BASE_RANGE_CHUNKS = 2048
 MAX_BYTES = 16 * 1024**3
 MAX_ROOT_BYTES = 64 * 1024**2
 KIND = "world_checkpoint_chunks_v2"
@@ -639,6 +641,92 @@ def _encoded_chunks(image, known):
             enqueue()
 
 
+def _capture_base_range(job):
+    """Capture and fully verify one bounded pack in a SQLite-free worker."""
+    bounds, archive, min_free_bytes = job
+    image, _, _ = _CAPTURE_STATE
+    hasher = _hash_implementation()
+    fd, name = tempfile.mkstemp(prefix=".stage-", dir=archive)
+    temporary = Path(name)
+    entries, known, buffer = [], {}, []
+    buffered = 0
+    position = PACK_HEADER_SIZE
+    pack_hash = hasher()
+    try:
+        with os.fdopen(fd, "wb") as output:
+            _pack_prefix(output, pack_hash)
+            def flush():
+                nonlocal buffered
+                if not buffer:
+                    return
+                free = shutil.disk_usage(archive).free
+                if free < min_free_bytes + buffered:
+                    raise StorageBudgetExceeded("free_space", free, min_free_bytes + buffered)
+                payload = b"".join(buffer)
+                output.write(payload)
+                pack_hash.update(payload)
+                buffer.clear()
+                buffered = 0
+            for data in image.chunks(CHUNK_SIZE, start=bounds[0], stop=bounds[1]):
+                digest, stored, length, codec = _encode_batch([data], {})[0]
+                if digest in known:
+                    entries.append(known[digest])
+                    continue
+                entry = [digest, None, position, len(stored), length, codec]
+                known[digest] = entry
+                entries.append(entry)
+                if buffered + len(stored) > BASE_WRITE_BYTES:
+                    flush()
+                buffer.append(stored)
+                buffered += len(stored)
+                position += len(stored)
+            flush()
+            output.flush()
+            os.fsync(output.fileno())
+        digest = pack_hash.hexdigest()
+        _seal_pack(temporary, archive, digest)
+        temporary.unlink()
+        for entry in known.values():
+            entry[1] = digest
+        _verify_pack_hash(archive, digest)
+        _verify_entries(archive, list(known.values()))
+        return entries, position, len(known), sum(e[4] for e in known.values())
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _capture_large_base(image, archive, counts, min_free_bytes, verified, pack_proofs):
+    """Only metadata crosses processes; each worker fsyncs and verifies its pack."""
+    count = (image.size + CHUNK_SIZE - 1) // CHUNK_SIZE
+    # Each job visits at most 128 MiB of logical pages, using an 8 MiB write buffer.
+    workers = min(8, os.cpu_count() or 1)
+    # Other workers can each have one write in flight. Reserve that bounded
+    # headroom as well as the caller's unchanged free-space floor.
+    reserve = min_free_bytes + (workers - 1) * BASE_WRITE_BYTES
+    jobs = iter(((start, min(start + BASE_RANGE_CHUNKS, count)), archive, reserve)
+                for start in range(0, count, BASE_RANGE_CHUNKS))
+    chunks, pending = [], deque()
+    with ProcessPoolExecutor(max_workers=workers,
+                             mp_context=multiprocessing.get_context("spawn"),
+                             initializer=_capture_initialize, initargs=(image.spec, set())) as pool:
+        def enqueue():
+            job = next(jobs, None)
+            if job is not None:
+                pending.append(pool.submit(_capture_base_range, job))
+        for _ in range(workers + 1):
+            enqueue()
+        while pending:
+            entries, written, unique, logical = pending.popleft().result()
+            chunks.extend(entries)
+            verified.update(tuple(entry) for entry in entries)
+            pack_proofs.update(entry[1] for entry in entries)
+            counts["written_bytes"] += written
+            counts["new_chunks"] += unique
+            counts["new_logical_bytes"] += logical
+            enqueue()
+    return chunks
+
+
 def _save_incremental(source: str | Path, descriptor: str | Path,
                       *, base: str | Path | None = None,
                       max_archive_bytes: int = 0, min_free_bytes: int = 0,
@@ -670,7 +758,12 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
     counts = {"new_chunks": 0, "written_bytes": 0, "new_logical_bytes": 0,
               "compacted_chunks": 0, "compacted_written_bytes": 0}
 
+    captured_verified = set()
+
     def capture(image):
+        if base is None and image.size >= 256 * CHUNK_SIZE:
+            return _capture_large_base(image, archive, counts, min_free_bytes,
+                                       captured_verified, pack_proofs)
         from blake3 import blake3
         known = {entry[0]: entry for entry in previous_chunks} if base is not None else {}
         known.update({entry[0]: entry for entry in base_chunks})
@@ -729,8 +822,9 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
                     raise CheckpointBaseError(f"checkpoint base verification failed: {exc}",
                                               reason="objects") from exc
             prior_verified = ({tuple(entry) for entry in previous_chunks + base_chunks}
-                              if base is not None else set())
-            chunks = _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes)
+                              if base is not None else captured_verified)
+            if base is not None:
+                chunks = _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes)
             _verify_objects(archive, chunks, image.size, verified=prior_verified,
                             pack_proofs=pack_proofs, executor=verifier)
         if base is not None and (previous["evidence"]["state"]["run_id"]
