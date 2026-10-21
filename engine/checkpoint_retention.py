@@ -73,6 +73,10 @@ def verify_for_retention(paths: list[Path]) -> dict:
 
 
 def pin_checkpoint(database: str | Path, reason: str) -> Path:
+    from .checkpoint_formats import is_incremental
+    if is_incremental(database):
+        from .incremental_checkpoint import pin_incremental
+        return pin_incremental(database, reason)
     path = Path(database).absolute()
     if not reason.strip() or len(reason) > 500:
         raise ValueError("pin reason must contain 1-500 characters")
@@ -87,6 +91,10 @@ def pin_checkpoint(database: str | Path, reason: str) -> Path:
 
 
 def unpin_checkpoint(database: str | Path) -> None:
+    from .checkpoint_formats import is_incremental
+    if is_incremental(database):
+        from .incremental_checkpoint import unpin_incremental
+        return unpin_incremental(database)
     path = Path(database).absolute()
     verify_checkpoint(path)
     target = pin_path(path)

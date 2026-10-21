@@ -14,6 +14,7 @@ from engine.ledger import Ledger
 from engine.schema import SCHEMA_VERSION
 from engine.semantics import semantics_version
 from engine.store import Store
+from engine.checkpoint_formats import checkpoint_database, is_incremental
 from llm.completion_guard import CompletionGuard
 from research.artifacts import digest_json, file_sha256, publish_copy, safe_key
 from research.working_contracts import input_prefixes, persisted_random_state
@@ -22,7 +23,7 @@ from world.replay_verify import canonical_state_receipt, verify_replay_connectio
 ORIGIN_CONTRACT = "checkpoint-origin-v1"
 # These controls neither initialize an economy nor change its decision policy.
 OPERATIONAL_CONFIG_KEYS = {
-    "checkpoint_dir", "checkpoint_every", "report_dir", "speed_delay_s",
+    "checkpoint_dir", "checkpoint_every", "checkpoint_format", "report_dir", "speed_delay_s",
 }
 
 
@@ -45,6 +46,11 @@ def _standalone(path: Path, max_bytes: int) -> None:
 @contextmanager
 def closed_checkpoint(path: str | Path, *, max_bytes: int):
     """Never create source-side journals or run schema migrations."""
+    if is_incremental(path):
+        with checkpoint_database(path, max_bytes=max_bytes) as materialized:
+            with closed_checkpoint(materialized, max_bytes=max_bytes) as store:
+                yield store
+        return
     source = Path(path).absolute()
     _standalone(source, max_bytes)
     connection = sqlite3.connect(f"{source.as_uri()}?mode=ro&immutable=1", uri=True,
@@ -64,6 +70,9 @@ def closed_checkpoint(path: str | Path, *, max_bytes: int):
 
 def inspect_checkpoint(path: str | Path, *, max_bytes: int, config: dict | None = None) -> dict:
     """Bind a modern completed day and independently check its accounting."""
+    if is_incremental(path):
+        with checkpoint_database(path, max_bytes=max_bytes) as materialized:
+            return inspect_checkpoint(materialized, max_bytes=max_bytes, config=config)
     source = Path(path).absolute()
     _standalone(source, max_bytes)
     digest = file_sha256(source)
@@ -144,6 +153,10 @@ def verify_closed_replay(source: str | Path, replay: str | Path, *, max_bytes: i
 def copy_checkpoint(path: str | Path, receipt: dict, destination: str | Path, *,
                     max_bytes: int, config: dict | None = None) -> Path:
     """Publish only a complete, verified copy; an existing child is never replaced."""
+    if is_incremental(path):
+        with checkpoint_database(path, max_bytes=max_bytes) as materialized:
+            return copy_checkpoint(materialized, receipt, destination,
+                                   max_bytes=max_bytes, config=config)
     source, target = Path(path).absolute(), Path(destination).absolute()
     if target.resolve() != target or target == source.resolve():
         raise ValueError("checkpoint child path must be independent and unaliased")

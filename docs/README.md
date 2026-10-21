@@ -39,6 +39,8 @@ each audience can find the authoritative level of detail.
 
 - [Storage and recovery](storage-and-recovery.md) — memory preservation, bounded
   checkpoints, lossless compression, pins and verified archives.
+- [Incremental checkpoints](incremental-checkpoints.md) — opt-in immutable bases,
+  verified chunk changes, legacy restore, retention and measurement boundaries.
 - [Hostinger VPS](hostinger-vps.md) — Docker, SFTP Litestream replication,
   PostgreSQL backups, monitoring and disaster recovery without Amazon.
 

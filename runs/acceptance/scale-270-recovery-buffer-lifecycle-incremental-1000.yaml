@@ -1,0 +1,4 @@
+# Prepared for a separately authorized full run; does not change simulation policy.
+# Historical standalone-checkpoint experiments and their failed receipts remain.
+extends: scale-270-recovery-buffer-lifecycle-1000.yaml
+checkpoint_format: incremental-v2
