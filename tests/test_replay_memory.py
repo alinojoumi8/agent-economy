@@ -283,7 +283,7 @@ def test_memory_sampler_preserves_receipt_extrema_without_sample_history(monkeyp
     monkeypatch.setattr(sampler._thread, 'join', lambda **kwargs: None)
     receipt = sampler.stop()
     assert receipt == {
-        'sample_interval_s': 0.05, 'samples': 3, 'peak_rss_mb': 12.88,
+        'sample_interval_s': 0.05, 'sampling_error': None, 'samples': 3, 'peak_rss_mb': 12.88,
         'min_available_memory_gb': 78.38, 'max_system_memory_percent': 30.88,
         'by_stage': {
             'replay': {'samples': 2, 'peak_rss_mb': 12.88, 'min_available_memory_gb': 78.38, 'max_system_memory_percent': 30.88},
@@ -331,5 +331,21 @@ def test_memory_sampler_does_not_accept_incomplete_process_tree(monkeypatch):
     monkeypatch.setattr(sampler.process, 'children', inaccessible)
     sampler.start()
     sampler._thread.join(timeout=2)
-    with pytest.raises(RuntimeError, match='memory sampling failed'):
-        sampler.stop()
+    receipt = sampler.stop()
+    assert receipt['sampling_error'] == 'AccessDenied'
+    assert receipt['samples'] == 0
+    assert receipt['min_available_memory_gb'] == 0
+    json.dumps(receipt, allow_nan=False)
+
+
+def test_memory_sampler_retains_partial_extrema_after_sampling_failure(monkeypatch):
+    import psutil
+    sampler = _MemorySampler()
+    monkeypatch.setattr(sampler.process, 'children', lambda recursive: [])
+    sampler._take_sample()
+    sampler._sampling_error = psutil.AccessDenied(123)
+    monkeypatch.setattr(sampler._thread, 'join', lambda **kwargs: None)
+    receipt = sampler.stop()
+    assert receipt['samples'] == 1 and receipt['peak_rss_mb'] > 0
+    assert receipt['sampling_error'] == 'AccessDenied'
+    assert sampler.stop() == receipt

@@ -460,3 +460,24 @@ def test_checkpoint_phase_measurement_preserves_custom_writer_signature():
         assert phases.keys() == {"write"}
         assert world.__dict__ == {"_checkpoint_write": writer}
     assert calls == [("source.db", "checkpoint.db")] * 2
+
+
+def test_memory_sampling_error_keeps_failed_receipt_and_source_anchors(tmp_path, monkeypatch):
+    from scripts.run_scale_validation import _MemorySampler
+    original = _MemorySampler.stop
+    def incomplete(sampler):
+        memory = original(sampler)
+        assert memory['samples'] > 0 and memory['peak_rss_mb'] > 0
+        memory['sampling_error'] = 'AccessDenied'
+        return memory
+    monkeypatch.setattr(_MemorySampler, 'stop', incomplete)
+    receipt = run_validation(REHEARSAL, ticks=1, label='memory-failure',
+                             output_dir=tmp_path / 'output', data_dir=tmp_path / 'runs',
+                             approve_live=False)
+    path = tmp_path / receipt['artifacts']['runtime_receipt']
+    assert json.loads(path.read_text()) == receipt
+    assert not receipt['passed'] and not receipt['checks']['memory_measured']
+    assert receipt['checks']['exact_replay']
+    assert receipt['checks']['source_immutable_during_replay']
+    assert receipt['runtime']['memory']['sampling_error'] == 'AccessDenied'
+    validate_receipt_safety(receipt)

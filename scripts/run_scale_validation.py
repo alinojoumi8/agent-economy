@@ -415,7 +415,8 @@ class _MemorySampler:
 
     @staticmethod
     def _rounded(totals) -> dict[str, float | int]:
-        return {key: int(value) if key == "samples" else round(float(value), 2)
+        return {key: int(value) if key == "samples" else
+                (round(float(value), 2) if totals["samples"] else 0.0)
                 for key, value in totals.items()}
 
     def _sample(self) -> None:
@@ -433,13 +434,18 @@ class _MemorySampler:
     def stop(self) -> dict[str, object]:
         self._stop.set()
         self._thread.join(timeout=2.0)
-        if self._sampling_error is not None:
-            raise RuntimeError("memory sampling failed") from self._sampling_error
-        if not self._totals["samples"]:
-            self._take_sample()
+        if self._thread.is_alive() and self._sampling_error is None:
+            self._sampling_error = TimeoutError()
+        if self._sampling_error is None and not self._totals["samples"]:
+            try:
+                self._take_sample()
+            except Exception as exc:
+                self._sampling_error = exc
         with self._lock:
             return {
                 "sample_interval_s": 0.05,
+                "sampling_error": (type(self._sampling_error).__name__
+                                   if self._sampling_error is not None else None),
                 **self._rounded(self._totals),
                 "by_stage": {stage: self._rounded(totals)
                              for stage, totals in sorted(self._by_stage.items())},
@@ -918,7 +924,8 @@ def run_validation(
             and source_manifest_before == source_manifest_after
         ),
         "memory_measured": (
-            int(memory["samples"]) > 0 and float(memory["peak_rss_mb"]) > 0),
+            memory.get("sampling_error") is None
+            and int(memory["samples"]) > 0 and float(memory["peak_rss_mb"]) > 0),
         "live_preflight": (
             bool(preflight["live_checked"] and preflight["live_ready"])
             if live else not preflight["live_checked"]),

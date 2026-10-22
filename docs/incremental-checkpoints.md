@@ -157,13 +157,13 @@ unchanged. Preparing that profile does not launch or certify a full experiment.
 
 The format requires a local filesystem with hard links and atomic rename.
 Whole immutable-pack digests cover headers and dead packed bytes in addition to
-per-chunk logical hashes. Large verification plans use two spawned read-only processes, avoiding
+per-chunk logical hashes. Large verification plans use four spawned read-only processes, avoiding
 contention with capture while retaining full pack and decoded-chunk checks.
 Workers receive bounded metadata, read immutable archive bytes, and are joined
 before the save finishes. Spawn avoids forking SQLite connections or threads.
 Memory receipts count aggregate parent-plus-descendant RSS. This parallelizes
 checkpoint verification only; world ticks remain sequential. There is
-no full-history future queue or verification cache survives an operation.
+no full-history future queue, and no verification cache survives an operation.
 
 World saves register the durable new point using a worker-owned SQLite connection
 before any rotation. A catalog-write failure preserves previous recovery points.
