@@ -332,7 +332,7 @@ def _verify_pack_group(archive, packs):
 
 
 def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None, executor=None):
-    """Verify all bytes, with two spawned read-only workers for large plans.
+    """Verify all bytes, with four spawned read-only workers for large plans.
 
     Spawn avoids forking a multithreaded SQLite owner. Only bounded metadata
     crosses the process boundary; workers read immutable archive bytes.
@@ -353,15 +353,16 @@ def _verify_plan(archive, images, *, verified=frozenset(), pack_proofs=None, exe
     ordered = sorted(entries.values(), key=lambda e: (e[1], e[2]))
     if len(ordered) >= 256:
         context = (nullcontext(executor) if executor is not None else
-                   ProcessPoolExecutor(max_workers=2,
+                   ProcessPoolExecutor(max_workers=4,
                                        mp_context=multiprocessing.get_context("spawn")))
         with context as pool:
             pack_list = list(pending_packs)
-            hashes = [pool.submit(_verify_pack_group, archive, part)
-                      for part in (pack_list[::2], pack_list[1::2])]
-            middle = len(ordered) // 2
-            decoded = [pool.submit(_verify_entries, archive, part)
-                       for part in (ordered[:middle], ordered[middle:])]
+            hashes = [pool.submit(_verify_pack_group, archive, pack_list[i::4])
+                      for i in range(4)]
+            # Keep each decoder's file access ordered and metadata bounded.
+            decoded = [pool.submit(_verify_entries, archive,
+                                   ordered[len(ordered)*i//4:len(ordered)*(i+1)//4])
+                       for i in range(4)]
             for future in [*hashes, *decoded]:
                 future.result()
     else:
@@ -396,10 +397,27 @@ def _verify_root_objects(archive, root, chunks):
 
 def _source_quick_check(source: str | Path) -> list[str]:
     """An independent native reader at the writer-excluded committed cut."""
+    if Path(source).stat().st_size >= 256 * CHUNK_SIZE:
+        # Mapped I/O faults terminate this disposable reader, never the live
+        # SQLite owner. BrokenProcessPool then refuses checkpoint publication.
+        with ProcessPoolExecutor(max_workers=1,
+                                 mp_context=multiprocessing.get_context("spawn")) as reader:
+            return reader.submit(_native_quick_check, source, mapped=True).result()
+    return _native_quick_check(source)
+
+
+def _native_quick_check(source: str | Path, *, mapped=False) -> list[str]:
     path = Path(source).absolute()
     db = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=0)
     try:
         db.execute("PRAGMA query_only=ON")
+        # A bounded reader cache avoids repeated overflow-page reads during the
+        # complete native scan. This connection closes before publication.
+        db.execute("PRAGMA cache_size=-2000" if mapped else "PRAGMA cache_size=-65536")
+        if mapped:
+            # At most 1 GiB of mapped database plus the 2 MiB reader cache;
+            # full scans beyond this prefix still use ordinary SQLite reads.
+            db.execute("PRAGMA mmap_size=1073741824")
         return [row[0] for row in db.execute("PRAGMA quick_check")]
     finally:
         db.close()
@@ -605,7 +623,7 @@ def _encode_image_range(bounds):
 
 
 def _encoded_chunks(image, known):
-    """Two workers and three ordered batches; never queue the whole image.
+    """Four spawned readers and five ordered batches for large images.
 
     Large owned images use read-only spawned readers of the same writer-excluded
     cut. Only metadata and new encoded bytes cross process boundaries. Small or
@@ -619,7 +637,8 @@ def _encoded_chunks(image, known):
         spec = image.spec
         count = (image.size + CHUNK_SIZE - 1) // CHUNK_SIZE
         jobs = iter((start, min(start + 128, count)) for start in range(0, count, 128))
-        context = ProcessPoolExecutor(max_workers=2,
+        workers = min(4, os.cpu_count() or 1)
+        context = ProcessPoolExecutor(max_workers=workers,
                                       mp_context=multiprocessing.get_context("spawn"),
                                       initializer=_capture_initialize, initargs=(spec, set(known)))
         submit = lambda pool, job: pool.submit(_encode_image_range, job)
@@ -627,6 +646,7 @@ def _encoded_chunks(image, known):
         chunks = iter(image.chunks(CHUNK_SIZE))
         jobs = iter(lambda: list(islice(chunks, 16)), [])
         context = ThreadPoolExecutor(max_workers=2)
+        workers = 2
         submit = lambda pool, job: pool.submit(_encode_batch, job, known)
     with context as pool:
         pending = deque()
@@ -634,7 +654,7 @@ def _encoded_chunks(image, known):
             job = next(jobs, None)
             if job is not None:
                 pending.append(submit(pool, job))
-        for _ in range(3):
+        for _ in range(workers + 1):
             enqueue()
         while pending:
             yield from pending.popleft().result()
@@ -745,16 +765,6 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
     # decoded once, while every referenced stored byte is still reverified.
     cache = {}
     pack_proofs = set()
-    if base is not None:
-        try:
-            previous, previous_chunks, previous_archive, previous_digest = read_incremental(base, _cache=cache)
-        except (OSError, ValueError, KeyError, TypeError) as exc:
-            raise CheckpointBaseError(f"checkpoint base rejected: {exc}") from exc
-        if previous_archive != archive:
-            raise IncrementalCheckpointError("checkpoint base belongs to another archive")
-        base_root = previous.get("base") or previous_digest
-        original = _root(archive, base_root, cache)
-        base_chunks, _ = _index(archive, original, cache)
     counts = {"new_chunks": 0, "written_bytes": 0, "new_logical_bytes": 0,
               "compacted_chunks": 0, "compacted_written_bytes": 0}
 
@@ -771,8 +781,21 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
         fd, name = tempfile.mkstemp(prefix=".stage-", dir=archive)
         temporary = Path(name)
         pack_hash = blake3()
+        buffer, buffered = [], 0
         try:
             with os.fdopen(fd, "wb") as output:
+                def flush():
+                    nonlocal buffered
+                    if not buffer:
+                        return
+                    free = shutil.disk_usage(archive).free
+                    if free < min_free_bytes + buffered:
+                        raise StorageBudgetExceeded("free_space", free, min_free_bytes + buffered)
+                    payload = b"".join(buffer)
+                    output.write(payload)
+                    pack_hash.update(payload)
+                    buffer.clear()
+                    buffered = 0
                 for digest, stored, raw_length, codec in _encoded_chunks(image, known):
                     if digest in known:
                         entry = known[digest]
@@ -782,17 +805,18 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
                         if not pending:
                             _pack_prefix(output, pack_hash)
                             counts["written_bytes"] += PACK_HEADER_SIZE
-                        entry = [digest, None, output.tell(), len(stored), raw_length, codec]
+                        entry = [digest, None, output.tell() + buffered,
+                                 len(stored), raw_length, codec]
                         pending[digest] = entry
-                        free = shutil.disk_usage(archive).free
-                        if free < min_free_bytes + len(stored):
-                            raise StorageBudgetExceeded("free_space", free, min_free_bytes + len(stored))
-                        output.write(stored)
-                        pack_hash.update(stored)
+                        if buffered + len(stored) > BASE_WRITE_BYTES:
+                            flush()
+                        buffer.append(stored)
+                        buffered += len(stored)
                         counts["new_chunks"] += 1
                         counts["written_bytes"] += len(stored)
                         counts["new_logical_bytes"] += raw_length
                     chunks.append(entry)
+                flush()
                 output.flush()
                 os.fsync(output.fileno())
             if pending:
@@ -804,29 +828,47 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
         finally:
             temporary.unlink(missing_ok=True)
     with logical_image(source, max_bytes=MAX_BYTES) as (db, image), ProcessPoolExecutor(
-            max_workers=2, mp_context=multiprocessing.get_context("spawn")) as verifier:
-        if base is not None and image.page_size != original["page_size"]:
-            raise CheckpointBaseError("checkpoint base page size mismatch", reason="geometry")
+            max_workers=4, mp_context=multiprocessing.get_context("spawn")) as verifier:
         with ThreadPoolExecutor(max_workers=3) as pool:
+            quick = pool.submit(_source_quick_check, source)
+            # Root decoding is independent of the native source scan. Start
+            # that scan as soon as the committed image is writer-excluded.
+            if base is not None:
+                try:
+                    previous, previous_chunks, previous_archive, previous_digest = read_incremental(base, _cache=cache)
+                except (OSError, ValueError, KeyError, TypeError) as exc:
+                    raise CheckpointBaseError(f"checkpoint base rejected: {exc}") from exc
+                if previous_archive != archive:
+                    raise IncrementalCheckpointError("checkpoint base belongs to another archive")
+                base_root = previous.get("base") or previous_digest
+                original = _root(archive, base_root, cache)
+                base_chunks, _ = _index(archive, original, cache)
+                if image.page_size != original["page_size"]:
+                    raise CheckpointBaseError("checkpoint base page size mismatch", reason="geometry")
             verify = (pool.submit(_verify_base_objects, archive, previous_chunks, previous["size"],
                                   base_chunks, original["size"], pack_proofs, executor=verifier)
                       if base is not None else None)
-            captured = pool.submit(capture, image)
-            quick = pool.submit(_source_quick_check, source)
+            def capture_verified():
+                # Disk readback need not wait for SQLite's independent scan.
+                # Both branches still finish inside the excluded source cut,
+                # before evidence/root publication or archive maintenance.
+                chunks = capture(image)
+                if verify is not None:
+                    try:
+                        verify.result()
+                    except (OSError, ValueError, KeyError, TypeError) as exc:
+                        raise CheckpointBaseError(f"checkpoint base verification failed: {exc}",
+                                                  reason="objects") from exc
+                prior = ({tuple(entry) for entry in previous_chunks + base_chunks}
+                         if base is not None else captured_verified)
+                if base is not None:
+                    chunks = _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes)
+                _verify_objects(archive, chunks, image.size, verified=prior,
+                                pack_proofs=pack_proofs, executor=verifier)
+                return chunks, prior
+            captured = pool.submit(capture_verified)
             evidence = _evidence(db, quick_check=quick.result)
-            chunks = captured.result()
-            if verify is not None:
-                try:
-                    verify.result()
-                except (OSError, ValueError, KeyError, TypeError) as exc:
-                    raise CheckpointBaseError(f"checkpoint base verification failed: {exc}",
-                                              reason="objects") from exc
-            prior_verified = ({tuple(entry) for entry in previous_chunks + base_chunks}
-                              if base is not None else captured_verified)
-            if base is not None:
-                chunks = _compact_chunks(archive, chunks, base_chunks, counts, min_free_bytes)
-            _verify_objects(archive, chunks, image.size, verified=prior_verified,
-                            pack_proofs=pack_proofs, executor=verifier)
+            chunks, prior_verified = captured.result()
         if base is not None and (previous["evidence"]["state"]["run_id"]
                                  != evidence["state"]["run_id"]):
             raise CheckpointBaseError("checkpoint base run mismatch", reason="identity")
@@ -845,6 +887,7 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
     packs = sorted({e[1] for e in entries})
     pack_indices = {digest: i for i, digest in enumerate(packs)}
     root["packs"] = packs
+    retention_root = dict(root)
     encode_entry = lambda e: [e[0], pack_indices[e[1]], *e[2:]]
     if base_root is None:
         root["chunks"] = [encode_entry(e) for e in entries]
@@ -859,6 +902,17 @@ def _save_incremental(source: str | Path, descriptor: str | Path,
     if free < min_free_bytes + len(encoded) + 4096:
         raise StorageBudgetExceeded("free_space", free, min_free_bytes + len(encoded) + 4096)
     _immutable(archive / (digest + ".root"), encoded)
+    if discard or collect:
+        # Retention needs this root again. Read back every stored byte before
+        # reusing its already validated decoded metadata under the same lock.
+        # No stat-only or cross-save proof is cached, and corruption cannot
+        # publish a descriptor or cause deletion of an older recovery point.
+        if _regular(archive / (digest + ".root"), MAX_ROOT_BYTES) != encoded:
+            raise IncrementalCheckpointError("checkpoint root readback mismatch")
+        if len(cache) > 6:
+            cache.clear()
+        cache[("root", archive, digest)] = retention_root
+        cache[("index", archive, id(retention_root))] = (retention_root, (chunks, base_root))
     _fsync_directory(archive)
     _publish(target, {"kind": KIND, "version": 2, "root_sha256": digest})
     if catalog_tick is not None:

@@ -49,12 +49,12 @@ another process can then invalidate a still-mapped WAL index and cause SIGBUS.
 The isolated reader prevents this lock loss, including when capture fails.
 Direct image reads cross the boundary in at most 8 MiB batches; reader startup,
 shutdown and verification remain inside the save timer and memory accounting.
-Hashing and compression of large owned images use two spawned read-only readers
-and at most three ordered 8 MiB ranges. Only new encoded blocks and metadata
+Hashing and compression of large owned images use at most four spawned read-only
+readers and five ordered 8 MiB ranges. Only new encoded blocks and metadata
 cross process boundaries; no full-image work queue exists. Each reader binds
 main/WAL file identities to the parent's writer-excluded cut, holds no SQLite
 connection, and closes its handles when the operation ends. Small images use
-two native threads and three 1 MiB batches. The two verification workers are
+two native threads and three 1 MiB batches. The four verification workers are
 reused for existing and newly stored objects within a save, then joined.
 Large fresh bases use at most eight spawned SQLite-free workers and nine
 ordered jobs. Each job reads at most 128 MiB of logical pages through the same
@@ -62,12 +62,30 @@ committed cut, writes one immutable pack with an at most 8 MiB buffer, fsyncs it
 hashes every stored byte and verifies every decoded chunk. Only metadata crosses
 process boundaries. All jobs finish and workers exit before root publication.
 The free-space reserve is checked before each bounded write; write, fsync or
-readback failures prevent publication. Existing-base saves retain two encoding
-workers and three ordered ranges. No validation or durability work is moved
+readback failures prevent publication. Existing-base saves batch writes in at
+most 8 MiB buffers, checking the free-space floor before each batch. Their full
+disk readback overlaps the native source scan and existing-root decoding.
+No validation or durability work is moved
 outside the save timer.
 SQLite integrity and ledger checks have separate native readers at the same
 writer-excluded cut. Common state/core SHA256 fields keep v1 canonical semantics;
 the storage root digest is not relabelled as a raw SQLite database SHA256.
+
+For large main databases, a disposable spawned SQLite-only reader performs the
+complete native `quick_check`, using at most 1 GiB of mapped input and a 2 MiB
+reader cache. Pages beyond that prefix still use ordinary SQLite reads. Small
+unmapped readers use a 64 MiB cache. Raw source-capture workers remain SQLite-free.
+SQLite documents that mapped I/O faults can terminate a process; isolating this
+reader turns a native reader failure into a rejected checkpoint rather than
+terminating the live SQLite owner. Unsupported mapping falls back to normal
+SQLite reads. All reader processes finish before publication; aggregate memory
+sampling includes them. See [SQLite mapped I/O](https://sqlite.org/mmap.html).
+
+Requested retention reuses decoded metadata for the newly created root only
+after reading back and comparing every stored root byte before descriptor
+publication. These proofs are bounded to the same archive lock and save; no
+persistent or stat-only integrity cache is used. Corrupt readback preserves the
+older recovery point and prevents the new descriptor from being published.
 
 Keep descriptors **and the entire referenced archive together** when moving a
 world. A descriptor alone is not a standalone SQLite database. The regular fork

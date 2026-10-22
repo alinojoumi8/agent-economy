@@ -594,7 +594,9 @@ def test_one_verifier_pool_is_reused_for_changed_save(world, tmp_path, monkeypat
     world.store.execute('UPDATE pool_probe SET value=randomblob(?)', (20 * 1024**2,))
     world.store.commit()
     save_incremental(world.store.path, second, base=first)
-    assert verification_pools == [2, 2]
+    # Each save reuses one four-worker raw/pack verifier pool and has one
+    # separate disposable SQLite reader. SQLite never enters a raw reader.
+    assert verification_pools == [4, 1, 4, 1]
 
 
 def test_spawned_capture_refuses_replaced_source_identity(world):
@@ -695,3 +697,122 @@ def test_large_base_worker_corruption_prevents_publication(world, tmp_path, monk
         save_incremental(world.store.path, descriptor)
     assert not descriptor.exists()
     assert not list((tmp_path / '.checkpoint-v2').glob('*.root'))
+
+
+def test_disk_readback_finishes_during_native_integrity_scan(world, tmp_path, monkeypatch):
+    import threading
+    import engine.incremental_checkpoint as module
+    readback_finished = threading.Event()
+    original_verify = module._verify_objects
+    original_quick = module._source_quick_check
+    def verify(*args, **kwargs):
+        original_verify(*args, **kwargs)
+        readback_finished.set()
+    def quick(source):
+        assert readback_finished.wait(10), 'disk readback waited for SQLite scan'
+        return original_quick(source)
+    monkeypatch.setattr(module, '_verify_objects', verify)
+    monkeypatch.setattr(module, '_source_quick_check', quick)
+    descriptor = tmp_path / 'overlapped.icp.json'
+    result = save_incremental(world.store.path, descriptor)
+    assert result['evidence']['quick_check'] == 'ok'
+    restore_incremental(descriptor, tmp_path / 'overlapped.db')
+
+
+def test_overlapped_readback_failure_prevents_publication(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    def fail(*args, **kwargs):
+        raise IncrementalCheckpointError('readback rejected')
+    monkeypatch.setattr(module, '_verify_objects', fail)
+    descriptor = tmp_path / 'rejected.icp.json'
+    with pytest.raises(IncrementalCheckpointError, match='readback rejected'):
+        save_incremental(world.store.path, descriptor)
+    assert not descriptor.exists()
+    assert not list((tmp_path / '.checkpoint-v2').glob('*.root'))
+
+
+def test_native_scan_keeps_full_quick_check_with_bounded_cache(world, monkeypatch):
+    import engine.incremental_checkpoint as module
+    statements = []
+    connect = sqlite3.connect
+    class Reader:
+        def __init__(self, *args, **kwargs):
+            self.db = connect(*args, **kwargs)
+        def execute(self, sql):
+            statements.append(sql)
+            return self.db.execute(sql)
+        def close(self):
+            self.db.close()
+    monkeypatch.setattr(module.sqlite3, 'connect', Reader)
+    assert module._source_quick_check(world.store.path) == ['ok']
+    assert statements == ['PRAGMA query_only=ON', 'PRAGMA cache_size=-65536',
+                          'PRAGMA quick_check']
+
+
+def _exit_native_reader(*args, **kwargs):
+    import os
+    os._exit(7)
+
+
+def test_native_reader_process_failure_refuses_publication(world, tmp_path, monkeypatch):
+    from concurrent.futures.process import BrokenProcessPool
+    import engine.incremental_checkpoint as module
+    world.store.execute('CREATE TABLE reader_probe(value BLOB)')
+    world.store.execute('INSERT INTO reader_probe VALUES (zeroblob(20000000))')
+    world.store.commit()
+    monkeypatch.setattr(module, '_native_quick_check', _exit_native_reader)
+    descriptor = tmp_path / 'reader-failed.icp.json'
+    with pytest.raises(BrokenProcessPool):
+        save_incremental(world.store.path, descriptor)
+    assert not descriptor.exists()
+    assert not list((tmp_path / '.checkpoint-v2').glob('*.root'))
+    assert world.store.execute('PRAGMA quick_check').fetchone()[0] == 'ok'
+
+
+def test_isolated_native_reader_matches_unmapped_full_scan(world):
+    import engine.incremental_checkpoint as module
+    world.store.execute('CREATE TABLE reader_probe(value BLOB)')
+    world.store.execute('INSERT INTO reader_probe VALUES (zeroblob(20000000))')
+    world.store.commit()
+    assert module._source_quick_check(world.store.path) == module._native_quick_check(
+        world.store.path) == ['ok']
+
+
+def test_native_scan_starts_before_existing_root_decode(world, tmp_path, monkeypatch):
+    import threading
+    import engine.incremental_checkpoint as module
+    base = tmp_path / 'base.icp.json'
+    save_incremental(world.store.path, base)
+    started, decoded = threading.Event(), threading.Event()
+    original_read = module.read_incremental
+    original_quick = module._source_quick_check
+    def read(*args, **kwargs):
+        assert started.wait(10), 'root decoding blocked the source scan'
+        result = original_read(*args, **kwargs)
+        decoded.set()
+        return result
+    def quick(source):
+        started.set()
+        assert decoded.wait(10), 'root decoding waited for the source scan'
+        return original_quick(source)
+    monkeypatch.setattr(module, 'read_incremental', read)
+    monkeypatch.setattr(module, '_source_quick_check', quick)
+    save_incremental(world.store.path, tmp_path / 'delta.icp.json', base=base)
+
+
+def test_retention_root_readback_rejects_corruption_before_publication(world, tmp_path, monkeypatch):
+    import engine.incremental_checkpoint as module
+    first, second = tmp_path / 'first.icp.json', tmp_path / 'second.icp.json'
+    save_incremental(world.store.path, first)
+    original = module._immutable
+    def corrupt(path, data):
+        original(path, data)
+        if path.suffix == '.root':
+            with path.open('r+b') as handle:
+                handle.write(b'!')
+    monkeypatch.setattr(module, '_immutable', corrupt)
+    with pytest.raises(IncrementalCheckpointError, match='root readback'):
+        save_incremental(world.store.path, second, base=first, discard=(first,), collect=True)
+    assert not second.exists()
+    assert first.exists()
+    restore_incremental(first, tmp_path / 'preserved.db')
