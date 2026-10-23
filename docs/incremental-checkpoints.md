@@ -185,3 +185,16 @@ archive. All immutable pack, decoded-chunk and SQLite proofs remain mandatory;
 concurrent pruning can reject a reader, but cannot publish an unverified copy.
 Select a disk-backed private `TMPDIR` with enough space for large restores.
 The explicit restore command retains its archive-lock behavior.
+
+## Runtime workspace availability
+
+The scale-validation preflight imports the v2 checkpoint engine and requires its
+source file to exist before creating a simulation. A removed checkout must not
+be accepted because its parent process still has some modules cached. This
+check leaves v1 profile preparation unchanged.
+
+For a long formal experiment, lock the source worktree and run from a frozen
+checkout outside managed worktree cleanup. Keep the interpreter, control
+scripts and receipts outside that cleanup boundary as well. Record the exact
+commit and source hashes; preserve prior failed experiments and use a fresh
+output directory and launch claim for an authorized replacement.

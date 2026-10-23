@@ -9,6 +9,7 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import errno
 import hashlib
+import importlib
 import inspect
 import json
 import os
@@ -185,6 +186,16 @@ def prepare_validation_config(
     if required_ticks is not None and ticks != int(required_ticks):
         raise ValidationInputError(
             f"profile requires exactly {int(required_ticks)} ticks")
+
+    if config.get("checkpoint_format") == "incremental-v2":
+        try:
+            checkpoint = importlib.import_module("engine.incremental_checkpoint")
+            origin = getattr(checkpoint, "__file__", None)
+            if not origin or not Path(origin).is_file():
+                raise ImportError("checkpoint source file is absent")
+        except (ImportError, OSError) as exc:
+            raise ValidationInputError(
+                "incremental checkpoint engine is unavailable") from exc
 
     prepared = deepcopy(config)
     prepared["checkpoint_dir"] = str(source_root / "checkpoints")

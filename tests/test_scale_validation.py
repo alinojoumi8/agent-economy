@@ -481,3 +481,43 @@ def test_memory_sampling_error_keeps_failed_receipt_and_source_anchors(tmp_path,
     assert receipt['checks']['source_immutable_during_replay']
     assert receipt['runtime']['memory']['sampling_error'] == 'AccessDenied'
     validate_receipt_safety(receipt)
+
+
+@pytest.mark.parametrize("failure", ["import", "source"])
+def test_incremental_prepare_rejects_unavailable_checkpoint_engine(tmp_path, monkeypatch, failure):
+    import importlib
+    from types import SimpleNamespace
+    original = importlib.import_module
+    def unavailable(name, *args, **kwargs):
+        if name == 'engine.incremental_checkpoint':
+            if failure == 'import':
+                raise ModuleNotFoundError(name)
+            return SimpleNamespace(__file__=str(tmp_path / 'removed' / 'incremental_checkpoint.py'))
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(importlib, 'import_module', unavailable)
+    profile = RUNS / 'acceptance/scale-270-recovery-buffer-lifecycle-incremental-1000.yaml'
+    with pytest.raises(ValidationInputError, match='incremental checkpoint engine is unavailable'):
+        prepare_validation_config(profile, ticks=1000, output_dir=tmp_path / 'out',
+                                  data_dir=tmp_path / 'runs', approve_live=False)
+    assert not (tmp_path / 'runs').exists()
+
+
+def test_legacy_prepare_does_not_require_incremental_engine(tmp_path, monkeypatch):
+    import importlib
+    original = importlib.import_module
+    def unavailable(name, *args, **kwargs):
+        if name == 'engine.incremental_checkpoint':
+            raise ModuleNotFoundError(name)
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(importlib, 'import_module', unavailable)
+    prepared = prepare_validation_config(REHEARSAL, ticks=1, output_dir=tmp_path / 'out',
+                                         data_dir=tmp_path / 'runs', approve_live=False)
+    assert prepared.get('checkpoint_format') != 'incremental-v2'
+
+
+def test_incremental_prepare_accepts_restored_engine(tmp_path):
+    profile = RUNS / 'acceptance/scale-270-recovery-buffer-lifecycle-incremental-1000.yaml'
+    prepared = prepare_validation_config(profile, ticks=1000, output_dir=tmp_path / 'out',
+                                         data_dir=tmp_path / 'runs', approve_live=False)
+    assert prepared['checkpoint_format'] == 'incremental-v2'
+    assert prepared['checkpoint_dir'] == str(tmp_path / 'runs/source/checkpoints')
