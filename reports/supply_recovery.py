@@ -1417,6 +1417,9 @@ def _sqlite_evidence(store: Store) -> tuple[bool, dict[str, Any]]:
 def _checkpoint_evidence(
         store: Store, run_id: str, config: Mapping[str, Any]) -> tuple[bool, dict[str, Any]]:
     """Validate retained canonical checkpoint artifacts without instantiating a World."""
+    if config.get("checkpoint_format") == "incremental-v2":
+        from reports.incremental_checkpoint_evidence import checkpoint_evidence
+        return checkpoint_evidence(store, run_id, config)
     keep_last = config.get("checkpoint_keep_last")
     checkpoint_dir_value = config.get("checkpoint_dir")
     configured_dir = _logical_checkpoint_directory(checkpoint_dir_value)

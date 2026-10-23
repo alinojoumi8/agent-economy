@@ -8,7 +8,9 @@ heard become observations → memory → beliefs. This is the rumor medium.
 """
 from __future__ import annotations
 
+import asyncio
 from collections import deque
+from functools import lru_cache
 import json
 import math
 import re
@@ -639,6 +641,9 @@ class Conversations:
                 continue
             await self._converse(tick, a, b, topic_slot=topic_slot)
             count += 1
+            # A scripted completion need not suspend. Yield only after the
+            # conversation's atomic writes and recent-line state are complete.
+            await asyncio.sleep(0)
         return count
 
     def _sample_pairs(self, tick: int, k: int) -> list[tuple[int, int]]:
@@ -975,8 +980,18 @@ class Conversations:
     def _line_key(text: str) -> str:
         return re.sub(r"[^a-z0-9]+", " ", text.lower()).strip()
 
+    @staticmethod
+    @lru_cache(maxsize=2048)
+    def _line_parts(text: str) -> tuple[str, frozenset, frozenset]:
+        # Cache immutable text features, never a world or its mutable history.
+        # Conversation lines are capped at 300 characters at admission.
+        key = Conversations._line_key(text)
+        tokens = key.split()
+        return (key, frozenset(tokens),
+                frozenset(zip(tokens, tokens[1:], tokens[2:])))
+
     def _too_similar(self, text: str, prior_lines: list[str]) -> bool:
-        key = self._line_key(text)
+        key, token_set, shingles = self._line_parts(text)
         if not key:
             return False
         conversation_config = self.config.get("conversations", {})
@@ -984,23 +999,16 @@ class Conversations:
             "similarity_jaccard_threshold", 0.82))
         shingle_threshold = float(conversation_config.get(
             "similarity_shingle_threshold", 0.80))
-        tokens = key.split()
-        token_set = set(tokens)
-        shingles = set(zip(tokens, tokens[1:], tokens[2:])) if len(tokens) >= 3 else set()
         for prior in prior_lines:
-            prior_key = self._line_key(prior)
+            prior_key, prior_set, prior_shingles = self._line_parts(prior)
             if key == prior_key:
                 return True
-            prior_tokens = prior_key.split()
-            prior_set = set(prior_tokens)
             if token_set and prior_set:
                 intersection = len(token_set & prior_set)
-                union = len(token_set | prior_set)
+                union = len(token_set) + len(prior_set) - intersection
                 if union and intersection / union >= token_threshold:
                     return True
-            if shingles and len(prior_tokens) >= 3:
-                prior_shingles = set(zip(
-                    prior_tokens, prior_tokens[1:], prior_tokens[2:]))
+            if shingles and prior_shingles:
                 overlap = len(shingles & prior_shingles)
                 smaller = min(len(shingles), len(prior_shingles))
                 if smaller and overlap / smaller >= shingle_threshold:
@@ -1054,8 +1062,8 @@ class Conversations:
                 f"{partner_name}, {openings[opening_index]} "
                 f"{effects[effect_index]} {endings[ending_index]}"
             )[:300]
-            if (not self._previously_said(candidate, avoid_texts)
-                    and not self._has_ungrounded_detail(candidate)):
+            if (not self._has_ungrounded_detail(candidate)
+                    and not self._previously_said(candidate, avoid_texts)):
                 return candidate
         return (
             f"{partner_name}, day {tick} still leaves jobs, prices, credit, "
@@ -1090,9 +1098,9 @@ class Conversations:
             r"risk|worry|wonder|likely)\b", lowered))
 
     def _previously_said(self, text: str, prior_lines: list[str]) -> bool:
-        if self._too_similar(text, prior_lines):
+        if self._line_key(text) in self._used_line_keys:
             return True
-        return self._line_key(text) in self._used_line_keys
+        return self._too_similar(text, prior_lines)
 
     def _shared_topic(self, tick: int, a_id: int | None = None,
                       b_id: int | None = None, *, topic_slot: int = 0) -> Optional[str]:

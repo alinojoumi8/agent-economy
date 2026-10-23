@@ -18,6 +18,7 @@ import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Callable, Optional
 
 from engine.store import ReadOnlyReplaySnapshot, open_read_only_connection
@@ -25,6 +26,7 @@ from engine.storage_policy import StoragePolicy
 from .adapters import Adapter, AdapterHTTPError, AdapterResult, AdapterTimeoutError, build_adapters
 from .completion_guard import BudgetExceeded, CompletionGuard
 from .readiness import ProviderConfigurationError, openrouter_route_error, validate_llm_config
+from .replay_attestation import ReplayCallJournal
 from .decision_config import decision_policy
 from .decisions import DECISIONS_CONTRACT, canonical_json, decision_hash, response_error, validate_evaluation
 from observability import get_logger, log_event as operational_log, safe_fields
@@ -758,7 +760,11 @@ class Gateway:
         self._replay_event_id_map: dict[int, int] = {}
         self._replay_exact_key_count = 0
         self._replay_compatibility_fallback_count = 0
-        self._replay_consumed_calls: list[tuple[int, str, str]] = []
+        replay_path = getattr(store, "path", None) if self.replay else None
+        journal_directory = (
+            Path(replay_path).parent
+            if replay_path and str(replay_path) != ":memory:" else None)
+        self._replay_consumed_calls = ReplayCallJournal(journal_directory)
         self._live_dispatch_count = 0
         if self.replay:
             source = str(config.get("replay_source_path", "")).strip()
@@ -782,10 +788,13 @@ class Gateway:
         self.replay_conn = None
         replay_snapshot = self._replay_snapshot
         self._replay_snapshot = None
-        if replay_snapshot is not None:
-            replay_snapshot.close()
-        elif replay_conn is not None:
-            replay_conn.close()
+        try:
+            if replay_snapshot is not None:
+                replay_snapshot.close()
+            elif replay_conn is not None:
+                replay_conn.close()
+        finally:
+            self._replay_consumed_calls.close()
 
     @contextmanager
     def replay_admission(self, name: str):
@@ -799,7 +808,7 @@ class Gateway:
             "event_map": dict(self._replay_event_id_map),
             "exact": self._replay_exact_key_count,
             "fallback": self._replay_compatibility_fallback_count,
-            "consumed": list(self._replay_consumed_calls),
+            "consumed": len(self._replay_consumed_calls),
             "governor": (
                 self.governor._last_call_id,
                 self.governor._total_spend_usd,
@@ -822,7 +831,7 @@ class Gateway:
             self._replay_event_id_map.update(snapshot["event_map"])
             self._replay_exact_key_count = snapshot["exact"]
             self._replay_compatibility_fallback_count = snapshot["fallback"]
-            self._replay_consumed_calls[:] = snapshot["consumed"]
+            self._replay_consumed_calls.truncate(snapshot["consumed"])
             (
                 self.governor._last_call_id,
                 self.governor._total_spend_usd,
@@ -835,7 +844,7 @@ class Gateway:
             raise
 
     def replay_execution_stats(self) -> dict[str, Any]:
-        """Attest what this in-memory replay execution actually consumed.
+        """Attest what this replay execution consumed without retaining its payloads in RAM.
 
         The digest deliberately excludes physical call ids and timestamps. It
         covers the same deterministic call contents used by exact replay while
@@ -848,60 +857,17 @@ class Gateway:
             "SELECT * FROM llm_calls WHERE COALESCE(purpose,'') NOT IN "
             f"({placeholders}) ORDER BY id",
             tuple(sorted(REPLAY_OPERATIONAL_PURPOSES)),
-        ).fetchall()
-        expected = [
+        )
+        expected = (
             (int(row["id"]), _logical_replay_call(row), str(row["purpose"] or ""))
             for row in rows
-        ]
-        consumed = list(self._replay_consumed_calls)
-        expected_ids = {item[0] for item in expected}
-        consumed_ids = [item[0] for item in consumed]
-        duplicate_consumptions = len(consumed_ids) - len(set(consumed_ids))
-
-        def purpose_counts(items: list[tuple[int, str, str]]) -> dict[str, int]:
-            counts: dict[str, int] = {}
-            for _call_id, _logical, purpose in items:
-                counts[purpose] = counts.get(purpose, 0) + 1
-            return dict(sorted(counts.items()))
-
-        oracle_expected = [
-            logical for _call_id, logical, purpose in expected
-            if purpose in {"oracle_plan", "oracle"}
-        ]
-        oracle_consumed = [
-            logical for _call_id, logical, purpose in consumed
-            if purpose in {"oracle_plan", "oracle"}
-        ]
-        missing = expected_ids - set(consumed_ids)
-        unexpected = set(consumed_ids) - expected_ids
+        )
         return {
-            "schema_version": 1,
-            "source_nonoperational_calls": len(expected),
-            "consumed_source_calls": len(consumed),
-            "source_logical_calls_sha256": _logical_replay_digest(
-                [item[1] for item in expected]),
-            "consumed_logical_calls_sha256": _logical_replay_digest(
-                [item[1] for item in consumed]),
-            "source_purpose_counts": purpose_counts(expected),
-            "consumed_purpose_counts": purpose_counts(consumed),
-            "oracle_source_calls": len(oracle_expected),
-            "oracle_consumed_calls": len(oracle_consumed),
-            "oracle_source_calls_sha256": _logical_replay_digest(oracle_expected),
-            "oracle_consumed_calls_sha256": _logical_replay_digest(oracle_consumed),
+            **self._replay_consumed_calls.execution_stats(expected),
             "exact_key_matches": self._replay_exact_key_count,
             "compatibility_fallback_matches": (
                 self._replay_compatibility_fallback_count),
             "live_dispatch_count": self._live_dispatch_count,
-            "missing_source_calls": len(missing),
-            "unexpected_source_calls": len(unexpected),
-            "duplicate_source_consumptions": duplicate_consumptions,
-            "all_nonoperational_calls_consumed_once": bool(
-                not missing and not unexpected and duplicate_consumptions == 0
-                and len(expected) == len(consumed)),
-            "all_oracle_calls_consumed_once": bool(
-                len(oracle_expected) == len(oracle_consumed)
-                and _logical_replay_digest(oracle_expected)
-                == _logical_replay_digest(oracle_consumed)),
         }
 
     @property

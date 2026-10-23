@@ -31,7 +31,7 @@ MAINTAINED_ROOT_DOCS = (
     "CONTRIBUTING.md", "SECURITY.md",
 )
 HANDBOOK_DOCS = (
-    "storage-and-recovery.md", "hostinger-vps.md",
+    "storage-and-recovery.md", "hostinger-vps.md", "incremental-checkpoints.md",
     "jev.md",
     "jev-domains.md",
     "hermes-diagnostics.md",
@@ -409,6 +409,8 @@ def test_scale_270_acceptance_commands_and_artifact_boundaries_are_documented():
         "runs/acceptance/scale-270-baseline-120.yaml",
         "runs/acceptance/scale-270-recovery-120.yaml",
         "runs/acceptance/scale-270-recovery-1000.yaml",
+        "runs/acceptance/scale-270-recovery-buffer-1000.yaml",
+        "runs/acceptance/scale-270-recovery-buffer-lifecycle-1000.yaml",
     ):
         assert profile in development
         assert (ROOT / profile).is_file()

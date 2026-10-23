@@ -10,6 +10,53 @@ from world.replay_storage import (
 from world.replay_verify import canonical_state_receipt, verify_replay_connections
 
 
+@pytest.mark.parametrize("exact", [True, False])
+def test_record_input_bounds_preserve_json_bytes(exact, tmp_path):
+    from world.replay_verify import _canonical_value
+
+    payload = {"text": "😀\u0000é", "values": [None, True, -0.0, 1e15, -1e-323],
+               "rows": [{"n": n, "label": "example"} for n in range(100)]}
+    raw = json.dumps(payload, ensure_ascii=False)
+    with ReplayStorage(scratch_dir=tmp_path) as storage:
+        storage.begin_record({"payload_json": raw})
+        record = {"payload_json": _canonical_value("payload_json", raw, storage)}
+        expected = json.dumps(record, sort_keys=exact, separators=(",", ":"),
+                              ensure_ascii=not exact, allow_nan=not exact).encode("utf-8")
+        assert storage.encode(record, exact=exact) == expected
+
+
+def test_input_bound_accounts_for_unpacked_payload_before_encoding(tmp_path, monkeypatch):
+    from world.replay_verify import _canonical_value
+
+    unpacked = json.dumps({"text": "x" * 4096})
+    monkeypatch.setattr("world.replay_verify.unpack_payload", lambda value: unpacked)
+    with ReplayStorage(scratch_dir=tmp_path,
+                       limits=ReplayVerificationLimits(max_record_bytes=2048)) as storage:
+        storage.begin_record({"payload_json": b"small compressed payload"})
+        value = _canonical_value("payload_json", b"small compressed payload", storage)
+        with pytest.raises(ReplayResourceLimitError, match="record is too large"):
+            storage.encode({"payload_json": value}, exact=True)
+
+
+@pytest.mark.parametrize("stored,expected", [
+    ('{"llm":{"institutional_role_purposes":true}}', True),
+    ('{"llm":{"institutional_role_purposes":false}}', False),
+    ('{}', None),
+    (b'{"llm":{"institutional_role_purposes":true}}', None),
+])
+def test_snapshot_preserves_historical_routing_marker_parsing(stored, expected):
+    from world.replay_verify import _VerificationSnapshot, _institutional_role_purpose_mode
+
+    connection = sqlite3.connect(":memory:")
+    connection.row_factory = sqlite3.Row
+    try:
+        connection.execute("CREATE TABLE run_meta(id INTEGER PRIMARY KEY,config_json TEXT)")
+        connection.execute("INSERT INTO run_meta VALUES(1,?)", (stored,))
+        assert _institutional_role_purpose_mode(_VerificationSnapshot(connection)) is expected
+    finally:
+        connection.close()
+
+
 def small_database(run_id="source", *, reordered=False):
     connection = sqlite3.connect(":memory:")
     connection.row_factory = sqlite3.Row
@@ -180,3 +227,149 @@ def test_resource_rejection_preserves_unrelated_files(tmp_path):
 def test_invalid_limits_are_rejected(changes):
     with pytest.raises(ValueError):
         ReplayVerificationLimits(**changes)
+
+
+@pytest.mark.parametrize("exact", [True, False])
+def test_record_encoding_preserves_json_bytes_at_size_boundary(tmp_path, exact):
+    values = [
+        {"z": [None, True, False, -0.0, 1e-300, 10**80],
+         "a": "héllo\n\u0000世界😀", "nested": {"repeated": ["x"] * 30}},
+        {"payload": "x" * 120},
+        {"payload": "\\\"\n\u0000" * 30},
+    ]
+    for value in values:
+        expected = json.dumps(value, sort_keys=exact, separators=(",", ":"),
+                              ensure_ascii=not exact, allow_nan=not exact).encode("utf-8")
+        with ReplayStorage(scratch_dir=tmp_path, limits=ReplayVerificationLimits(
+                max_record_bytes=len(expected))) as storage:
+            assert storage.encode(value, exact=exact) == expected
+            assert storage.stats["largest_record_bytes"] == len(expected)
+        with ReplayStorage(scratch_dir=tmp_path, limits=ReplayVerificationLimits(
+                max_record_bytes=len(expected)-1)) as storage:
+            with pytest.raises(ReplayResourceLimitError, match="record is too large"):
+                storage.encode(value, exact=exact)
+
+
+def test_record_encoding_preserves_invalid_value_rejection(tmp_path):
+    circular = []
+    circular.append(circular)
+    with ReplayStorage(scratch_dir=tmp_path) as storage:
+        assert storage.encode({"number": float("nan")}, exact=False) == b'{"number":NaN}'
+        with pytest.raises(ValueError, match="Out of range"):
+            storage.encode({"number": float("nan")}, exact=True)
+        with pytest.raises(ValueError, match="Circular reference"):
+            storage.encode(circular, exact=False)
+        with pytest.raises(UnicodeEncodeError):
+            storage.encode({"text": "\ud800"}, exact=True)
+
+
+def test_record_encoding_does_not_bypass_elapsed_limit(tmp_path, monkeypatch):
+    with ReplayStorage(scratch_dir=tmp_path,
+            limits=ReplayVerificationLimits(max_elapsed_seconds=1)) as storage:
+        monkeypatch.setattr("world.replay_storage.time.monotonic", lambda: storage.started + 2)
+        with pytest.raises(ReplayResourceLimitError, match="time limit"):
+            for _ in range(128):
+                storage.encode({"message": "small"}, exact=True)
+
+
+def test_reference_fragments_match_native_canonical_bytes_without_decoding(tmp_path, monkeypatch):
+    from world.replay_encoding import CanonicalReference
+
+    leaf = {"event": {"z": [None, True, -0.0, 1e-300, 10**80],
+                      "a": "héllo\n\u0000世界😀"}}
+    expected_value = {"duplicate": [leaf, leaf], "nested": {"leaf": leaf}, "end": "é"}
+    expected = json.dumps(expected_value, sort_keys=True, separators=(",", ":"),
+                          ensure_ascii=False, allow_nan=False).encode("utf-8")
+    expected_ascii_size = len(json.dumps(expected_value, separators=(",", ":"),
+                                        ensure_ascii=True).encode("ascii"))
+    with ReplayStorage(scratch_dir=tmp_path) as storage:
+        references = EventReferences(storage)
+        references[1] = leaf
+        storage.begin_record()
+        fragment = references[1]
+        value = {"duplicate": [fragment, fragment], "nested": {"leaf": fragment}, "end": "é"}
+        monkeypatch.setattr(CanonicalReference, "decoded", lambda _self: pytest.fail("decoded canonical bytes"))
+        assert storage.encode(value, exact=True) == expected
+        assert storage.ascii_size(value) == expected_ascii_size
+        assert storage.expanded_reference_bytes == len(json.dumps(leaf, separators=(",", ":")).encode("ascii"))
+    assert not list(tmp_path.iterdir())
+
+
+def test_call_fragments_survive_cache_eviction_without_recanonicalizing(tmp_path):
+    from world.replay_storage import CallReferences
+    from world.replay_verify import _canonical_value
+
+    connection = small_database()
+    canonicalized = []
+    def canonicalize(column, value):
+        canonicalized.append(column)
+        return _canonical_value(column, value)
+
+    try:
+        with ReplayStorage(scratch_dir=tmp_path, limits=ReplayVerificationLimits(
+                max_cache_entries=0, max_cache_bytes=0)) as storage:
+            references = CallReferences(connection, ["tick", "agent_id", "purpose", "request_json"],
+                                        canonicalize, storage)
+            storage.begin_record()
+            first = references[1]
+            expected = storage.encode(first, exact=True)
+            assert first["llm_call"]["purpose"] == "decision"
+            assert first["llm_call"]["request_json"]["message"] == "héllo"
+            storage.begin_record()
+            assert storage.encode(references[1], exact=True) == expected
+            assert canonicalized == ["tick", "agent_id", "purpose", "request_json"]
+            assert not storage.cache
+            assert storage.execute("SELECT COUNT(*) FROM call_refs").fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+def test_fragment_record_limits_reject_combined_size_and_cycles(tmp_path):
+    with ReplayStorage(scratch_dir=tmp_path, limits=ReplayVerificationLimits(
+            max_record_bytes=2048)) as storage:
+        references = EventReferences(storage)
+        references[1] = {"text": "x" * 1200}
+        storage.begin_record()
+        fragment = references[1]
+        with pytest.raises(ReplayResourceLimitError, match="record is too large"):
+            storage.encode({"first": fragment, "second": fragment}, exact=True)
+        cycle = [fragment]
+        cycle.append(cycle)
+        with pytest.raises(ValueError, match="Circular reference"):
+            storage.encode(cycle, exact=True)
+    assert not list(tmp_path.iterdir())
+
+
+@pytest.mark.parametrize('value', [float('nan'), float('inf'), -float('inf'), '\ud800'])
+def test_reference_index_defers_strict_value_rejection_until_comparison(tmp_path, value):
+    import sqlite3
+    from world.replay_storage import CallReferences
+
+    leaf = {'payload': value, 'unicode': 'é'}
+    expected = json.dumps(leaf, separators=(',', ':'), ensure_ascii=True).encode('ascii')
+    connection = sqlite3.connect(':memory:')
+    connection.row_factory = sqlite3.Row
+    connection.execute('CREATE TABLE llm_calls(id INTEGER PRIMARY KEY,payload_json TEXT)')
+    connection.execute('INSERT INTO llm_calls VALUES(1,?)', (json.dumps(leaf),))
+    try:
+        with ReplayStorage(scratch_dir=tmp_path) as storage:
+            events = EventReferences(storage)
+            events[1] = leaf
+            calls = CallReferences(connection, ['payload_json'],
+                                   lambda _column, raw: json.loads(raw), storage)
+            for cache_round in range(2):
+                storage.begin_record()
+                restored = events[1]
+                assert storage.encode(restored, exact=False) == expected
+                with pytest.raises((ValueError, UnicodeEncodeError)):
+                    storage.encode(restored, exact=True)
+                storage.begin_record()
+                call = calls[1]
+                assert storage.encode(call, exact=False) == (
+                    b'{"llm_call":{"payload_json":' + expected + b'}}')
+                with pytest.raises((ValueError, UnicodeEncodeError)):
+                    storage.encode(call, exact=True)
+                storage.cache.clear()
+                storage.cache_bytes = 0
+    finally:
+        connection.close()

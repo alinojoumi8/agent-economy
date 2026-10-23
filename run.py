@@ -827,6 +827,7 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
     parent_run_id + fork_tick set, so lineage is queryable.
     """
     import shutil
+    from engine.checkpoint_formats import checkpoint_path, is_incremental
 
     src = Path(spec)
     if not src.exists() and "@" in spec:
@@ -869,14 +870,14 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
         # Derive the checkpoint path from the run's configured checkpoint root
         # instead of trusting the stored checkpoints.path column. A tampered
         # row must not redirect the copy at an arbitrary file.
-        src = checkpoint_root / f"{run_id}_t{checkpoint_tick}.db"
+        src = checkpoint_path(checkpoint_root, run_id, checkpoint_tick, parent_config)
         if src.parent != checkpoint_root or src.resolve() != src:
             sys.exit(f"checkpoint path escapes its checkpoint root: {src}")
         if str(row["path"]) != str(src):
             sys.exit(
                 f"checkpoint record for run {run_id} disagrees with its derived path")
     if src.exists():
-        if not src.is_file() or src.suffix != ".db":
+        if not src.is_file() or (src.suffix != ".db" and not is_incremental(src)):
             sys.exit(f"fork source must be a run checkpoint database: {src}")
         if (src.is_symlink() or src.resolve() != src.absolute()
                 or src.stat().st_nlink != 1):
@@ -888,7 +889,11 @@ def fork_run(spec: str, data_dir: Path = DATA_DIR, *, upgrade_semantics: int | N
     new_id = new_run_id()
     data_dir.mkdir(parents=True, exist_ok=True)
     dest = data_dir / f"{new_id}.db"
-    shutil.copyfile(src, dest)
+    if is_incremental(src):
+        from engine.incremental_checkpoint import restore_incremental
+        restore_incremental(src, dest)
+    else:
+        shutil.copyfile(src, dest)
     try:
         store = Store(str(dest))
     except Exception:

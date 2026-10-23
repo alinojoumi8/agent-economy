@@ -6,6 +6,8 @@ uvicorn[standard]>=0.29
 websockets>=12
 PyYAML>=6
 httpx>=0.27
+# Remove compromised CA roots (PYSEC-2026-4320).
+certifi>=2026.10.19
 pydantic>=2
 python-dotenv>=1.0
 Jinja2>=3.1,<4
@@ -19,6 +21,10 @@ boto3>=1.35,<2
 prometheus-client>=0.21,<1
 # Versioned release benchmarks record peak process-tree RSS.
 psutil>=7,<8
+# Opt-in versioned incremental checkpoint chunk hashes.
+blake3==1.0.10
+# Bounded, lossless native compression for changed checkpoint chunks.
+lz4==4.4.5
 # dev / test
 # Starlette TestClient transport; runtime provider adapters retain httpx.
 httpx2>=2.13.1,<3

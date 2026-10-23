@@ -12,6 +12,7 @@ is why these count loop iterations rather than measuring wall clock.
 from __future__ import annotations
 
 import asyncio
+import pytest
 import sqlite3
 from pathlib import Path
 
@@ -163,3 +164,98 @@ def test_checkpoint_write_off_the_loop_keeps_the_loop_turning(store, tmp_path: P
 
     assert dest.exists()
     assert turns > 1, "the loop was blocked for the whole copy"
+
+
+def test_same_tick_checkpoint_uses_fresh_database_and_refreshes_manifest(store, tmp_path, monkeypatch):
+    from engine.checkpoint_manifest import build_checkpoint_manifest
+    import json
+
+    store.commit()
+    dest = tmp_path / 'repeat.db'
+    real_connect = sqlite3.connect
+    destinations = []
+
+    def connect(path, *args, **kwargs):
+        if not kwargs.get('uri'):
+            path = Path(path)
+            if path.name == dest.name and path != dest and 'isolation_level' not in kwargs:
+                assert not path.exists(), 'backup must not overwrite the previous database'
+                destinations.append(path)
+        return real_connect(path, *args, **kwargs)
+
+    monkeypatch.setattr(sqlite3, 'connect', connect)
+    World._checkpoint_write(store.path, dest)
+    store.execute("UPDATE run_meta SET status='paused' WHERE id=1")
+    store.commit()
+    World._checkpoint_write(store.path, dest)
+    assert len(destinations) == 2 and destinations[0] != destinations[1]
+    with real_connect(dest) as restored:
+        assert restored.execute('SELECT status FROM run_meta').fetchone()[0] == 'paused'
+    manifest = json.loads(Path(f'{dest}.manifest.json').read_text())
+    assert manifest == build_checkpoint_manifest(dest)
+    assert list(tmp_path.glob('.repeat.db.*')) == []
+
+
+@pytest.mark.parametrize('phase', ['finalize', 'manifest', 'publication'])
+def test_checkpoint_failure_preserves_previous_pair(store, tmp_path, monkeypatch, phase):
+    import world.loop as loop
+    import engine.checkpoint_manifest as manifests
+
+    store.commit()
+    dest = tmp_path / 'preserved.db'
+    World._checkpoint_write(store.path, dest)
+    manifest = Path(f'{dest}.manifest.json')
+    before = (dest.read_bytes(), manifest.read_bytes())
+    store.execute("UPDATE run_meta SET status='paused' WHERE id=1")
+    store.commit()
+    failure = OSError('injected failure')
+
+    def fail(*args, **kwargs):
+        raise failure
+
+    if phase == 'publication':
+        replace = manifests.os.replace
+
+        def publish(source, target):
+            if Path(target) == manifest:
+                raise failure
+            return replace(source, target)
+
+        monkeypatch.setattr(manifests.os, 'replace', publish)
+    else:
+        monkeypatch.setattr(loop, 'finalize_sqlite_artifact' if phase == 'finalize'
+                            else 'write_checkpoint_manifest', fail)
+    with pytest.raises(OSError) as caught:
+        World._checkpoint_write(store.path, dest)
+    assert caught.value is failure
+    assert (dest.read_bytes(), manifest.read_bytes()) == before
+    assert list(tmp_path.glob('.preserved.db.*')) == []
+
+
+def test_checkpoint_sync_uses_writable_handle(store, tmp_path, monkeypatch):
+    """Windows FlushFileBuffers requires a handle opened for writing."""
+    import engine.checkpoint_manifest as manifests
+
+    store.commit()
+    original_open = Path.open
+    original_sync = manifests.os.fsync
+    opened_modes = {}
+    modes_synced = []
+
+    def open_path(path, mode='r', *args, **kwargs):
+        handle = original_open(path, mode, *args, **kwargs)
+        opened_modes[handle.fileno()] = (path, mode, handle)
+        return handle
+
+    def sync(descriptor):
+        path, mode, handle = opened_modes.get(descriptor, (None, None, None))
+        if path is not None and path.name == 'windows.db' and not handle.closed:
+            modes_synced.append(mode)
+            if '+' not in mode and not any(letter in mode for letter in 'wax'):
+                raise OSError('simulated Windows read-only FlushFileBuffers failure')
+        original_sync(descriptor)
+
+    monkeypatch.setattr(Path, 'open', open_path)
+    monkeypatch.setattr(manifests.os, 'fsync', sync)
+    World._checkpoint_write(store.path, tmp_path / 'windows.db')
+    assert modes_synced == ['r+b']

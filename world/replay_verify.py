@@ -9,8 +9,10 @@ from typing import Any, Callable
 from collections.abc import Mapping
 
 from engine.person_kind_history import PersonKindHistoryError, staff_promotion_identity
+from world.replay_event_refs import LazyEventReferences, event_dependency_ids
+from world.replay_equivalence import identical_inputs
 from world.replay_storage import (
-    CallReferences, EventReferences, ReplayStorage, ReplayVerificationLimits,
+    CallReferences, ReplayStorage, ReplayVerificationLimits,
     ReplayResourceLimitError,
 )
 
@@ -196,21 +198,37 @@ FRONTIER_TABLES = {"frontier_sites", "frontier_settlements", "frontier_residence
                    "frontier_tasks", "frontier_votes", "frontier_history"}
 
 
-def _frontier_enabled(conn: sqlite3.Connection) -> bool:
+def _configuration(conn: sqlite3.Connection) -> dict:
+    if isinstance(conn, _VerificationSnapshot):
+        return conn.config
     row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
-    config = json.loads(row[0]) if row else {}
+    return json.loads(row[0]) if row else {}
+
+
+class _VerificationSnapshot:
+    """Reuse immutable configuration only within one connection digest pass."""
+
+    def __init__(self, connection):
+        self.connection = connection
+        self.config = _configuration(connection)
+        self.role_purpose_mode = _institutional_role_purpose_mode(connection)
+
+    def __getattr__(self, name):
+        return getattr(self.connection, name)
+
+
+def _frontier_enabled(conn: sqlite3.Connection) -> bool:
+    config = _configuration(conn)
     return config.get("frontier", {}).get("version") == 1
 
 
 def _urban_enabled(conn: sqlite3.Connection) -> bool:
-    row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
-    config = json.loads(row[0]) if row else {}
+    config = _configuration(conn)
     return int(config.get("engine_semantics_version", 1)) >= 13 and bool(config.get("urban_development", {}).get("enabled"))
 
 
 def _engine_semantics(conn: sqlite3.Connection) -> int:
-    row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
-    config = json.loads(row[0]) if row else {}
+    config = _configuration(conn)
     return int(config.get("engine_semantics_version", 1))
 
 
@@ -236,8 +254,10 @@ def _tables(conn: sqlite3.Connection) -> list[str]:
     return names
 
 
-def _canonical_value(column: str, value: Any) -> Any:
+def _canonical_value(column: str, value: Any, storage: ReplayStorage | None = None) -> Any:
     value = unpack_payload(value)
+    if storage is not None:
+        storage.account_input(value)
     if value is None or isinstance(value, (int, float)):
         return value
     if isinstance(value, bytes):
@@ -258,7 +278,8 @@ def _logical_llm_call_references(
         str(column[1]) for column in conn.execute('PRAGMA table_info("llm_calls")')]
     ignored = IGNORED_COLUMNS | SURROGATE_ID_COLUMNS["llm_calls"]
     identity_columns = [column for column in all_columns if column not in ignored]
-    return CallReferences(conn, identity_columns, _canonical_value, storage)
+    return CallReferences(conn, identity_columns,
+                          lambda column, value: _canonical_value(column, value, storage), storage)
 
 
 def _future_staff_role(
@@ -354,6 +375,8 @@ def _agent_role(
 def _institutional_role_purpose_mode(
         conn: sqlite3.Connection) -> bool | None:
     """Return the explicit routing marker, or None for historical profiles."""
+    if isinstance(conn, _VerificationSnapshot):
+        return conn.role_purpose_mode
     row = conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()
     if row is None:
         return None
@@ -615,11 +638,17 @@ def _logical_event_references(
         conn: sqlite3.Connection,
         llm_call_references: Mapping[int, Any],
         storage: ReplayStorage) -> Mapping[int, Any]:
-    """Index event surrogate IDs by deterministic row contents."""
-    references = EventReferences(storage)
-    for row in conn.execute("SELECT * FROM events ORDER BY id"):
-        storage.begin_record()
+    """Resolve event identities on demand with the original backward semantics."""
+    def dependencies(row):
         payload = _canonical_value("payload_json", row["payload_json"])
+        extra = (frozenset({"source_event_id", "outcome_event_id"})
+                 if isinstance(payload, dict) and payload.get("contract") == "bounded-economic-choice-v4"
+                 else frozenset())
+        return event_dependency_ids(payload, EVENT_REFERENCE_KEYS | extra,
+                                    EVENT_REFERENCE_LIST_KEYS, LLM_REFERENCE_KEYS | {"llm_call"})
+
+    def canonicalize(row, references):
+        payload = _canonical_value("payload_json", row["payload_json"], storage)
         resolver = None
         if isinstance(payload, dict):
             resolver = lambda key, parent, *, _row=row, _root=payload: (
@@ -632,7 +661,7 @@ def _logical_event_references(
         payload, _valid = _canonicalize_nested_event_references(
             payload, references, extra_keys=(frozenset({"source_event_id", "outcome_event_id"})
                 if isinstance(payload, dict) and payload.get("contract") == "bounded-economic-choice-v4" else frozenset()))
-        references[int(row["id"])] = {"event": {
+        return {"event": {
             "tick": int(row["tick"]),
             "kind": str(row["kind"]),
             "payload_json": payload,
@@ -641,7 +670,7 @@ def _logical_event_references(
             "subject_id": row["subject_id"],
             "importance": float(row["importance"]),
         }}
-    return references
+    return LazyEventReferences(conn, storage, dependencies, canonicalize)
 
 
 def _canonical_llm_reference(
@@ -792,7 +821,7 @@ def _table_digest(
         conn: sqlite3.Connection, table: str,
         llm_call_references: Mapping[int, Any],
         event_references: Mapping[int, Any], storage: ReplayStorage) -> tuple[int, str, bool]:
-    config = json.loads(conn.execute("SELECT config_json FROM run_meta WHERE id=1").fetchone()[0] or "{}")
+    config = _configuration(conn)
     urban = int(config.get("engine_semantics_version", 1)) >= 13 and config.get("urban_development", {}).get("enabled")
     all_columns = [str(row[1]) for row in conn.execute(f'PRAGMA table_info("{table}")')]
     ignored = (IGNORED_COLUMNS | SURROGATE_ID_COLUMNS.get(table, set())
@@ -835,7 +864,7 @@ def _table_digest(
         storage.clear_sort()
     references_valid = True
     for row in rows:
-        storage.begin_record()
+        storage.begin_record(row)
         record = {}
         for column in columns:
             if column == "model_call_id":
@@ -872,7 +901,7 @@ def _table_digest(
                 record[column] = resolved
                 references_valid = references_valid and valid
             else:
-                value = _canonical_value(column, row[column])
+                value = _canonical_value(column, row[column], storage)
                 if (urban and table == "attention_contexts" and column == "snapshot_json"):
                     value, valid = _canonical_attention_snapshot(value, event_references)
                     references_valid = references_valid and valid
@@ -917,6 +946,7 @@ def _connection_digests(
         database: sqlite3.Connection, names: list[str], storage: ReplayStorage) -> dict:
     storage.reset()
     with storage.read_limits(database):
+        database = _VerificationSnapshot(database)
         calls = _logical_llm_call_references(database, storage)
         events = _logical_event_references(database, calls, storage)
         return {name: _table_digest(database, name, calls, events, storage)
@@ -989,7 +1019,16 @@ def verify_replay_connections(
             replay_run = replay.execute("SELECT run_id, tick FROM run_meta WHERE id=1").fetchone()
             common = sorted(set(source_tables) & set(replay_tables))
             source_digests = _connection_digests(source, common, storage)
-            replay_digests = _connection_digests(replay, common, storage)
+            # Equal stored inputs imply the same canonical bytes, including
+            # invalid-reference markers. Reuse only after a strict streamed
+            # comparison; all mismatches use the historical independent path.
+            same_inputs = (_comparison_configuration(source) == _comparison_configuration(replay)
+                           and identical_inputs(source, replay, storage,
+                               excluded_tables=EXCLUDED_TABLES, ignored_columns=IGNORED_COLUMNS,
+                               table_ignored_columns=TABLE_IGNORED_COLUMNS,
+                               ignored_event_kinds=IGNORED_EVENT_KINDS))
+            storage.stats["identical_canonical_inputs"] = same_inputs
+            replay_digests = source_digests if same_inputs else _connection_digests(replay, common, storage)
             source_total = hashlib.sha256()
             replay_total = hashlib.sha256()
             for name in names:
@@ -1026,3 +1065,14 @@ def verify_replay_connections(
                 "differences": [item["table"] for item in results if not item["exact"]]
                                + ([] if ticks_exact else ["run_meta.tick"]),
             }
+
+
+def _comparison_configuration(connection):
+    # These paths/IDs are operational and never consulted by canonicalization.
+    # All other configuration fields (including future ones) must be equal.
+    config = dict(_configuration(connection))
+    for key in ("replay_source_run_id", "replay_source_path", "replay_source_tick",
+                "checkpoint_dir", "report_dir"):
+        config.pop(key, None)
+    return (json.dumps(config, sort_keys=True, separators=(",", ":")),
+            _institutional_role_purpose_mode(connection))

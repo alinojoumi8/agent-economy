@@ -7,7 +7,9 @@ import asyncio
 from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timezone
+import errno
 import hashlib
+import importlib
 import inspect
 import json
 import os
@@ -34,8 +36,10 @@ if str(ROOT) not in sys.path:
 from engine.checkpoint_manifest import finalize_sqlite_artifact
 from llm.readiness import validate_llm_config
 from reports.acceptance import uses_paid_providers
+from reports.scale_population import CONTRACT as POPULATION_CONTRACT, stable_population_evidence
 from run import open_run, provider_preflight, replay_headless
 from run_config import load_config
+from world.replay_storage import ReplayResourceLimitError
 from world.replay_verify import verify_replay
 
 
@@ -183,6 +187,16 @@ def prepare_validation_config(
         raise ValidationInputError(
             f"profile requires exactly {int(required_ticks)} ticks")
 
+    if config.get("checkpoint_format") == "incremental-v2":
+        try:
+            checkpoint = importlib.import_module("engine.incremental_checkpoint")
+            origin = getattr(checkpoint, "__file__", None)
+            if not origin or not Path(origin).is_file():
+                raise ImportError("checkpoint source file is absent")
+        except (ImportError, OSError) as exc:
+            raise ValidationInputError(
+                "incremental checkpoint engine is unavailable") from exc
+
     prepared = deepcopy(config)
     prepared["checkpoint_dir"] = str(source_root / "checkpoints")
     prepared["report_dir"] = str(output_dir / "reports")
@@ -232,6 +246,26 @@ def validate_receipt_safety(
             raise ReceiptSafetyError(f"credential value at {path}")
 
     visit(payload, "$receipt")
+
+
+def verification_error_receipt(error: Exception) -> dict[str, str | int]:
+    """Keep public failure evidence without exception paths or private payloads."""
+    kind = type(error).__name__
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,79}", kind) is None:
+        kind = "Exception"
+    result: dict[str, str | int] = {"type": kind, "message": "replay verification failed"}
+    if isinstance(error, ReplayResourceLimitError) and len(error.args) == 1:
+        message = error.args[0]
+        if isinstance(message, str) and message in {
+            "replay scratch byte limit exceeded", "replay verification time limit exceeded",
+            "replay free-space reserve reached", "replay scratch capacity or record limit exceeded",
+            "canonical replay record is too large", "expanded replay reference record is too large",
+            "recorded replay row is too large",
+        }:
+            result["message"] = message
+    elif isinstance(error, OSError) and type(error.errno) is int and error.errno in errno.errorcode:
+        result.update(errno=error.errno, message=f"replay verification failed ({errno.errorcode[error.errno]})")
+    return result
 
 
 def _atomic_write_json(path: Path, payload: Mapping[str, object]) -> None:
@@ -286,6 +320,10 @@ def _database_snapshot(store: Any) -> dict[str, int]:
 
 
 def _artifact_kind(path: Path, run_root: Path, role: str) -> str:
+    if path.name.endswith(".icp.json"):
+        return "checkpoint_descriptor_v2"
+    if path.parent.name == ".checkpoint-v2" and path.suffix in (".pack", ".root"):
+        return "checkpoint_pack_v2" if path.suffix == ".pack" else "checkpoint_root_v2"
     if path.suffix == ".db":
         return f"{role}_database" if path.parent == run_root else "checkpoint_database"
     if path.name.endswith(".db.manifest.json"):
@@ -348,26 +386,58 @@ def _read_only_tree(root: Path):
 class _MemorySampler:
     def __init__(self) -> None:
         self.process = psutil.Process()
-        self.samples: list[dict[str, object]] = []
+        self._sampling_error: Exception | None = None
+        self._totals = self._empty_totals()
+        self._by_stage: dict[str, dict[str, float | int]] = {}
+        self._lock = threading.Lock()
         self.stage = "startup"
-        self.started = time.perf_counter()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._sample, daemon=True)
 
     def _take_sample(self) -> None:
         memory = psutil.virtual_memory()
-        self.samples.append({
-            "elapsed_s": round(time.perf_counter() - self.started, 4),
-            "stage": self.stage,
-            "rss_mb": self.process.memory_info().rss / (1024 ** 2),
-            "available_memory_gb": memory.available / (1024 ** 3),
-            "system_memory_percent": float(memory.percent),
-        })
+        rss_bytes = self.process.memory_info().rss
+        # Native checkpoint verification uses short-lived spawned workers.
+        # Count the process tree rather than hiding their memory from the cap.
+        for child in self.process.children(recursive=True):
+            try:
+                rss_bytes += child.memory_info().rss
+            except psutil.NoSuchProcess:
+                pass  # A worker exited between enumeration and its RSS read.
+        rss = rss_bytes / (1024 ** 2)
+        available = memory.available / (1024 ** 3)
+        with self._lock:
+            stage = str(self.stage)
+            if stage not in self._by_stage:
+                self._by_stage[stage] = self._empty_totals()
+            for totals in (self._totals, self._by_stage[stage]):
+                totals["samples"] += 1
+                totals["peak_rss_mb"] = max(totals["peak_rss_mb"], rss)
+                totals["min_available_memory_gb"] = min(
+                    totals["min_available_memory_gb"], available)
+                totals["max_system_memory_percent"] = max(
+                    totals["max_system_memory_percent"], float(memory.percent))
+
+    @staticmethod
+    def _empty_totals() -> dict[str, float | int]:
+        return {"samples": 0, "peak_rss_mb": 0.0,
+                "min_available_memory_gb": float("inf"),
+                "max_system_memory_percent": 0.0}
+
+    @staticmethod
+    def _rounded(totals) -> dict[str, float | int]:
+        return {key: int(value) if key == "samples" else
+                (round(float(value), 2) if totals["samples"] else 0.0)
+                for key, value in totals.items()}
 
     def _sample(self) -> None:
-        while not self._stop.is_set():
-            self._take_sample()
-            self._stop.wait(0.05)
+        try:
+            while not self._stop.is_set():
+                self._take_sample()
+                self._stop.wait(0.05)
+        except Exception as exc:
+            self._sampling_error = exc
+            self._stop.set()
 
     def start(self) -> None:
         self._thread.start()
@@ -375,30 +445,22 @@ class _MemorySampler:
     def stop(self) -> dict[str, object]:
         self._stop.set()
         self._thread.join(timeout=2.0)
-        if not self.samples:
-            self._take_sample()
-        by_stage: dict[str, dict[str, object]] = {}
-        for stage in sorted({str(row["stage"]) for row in self.samples}):
-            rows = [row for row in self.samples if row["stage"] == stage]
-            by_stage[stage] = {
-                "samples": len(rows),
-                "peak_rss_mb": round(max(float(row["rss_mb"]) for row in rows), 2),
-                "min_available_memory_gb": round(
-                    min(float(row["available_memory_gb"]) for row in rows), 2),
-                "max_system_memory_percent": round(
-                    max(float(row["system_memory_percent"]) for row in rows), 2),
+        if self._thread.is_alive() and self._sampling_error is None:
+            self._sampling_error = TimeoutError()
+        if self._sampling_error is None and not self._totals["samples"]:
+            try:
+                self._take_sample()
+            except Exception as exc:
+                self._sampling_error = exc
+        with self._lock:
+            return {
+                "sample_interval_s": 0.05,
+                "sampling_error": (type(self._sampling_error).__name__
+                                   if self._sampling_error is not None else None),
+                **self._rounded(self._totals),
+                "by_stage": {stage: self._rounded(totals)
+                             for stage, totals in sorted(self._by_stage.items())},
             }
-        return {
-            "sample_interval_s": 0.05,
-            "samples": len(self.samples),
-            "peak_rss_mb": round(
-                max(float(row["rss_mb"]) for row in self.samples), 2),
-            "min_available_memory_gb": round(
-                min(float(row["available_memory_gb"]) for row in self.samples), 2),
-            "max_system_memory_percent": round(
-                max(float(row["system_memory_percent"]) for row in self.samples), 2),
-            "by_stage": by_stage,
-        }
 
 
 def _inspect_population(store: Any) -> dict[str, object]:
@@ -653,6 +715,9 @@ def run_validation(
     tick_records: list[dict[str, object]] = []
     source_path: Path | None = None
     replay_path: Path | None = None
+    verification_error = None
+    verification_stats: dict[str, Any] = {}
+    population_evidence = None
     try:
         sampler.stage = "genesis"
         genesis_started = time.perf_counter()
@@ -675,6 +740,8 @@ def run_validation(
             checkpoint_path = Path(result).resolve() if result else None
             manifest = Path(f"{checkpoint_path}.manifest.json") \
                 if checkpoint_path else None
+            if checkpoint_path and checkpoint_path.name.endswith(".icp.json"):
+                manifest = checkpoint_path
             checkpoint_records.append({
                 "tick": int(tick),
                 "reason": reason,
@@ -732,6 +799,13 @@ def run_validation(
         source_wall_s = time.perf_counter() - source_started
         source_meta = dict(source_store.get_meta())
         population = _inspect_population(source_store)
+        population_ok = population == EXPECTED_POPULATION
+        population_contract = (
+            (config.get("acceptance") or {}).get("scale_economic_health") or {})
+        if population_contract.get("schema_version") == 3:
+            population_ok, population_evidence = stable_population_evidence(
+                source_store.conn, ticks, config, EXPECTED_POPULATION)
+            population_ok = population_ok and population_contract.get("population_contract") == POPULATION_CONTRACT
         communications = _inspect_communications(source_store)
         providers = _inspect_providers(source_store)
         ledger_ok, ledger_diagnostic = source_world.economy.ledger.reconcile()
@@ -763,7 +837,15 @@ def run_validation(
             replay_world = None
             replay_store = None
             finalize_sqlite_artifact(replay_path)
-            replay_proof = verify_replay(source_path, replay_path)
+            verification_started = time.perf_counter()
+            try:
+                replay_proof = verify_replay(source_path, replay_path, stats=verification_stats)
+            except Exception as exc:
+                # Preserve completed execution evidence even if the verifier fails.
+                replay_proof = None
+                verification_error = verification_error_receipt(exc)
+            finally:
+                verification_wall_s = time.perf_counter() - verification_started
         replay_wall_s = time.perf_counter() - replay_started
         source_hash_after = _sha256_file(source_path)
         source_manifest_after = _artifact_manifest(
@@ -803,7 +885,7 @@ def run_validation(
             and source_meta["active_tick"] is None
             and str(source_meta["status"]) == "finished"
         ),
-        "population_exact": population == EXPECTED_POPULATION,
+        "population_exact": population_ok,
         "communications_exact": (
             communications["conversations"] == ticks * conversation_pairs
             and communications["messages"]
@@ -839,7 +921,8 @@ def run_validation(
             > genesis_database["logical_used_bytes"]
         ),
         "exact_replay": (
-            replay_proof["exact"] is True
+            replay_proof is not None
+            and replay_proof["exact"] is True
             and replay_proof["differences"] == []
             and int(replay_proof["source_tick"]) == ticks
             and int(replay_proof["replay_tick"]) == ticks
@@ -852,7 +935,8 @@ def run_validation(
             and source_manifest_before == source_manifest_after
         ),
         "memory_measured": (
-            int(memory["samples"]) > 0 and float(memory["peak_rss_mb"]) > 0),
+            memory.get("sampling_error") is None
+            and int(memory["samples"]) > 0 and float(memory["peak_rss_mb"]) > 0),
         "live_preflight": (
             bool(preflight["live_checked"] and preflight["live_ready"])
             if live else not preflight["live_checked"]),
@@ -903,6 +987,8 @@ def run_validation(
             "database": _artifact_id(replay_path, artifact_root),
             "wall_s": round(replay_wall_s, 6),
             "proof": replay_proof,
+            "verification_error": verification_error,
+            "verification": {"wall_s": round(verification_wall_s, 6), "storage": verification_stats},
             "execution": replay_tracker,
             "artifact_manifest": replay_manifest,
         },
@@ -922,6 +1008,7 @@ def run_validation(
             },
         },
         "population": population,
+        "population_evidence": population_evidence,
         "communications": communications,
         "providers": providers,
         "governor": governor,
@@ -978,7 +1065,7 @@ def main() -> None:
         "tick": receipt["source"]["tick"],
         "calls": receipt["providers"]["calls"],
         "spend_usd": receipt["providers"]["cost_usd"],
-        "replay_exact": receipt["replay"]["proof"]["exact"],
+        "replay_exact": (receipt["replay"].get("proof") or {}).get("exact", False),
     }, indent=2, sort_keys=True))
     if not receipt["passed"]:
         raise SystemExit(5)

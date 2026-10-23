@@ -23,13 +23,15 @@ from engine.store import Store
 from reports import supply_recovery
 from reports.inventory_buffer import buffer_inventory_evidence, demand_evidence
 from run_config import load_config
-from scripts.run_scale_validation import ReceiptSafetyError, validate_receipt_safety
+from scripts.run_scale_validation import ReceiptSafetyError, validate_receipt_safety, verification_error_receipt
+from reports.scale_population import CONTRACT as POPULATION_CONTRACT, stable_population_evidence
 from world.replay_verify import verify_replay
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = "agent-economy-scale-economic-health-v1"
 SCHEMA_V2 = "agent-economy-scale-economic-health-v2"
+SCHEMA_V3 = "agent-economy-scale-economic-health-v3"
 AB_SCHEMA = "agent-economy-scale-ab-v1"
 RUNTIME_SCHEMA = "agent-economy-scale-validation-v1"
 SQLITE_SIDECARS = ("-wal", "-shm", "-journal")
@@ -44,9 +46,27 @@ EXPECTED_POPULATION = {
     "regions": {"ironvale": 69, "northstar": 184, "suncoast": 55},
 }
 PROFILE_CONTRACTS = {
+    "runs/acceptance/scale-270-recovery-buffer-lifecycle-incremental-1000.yaml": {
+        "required_ticks": 1000,
+        "diagnostic": False,
+        "recovery_enabled": True,
+        "schema_version": 3,
+    },
+    "runs/acceptance/scale-270-recovery-buffer-lifecycle-1000.yaml": {
+        "required_ticks": 1000,
+        "diagnostic": False,
+        "recovery_enabled": True,
+        "schema_version": 3,
+    },
     "runs/acceptance/scale-270-recovery-buffer-120.yaml": {
         "required_ticks": 120,
         "diagnostic": True,
+        "recovery_enabled": True,
+        "schema_version": 2,
+    },
+    "runs/acceptance/scale-270-recovery-buffer-1000.yaml": {
+        "required_ticks": 1000,
+        "diagnostic": False,
         "recovery_enabled": True,
         "schema_version": 2,
     },
@@ -276,10 +296,14 @@ def _thresholds(config: Mapping[str, Any]) -> dict[str, Any] | None:
         "max_database_growth_bytes_per_tick": int,
         "max_checkpoint_p95_seconds": (int, float),
     }
-    if scale.get("schema_version") == 2:
+    if scale.get("schema_version") in (2, 3):
         expected_types.update(inventory_response_ticks=int, inventory_observation_ticks=int)
         if scale.get("inventory_response_ticks") != 5 or scale.get("inventory_observation_ticks") != 30:
             return None
+        if scale.get("schema_version") == 3:
+            expected_types["population_contract"] = str
+            if scale.get("population_contract") != POPULATION_CONTRACT:
+                return None
     elif scale.get("schema_version") != 1:
         return None
     if set(scale) != set(expected_types):
@@ -941,7 +965,14 @@ def _replay_and_source_evidence(
     source_section = _json_mapping(runtime.get("source")) or {}
     replay_section = _json_mapping(runtime.get("replay")) or {}
     source_hash = _file_hash(source_path)
-    proof = verify_replay(source_path, replay_path)
+    verification_error = replay_section.get("verification_error")
+    proof = None
+    if verification_error is None:
+        try:
+            proof = verify_replay(source_path, replay_path)
+        except Exception as exc:
+            # A verifier failure must not discard independent economic evidence.
+            verification_error = verification_error_receipt(exc)
     runtime_proof = _json_mapping(replay_section.get("proof"))
     source_before = source_section.get("artifact_manifest_before_replay")
     source_after = source_section.get("artifact_manifest_after_replay")
@@ -956,7 +987,8 @@ def _replay_and_source_evidence(
         replay_manifest, root=replay_root)
     execution = _json_mapping(replay_section.get("execution")) or {}
     exact = bool(
-        proof.get("exact") is True
+        proof is not None
+        and proof.get("exact") is True
         and proof.get("differences") == []
         and runtime_proof == proof
         and execution.get("live_dispatch_count") == 0
@@ -974,7 +1006,8 @@ def _replay_and_source_evidence(
         "runtime_source_sha256_before_replay": source_section.get("sha256_before_replay"),
         "runtime_source_sha256_after_replay": source_section.get("sha256_after_replay"),
         "proof": proof,
-        "runtime_proof_matches": runtime_proof == proof,
+        "verification_error": verification_error,
+        "runtime_proof_matches": proof is not None and runtime_proof == proof,
         "source_manifest_before": source_before_evidence,
         "source_manifest_after": source_after_evidence,
         "replay_manifest": replay_manifest_evidence,
@@ -1152,8 +1185,12 @@ def evaluate_scale_economic_health(
             "completed_statuses": sorted(COMPLETED_STATUSES),
         }
 
-        checks["population_exact"], evidence["population"] = _population_evidence(
-            source_connection)
+        if thresholds.get("schema_version") == 3:
+            checks["population_exact"], evidence["population"] = stable_population_evidence(
+                source_connection, evaluation_ticks, persisted_config, EXPECTED_POPULATION)
+        else:
+            checks["population_exact"], evidence["population"] = _population_evidence(
+                source_connection)
         checks["communications_exact"], evidence["communications"] = (
             _communications_evidence(
                 source_connection, runtime, evaluation_ticks, persisted_config))
@@ -1166,7 +1203,7 @@ def evaluate_scale_economic_health(
             checks["unemployment_final_mean_not_worse"],
             evidence["unemployment"],
         ) = _unemployment_evidence(source_connection, evaluation_ticks, thresholds)
-        if thresholds.get("schema_version") == 2:
+        if thresholds.get("schema_version") in {2, 3}:
             checks["production_and_inventory_healthy"], evidence["production_and_inventory"] = (
                 buffer_inventory_evidence(source_connection, evaluation_ticks, thresholds))
             checks["inventory_accounting_valid"] = evidence["production_and_inventory"].get("daily_conservation_exact") is True
@@ -1228,8 +1265,8 @@ def evaluate_scale_economic_health(
         policy_version = recovery.get("policy_version") if recovery.get("enabled") is True else None
         effective_config = _json_mapping(runtime.get("effective_config")) or {}
         result: dict[str, object] = {
-            "schema": SCHEMA_V2 if thresholds.get("schema_version") == 2 else SCHEMA,
-            "schema_version": 2 if thresholds.get("schema_version") == 2 else 1,
+            "schema": {2: SCHEMA_V2, 3: SCHEMA_V3}.get(thresholds.get("schema_version"), SCHEMA),
+            "schema_version": thresholds.get("schema_version") or 1,
             "outcome": outcome,
             "passed": outcome == "passed",
             "profile": {
@@ -1362,7 +1399,16 @@ def render_scale_economic_health_markdown(receipt: Mapping[str, object]) -> str:
         f"- Checkpoint p95 seconds: `{resources.get('checkpoint_p95_seconds')}`",
         "",
     ]
-    if receipt.get("schema_version") == 2:
+    if receipt.get("schema_version") == 3:
+        population = _json_mapping(evidence.get("population")) or {}
+        lines += [
+            "## Contract v3: stable lifecycle population", "",
+            "The initial cohort remains fixed. Retained deaths, scheduled replacements, arrivals and tier changes must reconcile to the living population; historical v2 fixed-cohort results are unchanged.", "",
+            f"- Population contract: `{population.get('contract')}`",
+            f"- Deaths / arrivals / future replacements: `{population.get('deaths')}` / `{population.get('arrivals')}` / `{population.get('pending_replacements')}`",
+            f"- Living population: `{json.dumps(population.get('living'), sort_keys=True)}`", "",
+        ]
+    if receipt.get("schema_version") in {2, 3}:
         demand = _json_mapping(evidence.get("demand")) or {}
         inventory = _json_mapping(evidence.get("production_and_inventory")) or {}
         lines += [
