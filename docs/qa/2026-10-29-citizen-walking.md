@@ -27,9 +27,11 @@ segments are not recorded street routes; no economic or ledger code changed.
   zero external action submissions.
 - The default desktop bodies measured about 32px tall, versus 11.7px in the
   reviewed baseline. The follow camera showed Editor B at about 51px.
-- Captured a full daily cycle at 2×, then followed Editor B. His position,
-  heading and submitted leg matrices changed while world day remained 20.
-  Two recorded legs connect Residential District 2 and the Public Commons.
+- Captured full daily playback at 2× and checked Editor B and Governor Vale,
+  including camera follow. Their positions, headings and submitted leg matrices
+  changed while world day remained 20. Editor B's recorded legs connect
+  Residential District 2 and the Public Commons. The final video made zero API
+  writes and covers the application code at `3097774`.
 - In a 237-interval desktop sample, frame interval p50 was 16.7ms and p95
   33.4ms; renderer submission p50 was 1.6ms and p95 2.4ms. These are local
   browser measurements, not a general device performance guarantee.
@@ -53,7 +55,14 @@ segments are not recorded street routes; no economic or ledger code changed.
   The fourth concerns signed zero in vendored WGSL inside the generated
   CivicDiorama bundle. Both flagged function bodies are byte-identical to the
   pre-walking `9eb7966` bundle; it is left standing outside this UI task.
-  A follow-up review of the corrected committed diff is pending.
+  Follow-up review of `3097774` completed with one major finding in the same
+  vendored WGSL: a potentially unsupported decoder guard combination involving
+  `LUMA_FP64_F32_INPUT_ONLY`. The flagged guard/body spans also match `9eb7966`.
+  Its reachability is not established by this UI test. Both dependency findings
+  remain open outside this task; no generated shader was hand-edited. No
+  walking-source findings remained in the follow-up review.
+- The branch includes the new walking regression file in the critical Chromium
+  CI job. Hosted CI was still pending when inspected; the PR remains a draft.
 - Dataset verification and Python dependency consistency passed. Compileall
   completed with warnings for inaccessible pre-existing report directories.
 - The full Python suite did not finish in its 300-second local bound.
