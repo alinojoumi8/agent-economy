@@ -1706,6 +1706,89 @@ test("household finances hide cached values after denial or a mismatched tick", 
   await expect(panel).not.toContainText("120.00 CAD");
 });
 
+for (const theme of ["light", "dark"]) {
+  test(`person details retain readable text in ${theme} mode`, async ({ page }) => {
+    await page.addInitScript(value => localStorage.setItem("ae-theme", value), theme);
+    for (const width of [1440, 390]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await page.goto("/runs/run-demo/people/1?fork=fork-a&tick=4");
+      await expect(page.getByRole("heading", { name: "Atlas Builder" })).toBeVisible();
+      await expect(page.getByRole("heading", { name: "Harbor Works Studio" })).toBeVisible();
+      const contrast = await page.locator(".world-os-living-agents").evaluate(root => {
+        type Color = [number, number, number, number];
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext("2d", { willReadFrequently: true })!;
+        const parse = (value: string): Color => {
+          // Resolve modern CSS colors (including the browser's Oklab placeholder).
+          context.clearRect(0, 0, 1, 1);
+          context.fillStyle = value;
+          context.fillRect(0, 0, 1, 1);
+          const values = context.getImageData(0, 0, 1, 1).data;
+          return [values[0], values[1], values[2], values[3] / 255];
+        };
+        const over = (front: Color, back: Color): Color => {
+          const alpha = front[3] + back[3] * (1 - front[3]);
+          return alpha ? [0, 1, 2].map(i =>
+            (front[i] * front[3] + back[i] * back[3] * (1 - front[3])) / alpha,
+          ).concat(alpha) as Color : [0, 0, 0, 0];
+        };
+        const luminance = (color: Color) => color.slice(0, 3).map(channel => {
+          const value = channel / 255;
+          return value <= .04045 ? value / 12.92 : ((value + .055) / 1.055) ** 2.4;
+        }).reduce((sum, value, i) => sum + value * [.2126, .7152, .0722][i], 0);
+        const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+        const samples: Array<{element: HTMLElement; text: string; pseudo?: string}> = [];
+        const results: Array<{text: string; ratio: number}> = [];
+        while (walker.nextNode()) {
+          const text = walker.currentNode.textContent?.trim() || "";
+          const element = walker.currentNode.parentElement;
+          if (!/[\p{L}\p{N}]/u.test(text) || !(element instanceof HTMLElement)
+            || !element.checkVisibility({ checkVisibilityCSS: true })
+            || element.closest('[disabled], [aria-disabled="true"]')) continue;
+          samples.push({ element, text });
+        }
+        for (const element of root.querySelectorAll<HTMLInputElement>("input[placeholder]")) {
+          if (element.checkVisibility({ checkVisibilityCSS: true }) && !element.disabled)
+            samples.push({ element, text: element.placeholder, pseudo: "::placeholder" });
+        }
+        for (const { element, text, pseudo } of samples) {
+          let backgrounds: Color[] = [[0, 0, 0, 0]];
+          for (let current: Element | null = element; current; current = current.parentElement) {
+            const style = getComputedStyle(current);
+            const ground = parse(style.backgroundColor);
+            // Check both gradient endpoints as well as translucent nested surfaces.
+            const stops = style.backgroundImage.match(/rgba?\([^)]*\)/g);
+            if (style.backgroundImage !== "none" && !stops)
+              throw new Error(`Unsupported contrast background: ${style.backgroundImage}`);
+            const fills = stops ? stops.map(stop => over(parse(stop), ground)) : [ground];
+            backgrounds = backgrounds.flatMap(front => fills.map(back => over(front, back)));
+            if (backgrounds.every(color => color[3] === 1)) break;
+          }
+          let opacity = 1;
+          for (let current: Element | null = element; current; current = current.parentElement)
+            opacity *= Number(getComputedStyle(current).opacity);
+          const textStyle = getComputedStyle(element, pseudo);
+          const foreground = parse(textStyle.color);
+          foreground[3] *= opacity * (pseudo ? Number(textStyle.opacity) : 1);
+          const ratio = Math.min(...backgrounds.map(color => {
+            const background = over(color, [255, 255, 255, 1]);
+            const a = luminance(over(foreground, background)), b = luminance(background);
+            return (Math.max(a, b) + .05) / (Math.min(a, b) + .05);
+          }));
+          results.push({ text: text.slice(0, 80), ratio });
+        }
+        return results;
+      });
+      expect(contrast.length).toBeGreaterThan(50);
+      expect(contrast.filter(item => item.ratio < 4.5), `${theme} at ${width}px`).toEqual([]);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await page.getByRole("button", { name: "Back to City · Esc", exact: true }).click();
+      await expect(page).toHaveURL(/\/world\?/);
+    }
+  });
+}
+
 test("Living Agents reconstructs history and preserves Live City focus", async ({ page }) => {
   let workspaceUrl = "";
   let journeyUrl = "";

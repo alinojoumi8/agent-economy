@@ -559,7 +559,7 @@ export function CivicCity(props) {
     <header className="civic-city__mast">
       <div className="civic-city__heading">
         <p>Civic Weather Room <span>Map sheet 01</span></p>
-        <h2 id={`civic-city-title-${variant}`}>The living city</h2>
+        <h2 id={`civic-city-title-${variant}`}>{cityView === "3d" ? "Explore the district" : "The living city"}</h2>
         {compactCity && <span className="civic-city__scene-status">{statusCopy(status, connected, tick, historical)}</span>}
         <p className="civic-city__lede">See who is working, what changed, and which committed record proves it.</p>
       </div>
@@ -662,7 +662,7 @@ export function CivicCity(props) {
     </div>
     <div className="civic-city__workfield">
       <div className={`civic-city__atlas civic-city__atlas--${cityView}`}>
-        {cityView === "3d" && props.render3d?.({ visibleAgents, selected })}
+        {cityView === "3d" && props.render3d?.({ visibleAgents, selected, onOpenEvidence: openMobileLens })}
         {cityView === "recorded" && !props.recordedAvailable && <p className="city-capability-note">This run has no recorded presence for this day. Agent activity remains available in Atlas and List.</p>}
         {cityView === "list" && <CityObjectList
           key={`${runId}:${observerState?.fork}:${tick}:${activeLayer}:${populationMode}:${activeOnly}`}

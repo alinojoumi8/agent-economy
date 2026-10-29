@@ -4,3 +4,17 @@
 
 .city3d-build{padding:20px;border-top:1px solid #c8d0d3}.city3d-build header{display:flex;justify-content:space-between;align-items:center;gap:16px}.city3d-build header h3{font-size:22px;margin:4px 0}.city3d-build header>span{font-size:11px}.city3d-build-form{display:flex;align-items:end;gap:12px;flex-wrap:wrap;margin:16px 0}.city3d-build-form>p{flex-basis:100%;margin:0}.city3d-quote{display:grid;gap:4px;font-size:12px}.city3d-quote span{font-size:11px}.city3d-projects{overflow:auto}.city3d-projects table{width:100%;font-size:12px;border-collapse:collapse}.city3d-projects caption{text-align:left;margin-bottom:10px;font-size:11px}.city3d-projects th,.city3d-projects td{text-align:left;padding:10px;border-bottom:1px solid #c8d0d3}.city3d-projects a{color:#2457d6}.city3d-projects>p{font-size:12px;color:#586878}
 .city3d-canvas canvas{cursor:grab}.city3d-canvas canvas:active{cursor:grabbing}.city3d-gesture-help{position:absolute;top:12px;left:16px;right:16px;z-index:1;margin:0;font-size:11px;line-height:1.5;background:#fafcfae8;padding:7px 10px;width:fit-content;pointer-events:none}
+.city3d-playback { padding:12px 20px; border-bottom:1px solid var(--ae-border-soft); }
+.city3d-playback-controls { display:flex; flex-wrap:wrap; align-items:center; gap:8px 12px; }
+.city3d-playback-controls button, .city3d-playback-controls select { min-height:44px; }
+.city3d-playback-controls label { display:flex; gap:8px; align-items:center; font-size:12px; }
+.city3d-playback-controls span { font-size:12px; color:#526574; }
+.city3d-playback-controls button[aria-pressed=true] { background:#2457d6; color:#fff; }
+.city3d-playback p { margin:8px 0 0; max-width:75ch; font-size:12px; line-height:1.5; color:#526574; }
+.city3d--embedded .city3d-playback p, .city3d--embedded .city3d-playback-controls span { color:var(--ae-text-2); }
+.city3d .city3d-playback button:hover:not(:disabled) { background:#e0e8e7; color:#12233f; }
+.city3d .city3d-playback button[aria-pressed=true] { background:#2457d6; color:#fff; }
+@media(max-width:600px) {
+  .city3d-playback { padding:12px; }
+  .city3d-playback-controls > span { flex-basis:100%; }
+}

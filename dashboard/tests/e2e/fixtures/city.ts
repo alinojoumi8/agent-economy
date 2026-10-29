@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-export async function installCityFixture(page:Page,{agents=300,places=100}:{agents?:number;places?:number}={}){
+export async function installCityFixture(page:Page,{agents=300,places=100,recordedDay=false}:{agents?:number;places?:number;recordedDay?:boolean}={}){
   await page.addInitScript(()=>{
     class Socket extends EventTarget{
       readyState=1;static OPEN=1;
@@ -21,6 +21,10 @@ export async function installCityFixture(page:Page,{agents=300,places=100}:{agen
       regions:[{id:1,name:'Test district',x:.5,y:.5}],
       agents:Array.from({length:agents},(_,n)=>({id:n+1,name:`Citizen ${n+1}`,region_id:1,place_id:(n%places)+1})),
       places:Array.from({length:places},(_,n)=>({id:n+1,name:`Place ${n+1}`,kind:['residential_district','firm_workplace','licensing_office','public_commons'][n%4],region_id:1,x:.3+(n%10)*.04,y:.3+Math.floor(n/10)*.04,capacity:12})),
+      presence:recordedDay&&places?Array.from({length:agents},(_,n)=>['morning','business','evening'].map(slot=>{
+        const p=(n+(slot==='business'&&n%4!==1?1:0))%places;
+        return {agent_id:n+1,name:`Citizen ${n+1}`,slot,place_id:p+1,tick,x:.3+(p%10)*.04,y:.3+Math.floor(p/10)*.04};
+      })).flat():[],
       banks:[{id:1,name:'Civic Bank',region_id:1,status:tick===1?'open':'failed'}],
       institutions:{tick,source:'public_bank_status',visibility:'public_status_only',available:true,items:[{id:'bank:1',bank_id:1,kind:'bank',name:'Civic Bank',status:tick===1?'open':'failed',currency_code:'USD'}]},
       organizations:[{id:1,name:'Workshop One',sector:'manufacturing',place_id:2,region_id:1}],

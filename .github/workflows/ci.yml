@@ -571,6 +571,7 @@ jobs:
           live-city-context.spec.ts
           city-unified.spec.ts
           city-viewport.spec.ts
+          city-walking.spec.ts
         working-directory: dashboard
       - name: Preserve failed browser diagnostics
         if: failure()

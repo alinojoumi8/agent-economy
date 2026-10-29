@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "dashboard/src/index.css"
+        ],
+        "createdAt": "2026-10-29T15:44:55.212Z",
+        "reason": "Agent triage: the 2px caution border marks Untrusted simulated communication in NewsCommunicationsWorkspace.tsx:202-203; civic-weather-room.css:2116 explicitly documents this intentional distinction. It is a semantic warning fence, not decorative card styling."
+      },
+      {
+        "rule": "layout-transition",
+        "value": "*",
+        "files": [
+          "dashboard/src/index.css"
+        ],
+        "createdAt": "2026-10-29T15:44:55.424Z",
+        "reason": "Agent triage: the only detected width transition belongs to the pre-existing world-os-provider-capacity selector, which has no JSX, TSX, JS, TS or HTML references in dashboard/src. Current runtime telemetry in WorldWorkspace.tsx:130-133 renders text instead. This unused rule cannot animate mounted UI; reassess if the selector is reintroduced."
+      }
+    ]
+  }
+}

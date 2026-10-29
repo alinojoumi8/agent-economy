@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useSearchParams } from 'react-router';
-import { CityScene, type SceneStats } from './CityScene';
+import { CityScene, type CityPlaybackState, type SceneStats } from './CityScene';
 import { activityForCity, projectCity, type CityInstance } from './cityProjection';
 import { UrbanDevelopment, type CityProposal } from './UrbanDevelopment';
 import { CityControls } from './CityControls';
@@ -8,8 +8,8 @@ import './city.css';
 import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
 import type { ObserverViewState } from '../app/observerViewState';
 
-type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal;observerState?:ObserverViewState};
-export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal,observerState}:Props){
+type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;onOpenEvidence?:()=>void;followId?:number|null;proposal?:CityProposal;observerState?:ObserverViewState};
+export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,onOpenEvidence,followId,proposal,observerState}:Props){
   const location=useLocation();
   const host=useRef<HTMLDivElement>(null),scene=useRef<CityScene|null>(null);
   const [params,setParams]=useSearchParams();
@@ -17,6 +17,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   const [layer,setLayer]=useState('all'),[region,setRegion]=useState('all'),[search,setSearch]=useState('');
   const preview=useCallback((proposal:CityProposal)=>scene.current?.preview(proposal),[]);
   const [stats,setStats]=useState<SceneStats|null>(null);
+  const [playback,setPlayback]=useState<CityPlaybackState>({playing:false,speed:1,phase:'',movers:0,available:0,blocked:0,reduced:false});
   const pickRef=useRef<(key:string)=>void>(()=>{});
   const cameraChangeRef=useRef<(value:string)=>void>(()=>{});
   const displayState=embedded?observerState:undefined;
@@ -53,7 +54,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
     try{
       instance=new CityScene(host.current,key=>pickRef.current(key),()=>setReady(true),setGraphicsError,value=>{
         setStats(previous=>previous&&previous.calls===value.calls&&previous.triangles===value.triangles&&previous.geometries===value.geometries&&previous.textures===value.textures?previous:value);
-      },value=>cameraChangeRef.current(value));
+      },value=>cameraChangeRef.current(value),setPlayback);
       scene.current=instance;
     }catch(e){setGraphicsError('3D graphics are unavailable on this device. The 2D atlas remains available.');}
     return()=>{instance?.dispose();scene.current=null;};
@@ -62,7 +63,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   // Back can cancel an uncommitted router transition after the scene already
   // moved. Reapply on navigation even when the bookmark string is unchanged.
   useEffect(()=>{scene.current?.restoreCamera(cameraBookmark);},[cameraBookmark,ready,location]);
-  useEffect(()=>{if(followId&&selected?.entityType==='agent'&&selected.entityId===followId)scene.current?.focus(selected.key);},[city,selected?.key,followId,ready,location]);
+  useEffect(()=>{scene.current?.follow(followId&&selected?.entityType==='agent'&&selected.entityId===followId?selected.key:null);},[city,selected?.key,followId,ready,location]);
   useEffect(()=>{if(embedded)scene.current?.preview(proposal||null);},[embedded,proposal,ready]);
   const evidenceUrl=(item:CityInstance)=>{
     const scope=new URLSearchParams();if(params.get('fork'))scope.set('fork',params.get('fork')!);if(historical)scope.set('tick',tick);
@@ -72,9 +73,23 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   };
   const eventUrl=(id:number)=>{const q=new URLSearchParams();q.set('event',String(id));if(historical)q.set('tick',tick);if(params.get('fork'))q.set('fork',params.get('fork')!);return `/runs/${encodeURIComponent(runId)}/investigations?${q}`;};
   const failure=error||parsed.error||graphicsError;
+  useEffect(()=>{scene.current?.allowPlayback(!failure&&!stale&&!loading);},[failure,stale,loading]);
   const persistCamera=()=>{const value=scene.current?.cameraState();if(value)cameraChangeRef.current(value);};
   const camera=(action:Parameters<CityScene['cameraAction']>[0])=>{scene.current?.cameraAction(action);persistCamera();};
   const focusSelection=()=>{if(selected){scene.current?.focus(selected.key);persistCamera();}};
+  const playbackControls = <div className="city3d-playback" role="group" aria-label="3D recorded day playback">
+      <div className="city3d-playback-controls">
+        <button disabled={!ready||!!failure||stale||loading||!playback.movers} aria-pressed={playback.playing}
+          onClick={()=>scene.current?.playback(!playback.playing)}>{playback.playing?'Pause recorded day':'Play recorded day'}</button>
+        <button disabled={!ready||!!failure||!playback.available} onClick={()=>scene.current?.playback(false,playback.speed,true)}>Restart day</button>
+        <label>Playback speed<select aria-label="Playback speed" value={playback.speed} onChange={e=>scene.current?.playback(playback.playing,Number(e.target.value))}>
+          {[.5,1,2,4].map(speed=><option key={speed} value={speed}>{speed}×</option>)}</select></label>
+        <span>{playback.movers?`${playback.phase} · ${playback.movers} moving citizens`:'No complete moving itineraries for this day'}</span>
+      </div>
+      <p>{playback.reduced?'Reduced motion: outside-place positions change in steps. ':'Citizens follow illustrative roads between recorded places. '}
+        World time stays fixed. Incomplete itineraries stay still.
+        {playback.blocked>0&&` ${playback.blocked} citizens have no safe road connection and stay still.`}</p>
+    </div>;
   return <section className={'city3d'+(embedded?' city3d--embedded':'')} aria-label="Manyworld 3D city">
     {!embedded&&<header className="city3d-heading"><div><p>MANYWORLD / CITY 3D</p><h2>A city with an economy.</h2></div>
       <div className="city3d-state"><strong>{historical?'Historical':stale?'Stale':status||'Connecting'}</strong><span>Tick {city?.envelope.tick??'—'} · {city?.instances.filter(i=>i.entityType==='agent').length??0} visible agents</span></div></header>}
@@ -85,9 +100,12 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
       <button onClick={()=>{setSearch('');setRegion('all');setLayer('all');camera('reset');}}>Reset view</button>
       {city?.instances.some(i=>i.provenance==='derived')&&<button onClick={()=>scene.current?.fitVisible(true)}>Find unlocated entities</button>}
     </div>}
-    {embedded&&<div className="city3d-focus"><button disabled={!selected} onClick={focusSelection}>Focus {selected?.name||'selection'}</button><button onClick={()=>camera('reset')}>Show all</button>
+    {embedded&&<div className="city3d-district">
+      <div className="city3d-district-heading"><span>District preview</span><strong>{historical?'Historical':stale?'Stale':status||'Connecting'} · Day {city?.envelope.tick??'—'}</strong></div>
+      <p className="city3d-invitation">Follow a citizen through the recorded day, or select a building to inspect its evidence.</p>
       {!city?.instances.some(i=>i.provenance==='observed')&&<p className="city-capability-note">This run has no recorded place coordinates. Positions below are display slots. Use the activity feed to follow what agents did.</p>}
     </div>}
+    {!embedded&&playbackControls}
     <div className="city3d-layout">
       <div className="city3d-field">
         <p className="city3d-gesture-help">Drag to move · Right-drag to rotate · Scroll or pinch to zoom</p>
@@ -95,6 +113,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
         {(loading||!ready)&&!failure&&<div className="city3d-message" role="status">{loading?'Reading committed city state…':'Loading Blender city assets…'}</div>}
         {failure&&<div className="city3d-message" role="alert"><strong>{failure}</strong><button onClick={onFallback}>Use 2D atlas</button></div>}
         {!loading&&ready&&!failure&&!visible.length&&<div className="city3d-message" role="status">{city?.instances.length?'No entities match these filters.':'No city entities are available in this projection.'}</div>}
+        {embedded&&playbackControls}
         <div className="city3d-camera" role="group" aria-label="Camera controls">
           <button onClick={()=>camera('in')} aria-label="Zoom in">+</button><button onClick={()=>camera('out')} aria-label="Zoom out">−</button>
           <button onClick={()=>camera('left')} aria-label="Rotate left">↶</button><button onClick={()=>camera('right')} aria-label="Rotate right">↷</button>
@@ -102,6 +121,12 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
           <button onClick={()=>camera('west')} aria-label="Pan west">←</button><button onClick={()=>camera('east')} aria-label="Pan east">→</button>
         </div>
         <div className="city3d-legend"><span><i className="city3d-blue"/>Selected</span><span><i className="city3d-green"/>Completed</span><span><i className="city3d-red"/>Rejected / cancelled</span><span>Amber: pending · Gray: recorded</span></div>
+        {embedded&&<div className="city3d-focus">
+          <button disabled={!selected||!ready||Boolean(failure)} onClick={focusSelection}>Focus {selected?.name||'selection'}</button>
+          {!!city?.regions.length&&<button onClick={()=>{scene.current?.focusRegion(city.regions[0].id);persistCamera();}}>District overview</button>}
+          <button onClick={()=>camera('reset')}>Show all</button>
+          {onOpenEvidence&&<button className="city3d-inspect" onClick={onOpenEvidence}>Selected evidence ↓</button>}
+        </div>}
       </div>
       {!embedded&&<aside className="city3d-inspector" aria-label="City entity inspector">
         <p className="city3d-kicker">SELECT & EXPLORE</p>
@@ -123,8 +148,10 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
         {!!city?.clusters.length&&<p className="city3d-note">Aggregated residents: {city.clusters.map(c=>`${c.name}: ${c.count}`).join(' · ')}. Individual locations are not exposed.</p>}
       </aside>}
     </div>
-    <div className="city3d-notes">{city?.warnings.filter((_,index)=>historical||index<city.warnings.length-1).map(text=><p key={text}>{text}</p>)}
-      <details><summary>Projection and rendering evidence</summary><code>{city?.envelope.snapshot_version||'No snapshot'} · layout {city?.city_layout_version} · {stats?`${stats.calls} draw calls / ${stats.triangles.toLocaleString()} triangles / ${stats.geometries} geometries / ${stats.textures} textures`: 'Renderer initializing'}</code></details>
+    <div className="city3d-notes">
+      {embedded&&<p>Original Manyworld illustration · Selectable labels show a few landmarks; the keyboard explorer includes every visible entity.</p>}
+      {city?.warnings.filter((_,index)=>historical||index<city.warnings.length-1).map(text=><p key={text}>{text}</p>)}
+      <details><summary>Projection and rendering evidence</summary><p>Roads and outside-place waiting positions are illustrative routes between daily placements, not measured travel. Citizens avoid building footprints; unavailable routes stay still. Playback pauses when this tab is hidden. Character sizes and spacing are illustrative.</p><code>{city?.envelope.snapshot_version||'No snapshot'} · layout {city?.city_layout_version} · {stats?`${stats.calls} draw calls / ${stats.triangles.toLocaleString()} triangles / ${stats.geometries} geometries / ${stats.textures} textures`: 'Renderer initializing'}</code></details>
     </div>
     {!embedded&&<UrbanDevelopment runId={runId} tick={tick} fork={params.get('fork')} stale={stale} onPreview={preview}/>}
     {!embedded&&!historical&&<CityControls runId={runId} selectedAgentId={selected?.entityType==='agent'?selected.entityId:null} stale={stale}/>}

@@ -190,6 +190,38 @@ the atlas keeps at least 570px of height; at 460px it keeps 520px. On phones the
 reading order is district overview, selected agent, current activity, then
 evidence. The full city is never shrunk into an illegible thumbnail.
 
+## Interactive district preview
+
+The opt-in **3D · experimental** City view uses the existing original Manyworld
+Blender kit and Three.js renderer as a selectable district. Desktop gives the
+scene most of the width with one 320px evidence inspector beside it; recorded
+activity follows below. At 1050px and below the inspector moves beneath the
+scene. The phone toolbar is compact, with a native entity selector and a
+**Selected evidence** button that scrolls and transfers focus to the inspector.
+
+Map labels are native buttons anchored to projected entity positions. At most
+ten non-overlapping labels appear, prioritizing the selected entity. Every
+visible entity remains available in the keyboard explorer and List. Unlocated
+labels say **display slot**; housing blocks remain district illustrations.
+The overview camera frames the actual projected bounds without changing stored
+positions. Streets, buildings, trees and marker offsets remain illustrative.
+
+The surrounding controls respect the saved light/dark theme; the city uses a
+daylit civic palette. Selected labels use cobalt and white, and controls target
+44px. Recorded-day playback uses an independent display clock with Play/Pause,
+Restart and speed controls. Citizens follow a shared, deterministic illustrative
+road graph between authorized daily places, turning at corners and clearing
+building footprints even at their largest display scale. Waiting positions are
+outside buildings on that graph. Unknown, private, incomplete or disconnected
+itineraries stay still; no random journey is invented. The roads do not claim
+measured routes or travel time. Reduced motion uses discrete outside-place
+positions without gait; hidden tabs pause. Run/fork/tick context and evidence
+keep their shared observer contract. Atlas remains the default and WebGL fallback.
+
+See [the redesign plan](docs/plans/2026-10-28-starnet-ui-redesign.md) and
+[verification](docs/plans/2026-10-29-district-preview-verification.md), plus
+[road movement evidence](docs/qa/2026-10-29-road-walking.md).
+
 ## Elevation & Depth
 
 Depth comes from material stacking: cool paper below, translucent acetate data
