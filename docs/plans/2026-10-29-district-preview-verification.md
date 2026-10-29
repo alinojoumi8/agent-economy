@@ -92,3 +92,37 @@ production mount is `WorldWorkspace`, which passes `embedded` and wraps the
 search confirmed there is no production non-embedded mount. No code change
 or suppression was made for that conditional finding. Revisit the shared
 landmark styles if a standalone viewport route is introduced.
+
+## Person details contrast and 20-day rehearsal
+
+The person panel paired a fixed dark surface with light-theme text. Its headings
+could approach 1:1 contrast, and several secondary labels were too faint in both
+themes. The panel now uses matching theme surface/text tokens, including
+milestones, employment and project details, evidence badges and the search
+placeholder. Layout and simulation behavior are unchanged.
+
+- The new rendered-contrast regression failed in both themes before the fix.
+  Both cases now pass at 1440px and 390px, including placeholder text and return
+  navigation. Unsupported background images fail the check rather than being
+  silently ignored.
+- Dashboard unit checks: 48 passed. TypeScript and the production build passed;
+  the existing large-chunk warning remains. The World OS, district and
+  accessibility browser selection passed all 54 cases. After the final
+  placeholder adjustment, the two contrast cases and production build passed
+  again. The committed production bundle was regenerated.
+- A fresh isolated scripted world, `99bcc63987`, advanced from day 0 to day 20
+  through the UI and paused at its configured limit. Its database is retained at
+  `/tmp/manyworld-person-contrast-20day-7m01trys/worlds/99bcc63987.db`. Read-only
+  receipts show events through tick 20, 523 scripted decisions, zero external
+  model attempts and $0 provider cost. No saved research world was resumed.
+- Final production UI checks against that paused world sampled 296–297 rendered
+  text entries at 390px, 768px and 1440px in both themes. The minimum measured
+  ratio was 5.13:1 in light mode and 4.77:1 in dark mode. No horizontal page
+  overflow or captured page runtime errors occurred. These are panel-specific
+  local checks, not whole-application accessibility certification.
+- Screenshots, logs and machine-readable receipts are retained in the task's
+  `starnet-district/person-contrast-20day` artifact directory. The local preview
+  remains paused at day 20 on port 4183.
+
+The broader verification limits above remain unchanged; MW-33 remains In Progress
+and PR #145 remains a draft.
