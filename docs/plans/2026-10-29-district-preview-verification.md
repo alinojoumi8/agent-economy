@@ -52,8 +52,8 @@ mechanics or saved source runs were changed.
 | Lint | No dashboard lint script is configured |
 | ECC design evidence record | Completeness checker passed; actual captures were also visually inspected |
 | Staged secret scan | Passed; no leaks found |
-| CodeRabbit | The user approved sharing the diff after automatic approval review initially blocked it. Review of the updated PR is pending. |
-| Hosted CI | Pending draft PR; no merge or deployment |
+| CodeRabbit | Completed against `main` at `2143ced`, with one minor finding triaged below. |
+| Hosted CI | Draft PR [#145](https://github.com/alinojoumi8/manyworld/pull/145); no passing hosted CI claim, merge or deployment |
 
 The two broad-suite failure positions were identified from collection order and
 then explicitly rerun using fresh temporary test worlds. No existing research
@@ -80,3 +80,15 @@ successful rerun used the approved unrestricted test command. The rebuilt
 preview was visually inspected at 1440px and 390px: labels retain 44px targets,
 1px borders on all sides, a 3px keyboard focus outline and no page overflow.
 The broader verification limits above remain unchanged.
+
+## CodeRabbit review
+
+After explicit user approval, CodeRabbit CLI returned `review_completed` for
+the committed redesign against `main` at `2143ced`, reviewing 26 files. Its
+single **minor** finding concerned landmark styles in a non-embedded
+`CityViewport`. This is not applicable to the current routed UI: the only
+production mount is `WorldWorkspace`, which passes `embedded` and wraps the
+3D view in `.city-stage--district`. Graph inspection and a source-reference
+search confirmed there is no production non-embedded mount. No code change
+or suppression was made for that conditional finding. Revisit the shared
+landmark styles if a standalone viewport route is introduced.
