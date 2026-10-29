@@ -23,11 +23,16 @@ segments are not recorded street routes; no economic or ledger code changed.
   temporary directory; loopback preview at `http://127.0.0.1:4184`.
 - Observed day 0 → day 20, then automatic pause at the server's 20-day cap.
   25 citizens, 24 moving itineraries, scripted routes only, $0 recorded spend.
+  Read-only DB checks: 523 scripted call records, zero provider attempts and
+  zero external action submissions.
 - The default desktop bodies measured about 32px tall, versus 11.7px in the
   reviewed baseline. The follow camera showed Editor B at about 51px.
 - Captured a full daily cycle at 2×, then followed Editor B. His position,
   heading and submitted leg matrices changed while world day remained 20.
   Two recorded legs connect Residential District 2 and the Public Commons.
+- In a 237-interval desktop sample, frame interval p50 was 16.7ms and p95
+  33.4ms; renderer submission p50 was 1.6ms and p95 2.4ms. These are local
+  browser measurements, not a general device performance guarantee.
 - Evidence, video and logs: task artifact directory
   `starnet-district/citizen-walking-20day`. This is a local scripted UI test,
   not a provider-quality or hosted acceptance claim.
@@ -37,9 +42,18 @@ segments are not recorded street routes; no economic or ledger code changed.
 - Dashboard unit suite: 49 files passed; TypeScript and production build passed.
 - Backend focused CI smoke: 170 passed. The initial sandboxed attempt stalled;
   the bounded retry with localhost access completed in 148 seconds.
-- Critical browser suite plus new walking/district cases: 158 passed initially;
-  the mobile layout and click/follow fixture failures were fixed. Final focused
-  confirmation and CodeRabbit results are recorded below when complete.
+- All 147 critical browser cases passed. The initial combined run also found
+  a mobile layout regression and a click/follow fixture failure; both were
+  corrected. Final walking/district confirmation: 15 passed, including scope
+  reset, withheld locations and the moving 300-person fixture.
+- Actual 20-day world inspected at 390/768/1440px in both themes. No horizontal
+  overflow; minimum body height was 28px on the phone and 32.2px on larger views.
+- CodeRabbit completed the review of `5abc12a`: four minor findings. Three
+  concern playback copy/casing and this evidence document; those are corrected.
+  The fourth concerns signed zero in vendored WGSL inside the generated
+  CivicDiorama bundle. Both flagged function bodies are byte-identical to the
+  pre-walking `9eb7966` bundle; it is left standing outside this UI task.
+  A follow-up review of the corrected committed diff is pending.
 - Dataset verification and Python dependency consistency passed. Compileall
   completed with warnings for inaccessible pre-existing report directories.
 - The full Python suite did not finish in its 300-second local bound.

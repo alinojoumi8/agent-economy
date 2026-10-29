@@ -84,7 +84,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
         <button disabled={!ready||!!failure||!playback.available} onClick={()=>scene.current?.playback(false,playback.speed,true)}>Restart day</button>
         <label>Playback speed<select aria-label="Playback speed" value={playback.speed} onChange={e=>scene.current?.playback(playback.playing,Number(e.target.value))}>
           {[.5,1,2,4].map(speed=><option key={speed} value={speed}>{speed}×</option>)}</select></label>
-        <span>{playback.movers?`${playback.phase} · ${playback.movers} moving citizens`:'No complete moving itineraries at this day'}</span>
+        <span>{playback.movers?`${playback.phase} · ${playback.movers} moving citizens`:'No complete moving itineraries for this day'}</span>
       </div>
       <p>{playback.reduced?'Reduced motion: recorded placements change in steps. ':'Walking interpolates recorded places. '}
         World time stays fixed. Incomplete itineraries stay still.</p>
