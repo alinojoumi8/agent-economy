@@ -52,7 +52,7 @@ mechanics or saved source runs were changed.
 | Lint | No dashboard lint script is configured |
 | ECC design evidence record | Completeness checker passed; actual captures were also visually inspected |
 | Staged secret scan | Passed; no leaks found |
-| CodeRabbit | Automatic approval review blocked transmitting the committed diff to CodeRabbit. Explicit approval requested; no CodeRabbit findings or successful review are claimed. |
+| CodeRabbit | The user approved sharing the diff after automatic approval review initially blocked it. Review of the updated PR is pending. |
 | Hosted CI | Pending draft PR; no merge or deployment |
 
 The two broad-suite failure positions were identified from collection order and
@@ -68,3 +68,15 @@ retained in the local receipt and is not presented as an unchanged startup.
 
 The 300-agent/100-place resource tests pass, but no new hardware frame-time
 benchmark or human task-completion study was run. MW-33 remains In Progress.
+
+## Landmark border follow-up
+
+Removed the landmark buttons' 3px bottom accent, retaining a uniform 1px outline
+and the existing 5px corners. The `border-accent-on-rounded` finding is fixed;
+no suppressions were added and no findings from this review remain standing.
+The production build and all six district browser tests passed. The initial
+test attempt stopped at Chromium launch because of the shell sandbox; the
+successful rerun used the approved unrestricted test command. The rebuilt
+preview was visually inspected at 1440px and 390px: labels retain 44px targets,
+1px borders on all sides, a 3px keyboard focus outline and no page overflow.
+The broader verification limits above remain unchanged.
