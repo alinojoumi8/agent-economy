@@ -80,6 +80,12 @@ it imports no StarNet assets, code, packages or runtime.
 
 Validation and remaining gates are recorded in
 [the district preview verification](2026-10-29-district-preview-verification.md).
+User review subsequently identified two major remaining gaps: citizens are too
+small to read and the 3D view has no locomotion or body animation. The
+[agent movement comparison and next increment](2026-10-29-starnet-agent-motion-review.md)
+supersedes the assumption that the initial district slice delivers recognizable,
+moving citizens. It recommends character readability and shared recorded-day
+playback before further scene decoration.
 This is the first implementation increment, not completion of the full redesign
 or MW-33's seven-step City/Price Lab research acceptance. Later phases still need
 the broader interaction study, measured performance budget and adoption decision.

@@ -11,22 +11,32 @@ export class CityLandmarks {
     this.root.setAttribute('aria-label','District landmarks');
     host.append(this.root);
   }
-  update(instances:CityInstance[],selected:string|null,camera:OrthographicCamera,width:number,height:number){
+  update(instances:CityInstance[],selected:string|null,camera:OrthographicCamera,width:number,height:number,
+    movingPosition:(key:string)=>number[]|undefined=()=>undefined,citizenHeight=4,hovered:string|null=null){
     const chosen=instances.find(item=>item.key===selected);
-    const candidates=[...(chosen?[chosen]:[]),...instances.filter(item=>item.entityType==='firm'||item.entityType==='bank'),
-      ...instances.filter(item=>item.entityType==='place'),...instances.filter(item=>item.entityType==='agent')];
+    const hover=instances.find(item=>item.key===hovered&&item.entityType==='agent');
+    const candidates=[...(chosen?[chosen]:[]),...(hover?[hover]:[]),...instances.filter(item=>item.entityType==='firm'||item.entityType==='bank'),
+      ...instances.filter(item=>item.entityType==='place')];
     const seen=new Set<string>(),shown=new Set<string>();
     const occupied:Array<{x:number;y:number}>=[];
     const labelWidth=Math.min(152,width-24),point=new Vector3();
+    const bodies=instances.filter(item=>item.entityType==='agent'&&(item.key===selected||item.key===hovered)).map(item=>{
+      const p=movingPosition(item.key)||item.position;
+      point.set(p[0],p[1],p[2]).project(camera);const bottom=(1-point.y)*height/2;
+      point.set(p[0],p[1]+citizenHeight-2,p[2]).project(camera);
+      return {x:(point.x+1)*width/2,top:(1-point.y)*height/2,bottom};
+    });
     for(const item of candidates){
       if(seen.has(item.renderKey))continue;
       seen.add(item.renderKey);
-      point.set(item.position[0],item.position[1]+(item.entityType==='agent'?2:5),item.position[2]).project(camera);
+      const position=movingPosition(item.key)||item.position;
+      point.set(position[0],position[1]+(item.entityType==='agent'?citizenHeight:5),position[2]).project(camera);
       const x=(point.x+1)*width/2,y=(1-point.y)*height/2;
       // Labels stay inside the field and yield to the selected identity. Dense
       // or offscreen entities remain selectable through the keyboard explorer.
       if(point.z < -1||point.z > 1||x<labelWidth/2+8||x>width-labelWidth/2-8||y<60||y>height-30)continue;
       if(occupied.some(p=>Math.abs(p.x-x)<labelWidth+8&&Math.abs(p.y-y)<56))continue;
+      if(item.key!==selected&&item.key!==hovered&&bodies.some(body=>Math.abs(body.x-x)<labelWidth/2+10&&y+22>body.top&&y-22<body.bottom))continue;
       let button=this.buttons.get(item.key);
       if(!button){
         button=document.createElement('button');button.type='button';button.className='city3d-landmark';
