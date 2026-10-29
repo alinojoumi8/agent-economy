@@ -3,6 +3,7 @@
 Candidate: `codex/starnet-ui-redesign`, based on
 `ed20ff4395581a5b4257d3fbd6b7cc971f97c318`.
 Implementation commit: `52dedbd` (`feat(city): add an interactive district preview`).
+Person details contrast follow-up: `8cb2ac0`.
 Subsequent documentation commits record review status without changing the bundle.
 
 ## Scope
@@ -52,7 +53,7 @@ mechanics or saved source runs were changed.
 | Lint | No dashboard lint script is configured |
 | ECC design evidence record | Completeness checker passed; actual captures were also visually inspected |
 | Staged secret scan | Passed; no leaks found |
-| CodeRabbit | Completed against `main` at `2143ced`, with one minor finding triaged below. |
+| CodeRabbit | Latest review completed against the verified `main` base at `8cb2ac0`: 29 files, zero findings. Earlier review history is retained below. |
 | Hosted CI | Draft PR [#145](https://github.com/alinojoumi8/manyworld/pull/145); no passing hosted CI claim, merge or deployment |
 
 The two broad-suite failure positions were identified from collection order and
@@ -109,7 +110,8 @@ placeholder. Layout and simulation behavior are unchanged.
   the existing large-chunk warning remains. The World OS, district and
   accessibility browser selection passed all 54 cases. After the final
   placeholder adjustment, the two contrast cases and production build passed
-  again. The committed production bundle was regenerated.
+  again. The committed production bundle was regenerated. Documentation tests
+  passed all 22 cases and the staged secret scan found no leaks.
 - A fresh isolated scripted world, `99bcc63987`, advanced from day 0 to day 20
   through the UI and paused at its configured limit. Its database is retained at
   `/tmp/manyworld-person-contrast-20day-7m01trys/worlds/99bcc63987.db`. Read-only
@@ -123,6 +125,10 @@ placeholder. Layout and simulation behavior are unchanged.
 - Screenshots, logs and machine-readable receipts are retained in the task's
   `starnet-district/person-contrast-20day` artifact directory. The local preview
   remains paused at day 20 on port 4183.
+- CodeRabbit CLI completed the committed PR diff at `8cb2ac0` against the
+  verified `main` base `ed20ff4395581a5b4257d3fbd6b7cc971f97c318`:
+  `review_completed`, 29 reviewed files, zero findings. No review suppressions
+  were added.
 
 The broader verification limits above remain unchanged; MW-33 remains In Progress
 and PR #145 remains a draft.
