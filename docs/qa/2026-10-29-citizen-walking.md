@@ -73,6 +73,8 @@ segments are not recorded street routes; no economic or ledger code changed.
 
 ## Remaining scope
 
-Street navigation, collision avoidance, work/conversation poses and distant
-aggregate rendering require further presentation decisions. MW-33 remains In
-Progress for the broader researcher acceptance workflow and dependencies.
+Street navigation and building avoidance were subsequently requested and
+implemented in the [road-following increment](2026-10-29-road-walking.md).
+Work/conversation poses and distant aggregate rendering still require further
+presentation decisions. MW-33 remains In Progress for the broader researcher
+acceptance workflow and dependencies.

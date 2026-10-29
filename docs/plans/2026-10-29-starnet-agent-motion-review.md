@@ -92,12 +92,14 @@ Review that moving sequence before expanding art or redesigning more panels.
 
 ## Movement boundaries and later work
 
-The current recorded-day contract interpolates directly between known placements;
-it does not record street routes, transit duration or continuous physical motion.
-Reuse that honest contract first. Following illustrated roads, avoiding buildings
-and milling around a workplace would require an explicitly illustrative route
-layer and an update to the presentation contract. Do not silently pass those
-paths off as recorded travel. Private/aggregate placements remain aggregate.
+The 2D recorded-day view interpolates directly between known placements; the
+world does not record street routes, transit duration or continuous physical
+motion. The user's subsequent road-following request approved an explicitly
+illustrative route layer for 3D. It shares topology with the painted streets,
+clears building footprints and holds unavailable journeys safely. The updated
+presentation contract labels these routes and outside-place waiting positions
+as illustrative. Workplace wandering remains deferred; private/aggregate
+placements remain aggregate.
 
 StarNet's idle wandering contributes to its atmosphere. Small stationary poses
 can make citizens recognizable without inventing economic actions; random travel
