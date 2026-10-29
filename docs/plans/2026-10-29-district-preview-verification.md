@@ -2,7 +2,8 @@
 
 Candidate: `codex/starnet-ui-redesign`, based on
 `ed20ff4395581a5b4257d3fbd6b7cc971f97c318`.
-The final candidate commit and review outcome are recorded below when available.
+Implementation commit: `52dedbd` (`feat(city): add an interactive district preview`).
+Subsequent documentation commits record review status without changing the bundle.
 
 ## Scope
 
@@ -51,7 +52,8 @@ mechanics or saved source runs were changed.
 | Lint | No dashboard lint script is configured |
 | ECC design evidence record | Completeness checker passed; actual captures were also visually inspected |
 | Staged secret scan | Passed; no leaks found |
-| CodeRabbit / hosted CI | Pending branch review; no merge or deployment |
+| CodeRabbit | Automatic approval review blocked transmitting the committed diff to CodeRabbit. Explicit approval requested; no CodeRabbit findings or successful review are claimed. |
+| Hosted CI | Pending draft PR; no merge or deployment |
 
 The two broad-suite failure positions were identified from collection order and
 then explicitly rerun using fresh temporary test worlds. No existing research
