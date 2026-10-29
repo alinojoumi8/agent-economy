@@ -18,6 +18,11 @@ export function createCityDay(city) {
     const idsAtPlace=occupants.get(anchor.placeId)||new Set();
     idsAtPlace.add(agent.id);occupants.set(anchor.placeId,idsAtPlace);
   }
+  const completeIds=new Set(complete.map(agent=>agent.id));
+  for(const item of city.instances)if(item.entityType==='agent'&&!completeIds.has(item.entityId)&&navigation.ports.has(item.placeId)){
+    const idsAtPlace=occupants.get(item.placeId)||new Set();
+    idsAtPlace.add(item.entityId);occupants.set(item.placeId,idsAtPlace);
+  }
   const waiting=new Map();
   for(const [place,idsAtPlace] of occupants){
     const choices=roadWaitingNodes(navigation,navigation.ports.get(place));
@@ -38,12 +43,13 @@ export function createCityDay(city) {
     return {...agent,paths,routeBlocked,moves:agent.moves&&!routeBlocked,hold:navigation.nodes.get(nodes.find(node=>navigation.nodes.has(node)))};
   });
   const byId=new Map(agents.map(agent=>[agent.id,agent]));
-  return {agents,byId,navigation,plan:legPlan(agents.filter(agent=>!agent.routeBlocked)),movers:agents.filter(agent=>agent.moves).length};
+  return {agents,byId,waiting,navigation,plan:legPlan(agents.filter(agent=>!agent.routeBlocked)),movers:agents.filter(agent=>agent.moves).length};
 }
 
 export function citizenPose(day,item,elapsed,reduced=false) {
   const agent=day.byId.get(item.entityId);
-  const port=day.navigation.nodes.get(day.navigation.ports.get(item.placeId));
+  const port=day.navigation.nodes.get(day.waiting.get(`${item.entityId}:${item.placeId}`))
+    ||day.navigation.nodes.get(day.navigation.ports.get(item.placeId));
   const still={position:[...(agent?.hold||port||item.position)],heading:0,stride:0,distance:0,fromPlace:null,toPlace:null,placeId:item.placeId??null};
   if(!agent||agent.routeBlocked)return still;
   const clock=dayClock(elapsed,day.plan),point=recordedPointAt(agent,clock);

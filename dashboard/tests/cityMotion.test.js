@@ -47,3 +47,18 @@ test('an unknown or disconnected leg holds the entire itinerary without teleport
     for(let elapsed=0;elapsed<90000;elapsed+=500)assert.deepEqual(citizenPose(day,citizen(1),elapsed),start);
   }
 });
+
+test('citizens with no itinerary keep separate safe waiting points at their public place',()=>{
+  const source=city([]);
+  const citizens=source.instances.filter(item=>item.entityType==='agent');
+  citizens.forEach(item=>{item.placeId=1;});
+  const before=JSON.stringify(source),day=createCityDay(source);
+  const first=citizenPose(day,citizens[0],0),second=citizenPose(day,citizens[1],0);
+  assert.notDeepEqual(first.position,second.position);
+  for(const item of citizens){
+    const pose=citizenPose(day,item,0),[x,,z]=pose.position;
+    assert.ok(day.navigation.scenery.roads.some(r=>Math.abs(x-r.x)<=r.width/2&&Math.abs(z-r.z)<=r.depth/2));
+    assert.deepEqual(citizenPose(day,item,40000),pose);
+  }
+  assert.equal(day.movers,0);assert.equal(day.agents.length,0);assert.equal(JSON.stringify(source),before);
+});

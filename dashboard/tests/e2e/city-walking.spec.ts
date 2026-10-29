@@ -83,6 +83,7 @@ test('without daily presence the visible citizens stand still and playback is un
   await expect(page.getByRole('button',{name:'Play recorded day',exact:true})).toBeDisabled();
   const frame=await probe(page);expect(frame.citizens).toHaveLength(24);
   expect(frame.citizens.every((c:any)=>c.stride===0)).toBeTruthy();
+  expect(frame.citizens.find((c:any)=>c.id===1).position).not.toEqual(frame.citizens.find((c:any)=>c.id===13).position);
 });
 
 test('a moving citizen remains selectable and camera follow tracks the rendered position',async({page})=>{
