@@ -85,6 +85,9 @@ each audience can find the authoritative level of detail.
 
 ## Product and evidence
 
+- [StarNet-inspired UI redesign proposal](plans/2026-10-28-starnet-ui-redesign.md) —
+  source comparison, original interactive city direction, integration phases and
+  acceptance criteria; proposed, not implemented.
 - [Product requirements](../PRD.md)
 - [Delivery tasks](../TASKS.md)
 - [Implementation status](implementation-status.md) — the single maintained

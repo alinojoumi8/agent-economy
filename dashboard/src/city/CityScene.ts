@@ -5,6 +5,7 @@ import { disposeKit, loadCityAssets, type AssetKit } from './assetLoader';
 import type { CityActivity, CityInstance, CityProjection } from './cityProjection';
 import { buildCityScenery, disposeCityScenery } from './CityScenery';
 import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
+import { CityLandmarks } from './CityLandmarks';
 export type SceneStats={calls:number;triangles:number;geometries:number;textures:number;frames:number};
 export class CityScene {
   private renderer:WebGLRenderer;
@@ -15,6 +16,7 @@ export class CityScene {
   private ground=new Group();
   private scenery=new Group();
   private markers=new Group();
+  private landmarks:CityLandmarks;
   private proposal:Mesh|null=null;
   private kit:AssetKit|null=null;
   private abort=new AbortController();
@@ -50,10 +52,11 @@ export class CityScene {
     // Canvas contains geometry only; HTML labels stay at native resolution.
     // A bounded render scale keeps the 300-citizen view usable on software GPUs.
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio,1.5));
-    this.renderer.setClearColor('#dce6e8');
+    this.renderer.setClearColor('#e8ede3');
     this.renderer.domElement.setAttribute('aria-label','Interactive 3D city. Use the entity list and camera buttons for keyboard navigation.');
     this.renderer.domElement.setAttribute('role','img');
     host.append(this.renderer.domElement);
+    this.landmarks=new CityLandmarks(host,onPick);
     this.camera.position.set(95,100,110);
     this.controls=new OrbitControls(this.camera,this.renderer.domElement);
     this.controls.mouseButtons={LEFT:MOUSE.PAN,MIDDLE:MOUSE.DOLLY,RIGHT:MOUSE.ROTATE};
@@ -67,8 +70,8 @@ export class CityScene {
     this.controls.addEventListener('start',this.cameraGestureStart);
     this.controls.addEventListener('end',this.cameraGestureEnd);
     this.controls.update();
-    this.scene.add(new AmbientLight('#dce8f1',1.15));
-    const sun=new DirectionalLight('#ffe9c6',2.0);sun.position.set(-35,80,50);this.scene.add(sun);
+    this.scene.add(new AmbientLight('#ffffff',1.5));
+    const sun=new DirectionalLight('#fff6e7',1.65);sun.position.set(-35,80,50);this.scene.add(sun);
     this.scene.add(this.ground,this.scenery,this.buildings,this.markers);
     this.observer=new ResizeObserver(()=>this.resize());this.observer.observe(host);
     this.renderer.domElement.addEventListener('pointerdown',this.pointerDown);
@@ -81,7 +84,7 @@ export class CityScene {
       this.kit=kit;this.rebuild();this.onReady();
     }).catch(error=>{if(this.alive)this.onError(error instanceof Error?error.message:'City assets unavailable.');});
   }
-  private contextLost=(event:Event)=>{event.preventDefault();this.failed=true;this.running=false;cancelAnimationFrame(this.frame);this.frame=0;this.onError('3D graphics context was lost. Switch to the 2D atlas or reload the city.');};
+  private contextLost=(event:Event)=>{event.preventDefault();this.failed=true;this.running=false;this.landmarks.clear();cancelAnimationFrame(this.frame);this.frame=0;this.onError('3D graphics context was lost. Switch to the 2D atlas or reload the city.');};
   private pointerDown=(event:PointerEvent)=>{this.pointerStart=[event.clientX,event.clientY];};
   private pointerUp=(event:PointerEvent)=>{
     if(event.button!==0)return;
@@ -118,6 +121,7 @@ export class CityScene {
       if(child instanceof InstancedMesh)this.positionMarkers(child,time);
     }
     this.renderer.render(this.scene,this.camera);this.frameCount++;
+    if(this.kit)this.landmarks.update(this.filtered,this.selected,this.camera,this.host.clientWidth,this.host.clientHeight);
     this.host.dataset.renderFrames=String(this.frameCount);
     this.host.dataset.camera3d=this.cameraState()||'';
     const info=this.renderer.info;
@@ -162,7 +166,7 @@ export class CityScene {
       }
     }
     const extent=Math.max(65,...this.projection.instances.flatMap(i=>[Math.abs(i.position[0])+12,Math.abs(i.position[2])+12]));
-    const ground=new Mesh(new BoxGeometry(extent*2,1,extent*2),new MeshLambertMaterial({color:'#91aa7d'}));
+    const ground=new Mesh(new BoxGeometry(extent*2,1,extent*2),new MeshLambertMaterial({color:'#c5d2b1'}));
     ground.position.y=-.6;this.ground.add(ground);
     // Base streets remain stable when the entity filter changes.
     const scenery=buildCityScenery(this.projection.instances);
@@ -214,6 +218,7 @@ export class CityScene {
   }
   clear(){
     this.running=false;this.projection=null;this.filtered=[];this.events=[];
+    this.landmarks.clear();
     this.clearInstances();this.clearGround();this.clearMarkers();this.preview(null);this.requestRender();
   }
   fitVisible(derivedOnly=false){
@@ -222,8 +227,28 @@ export class CityScene {
     const minX=Math.min(...xs),maxX=Math.max(...xs),minZ=Math.min(...zs),maxZ=Math.max(...zs);
     const target=new Vector3((minX+maxX)/2,0,(minZ+maxZ)/2);
     this.controls.target.copy(target);this.camera.position.copy(target).add(new Vector3(95,100,110));
-    this.camera.zoom=Math.max(.35,Math.min(4,90/(Math.hypot(maxX-minX,maxZ-minZ)+15)));
-    this.camera.updateProjectionMatrix();this.controls.update();this.requestRender();
+    this.fitPoints(items);
+    this.controls.update();this.requestRender();
+  }
+  private fitPoints(items:CityInstance[]){
+    // Fit projected bounds, including building height, to the actual field.
+    // A fixed zoom crops the same district on a narrow phone viewport.
+    this.controls.update();
+    this.camera.zoom=1;this.camera.updateProjectionMatrix();this.camera.updateMatrixWorld();
+    let minX=Infinity,maxX=-Infinity,minY=Infinity,maxY=-Infinity;
+    const point=new Vector3();
+    for(const item of items)for(const x of [-4,4])for(const z of [-4,4])for(const y of [0,6]){
+      point.set(item.position[0]+x,item.position[1]+y,item.position[2]+z).project(this.camera);
+      minX=Math.min(minX,point.x);maxX=Math.max(maxX,point.x);
+      minY=Math.min(minY,point.y);maxY=Math.max(maxY,point.y);
+    }
+    const center=new Vector3().setFromMatrixColumn(this.camera.matrixWorld,0)
+      .multiplyScalar((minX+maxX)*(this.camera.right-this.camera.left)/4)
+      .add(new Vector3().setFromMatrixColumn(this.camera.matrixWorld,1)
+        .multiplyScalar((minY+maxY)*(this.camera.top-this.camera.bottom)/4));
+    this.camera.position.add(center);this.controls.target.add(center);
+    this.camera.zoom=Math.max(.35,Math.min(4,1.64/Math.max(.01,maxX-minX),1.44/Math.max(.01,maxY-minY)));
+    this.camera.updateProjectionMatrix();
   }
   preview(proposal:{x:number;y:number;label:string}|null){
     if(this.proposal){this.scene.remove(this.proposal);this.proposal.geometry.dispose();(this.proposal.material as MeshLambertMaterial).dispose();this.proposal=null;}
@@ -244,8 +269,9 @@ export class CityScene {
       (Math.min(...places.map(p=>p.position[2]))+Math.max(...places.map(p=>p.position[2])))/2+2,
     ):new Vector3(...region.position);
     const delta=target.clone().sub(this.controls.target);
-    this.camera.position.add(delta);this.controls.target.copy(target);this.camera.zoom=2.6;
-    this.camera.updateProjectionMatrix();this.controls.update();this.requestRender();
+    this.camera.position.add(delta);this.controls.target.copy(target);
+    if(places.length)this.fitPoints(places);else {this.camera.zoom=2.6;this.camera.updateProjectionMatrix();}
+    this.controls.update();this.requestRender();
   }
   focus(key:string){
     const item=this.projection?.instances.find(i=>i.key===key);if(!item)return;
@@ -266,6 +292,7 @@ export class CityScene {
     this.selectionMaterial.dispose();this.settledMaterial.dispose();this.rejectedMaterial.dispose();
     this.pendingMaterial.dispose();this.recordedMaterial.dispose();
     if(this.kit)disposeKit(this.kit);
+    this.landmarks.dispose();
     this.renderer.dispose();this.renderer.forceContextLoss();this.renderer.domElement.remove();
   }
 }

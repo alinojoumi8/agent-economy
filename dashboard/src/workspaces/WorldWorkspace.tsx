@@ -13,6 +13,7 @@ import { CityControls } from '../city/CityControls';
 import { FrontierPanel, type FrontierState } from './FrontierPanel';
 import { useWorkspaceProjection } from './workspaceShared';
 import '../city/city-workspace.css';
+import '../city/city-district.css';
 
 const CityViewport = lazy(() => import('../city/CityViewport'));
 const TERMINAL = new Set(['completed','failed','finished','halted','stopped']);
@@ -95,7 +96,7 @@ export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNo
     <nav className="city-context-actions" aria-label="Explore City details">
       {PANELS.map(([path,label])=><Link key={path} to={href(path)}>{label}</Link>)}
     </nav>
-    <div className="city-stage">
+    <div className={'city-stage'+(cityState.view==='3d'?' city-stage--district':'')}>
       <CivicCity
         agents={frame?city.data?.agents:[]} firms={frame?city.data?.firms:[]} events={markers}
         map={frame?city.data?.map:null} frame={frame} civic={frame?city.data?.civic:null}
@@ -108,11 +109,11 @@ export function WorldWorkspace({panel,children}:{panel?:string;children?:ReactNo
         conversations={!conversations.error&&conversations.data?.mapSnapshot===frame?.snapshot_version?conversations.data?.data:null}
         conversationsLoading={conversations.isLoading} conversationsError={conversations.error instanceof Error?conversations.error.message:''}
         lineage={frame?{semantics:frame.semantics_version,projection:frame.projection_version,policy:frame.policy_version}:null}
-        render3d={({visibleAgents,selected}:any)=><Suspense fallback={<p role="status">Loading 3D city…</p>}>
+        render3d={({visibleAgents,selected,onOpenEvidence}:any)=><Suspense fallback={<p role="status">Loading 3D city…</p>}>
           <CityViewport embedded envelope={frame} snapshot={activity.data} runId={runId} tick={tick}
             status={status||''} stale={stale} loading={city.isLoading}
             error={city.error instanceof Error?city.error.message:''} visibleAgentIds={visibleAgents.map((a:any)=>Number(a.id))}
-            selectedAgentId={selected?.id??null} onSelect={updateCity} followId={cityState.follow} proposal={proposal} observerState={cityState}
+            selectedAgentId={selected?.id??null} onSelect={updateCity} onOpenEvidence={onOpenEvidence} followId={cityState.follow} proposal={proposal} observerState={cityState}
             onFallback={()=>updateCity({view:'atlas'})}/>
         </Suspense>}
       />

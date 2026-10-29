@@ -8,8 +8,8 @@ import './city.css';
 import { normalizeCityCamera3d } from '../lib/cityCamera3d.js';
 import type { ObserverViewState } from '../app/observerViewState';
 
-type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;followId?:number|null;proposal?:CityProposal;observerState?:ObserverViewState};
-export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,followId,proposal,observerState}:Props){
+type Props={envelope:unknown;snapshot:unknown;runId:string;tick:string;status:string;stale:boolean;loading:boolean;error:string;onFallback:()=>void;embedded?:boolean;visibleAgentIds?:number[];selectedAgentId?:number|null;onSelect?:(patch:any)=>void;onOpenEvidence?:()=>void;followId?:number|null;proposal?:CityProposal;observerState?:ObserverViewState};
+export default function CityViewport({envelope,snapshot,runId,tick,status,stale,loading,error,onFallback,embedded=false,visibleAgentIds,selectedAgentId,onSelect,onOpenEvidence,followId,proposal,observerState}:Props){
   const location=useLocation();
   const host=useRef<HTMLDivElement>(null),scene=useRef<CityScene|null>(null);
   const [params,setParams]=useSearchParams();
@@ -85,7 +85,9 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
       <button onClick={()=>{setSearch('');setRegion('all');setLayer('all');camera('reset');}}>Reset view</button>
       {city?.instances.some(i=>i.provenance==='derived')&&<button onClick={()=>scene.current?.fitVisible(true)}>Find unlocated entities</button>}
     </div>}
-    {embedded&&<div className="city3d-focus"><button disabled={!selected} onClick={focusSelection}>Focus {selected?.name||'selection'}</button><button onClick={()=>camera('reset')}>Show all</button>
+    {embedded&&<div className="city3d-district">
+      <div className="city3d-district-heading"><span>District preview</span><strong>{historical?'Historical':stale?'Stale':status||'Connecting'} · Day {city?.envelope.tick??'—'}</strong></div>
+      <p className="city3d-invitation">Select a citizen or building to inspect its recorded evidence.</p>
       {!city?.instances.some(i=>i.provenance==='observed')&&<p className="city-capability-note">This run has no recorded place coordinates. Positions below are display slots. Use the activity feed to follow what agents did.</p>}
     </div>}
     <div className="city3d-layout">
@@ -102,6 +104,12 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
           <button onClick={()=>camera('west')} aria-label="Pan west">←</button><button onClick={()=>camera('east')} aria-label="Pan east">→</button>
         </div>
         <div className="city3d-legend"><span><i className="city3d-blue"/>Selected</span><span><i className="city3d-green"/>Completed</span><span><i className="city3d-red"/>Rejected / cancelled</span><span>Amber: pending · Gray: recorded</span></div>
+        {embedded&&<div className="city3d-focus">
+          <button disabled={!selected||!ready||Boolean(failure)} onClick={focusSelection}>Focus {selected?.name||'selection'}</button>
+          {!!city?.regions.length&&<button onClick={()=>{scene.current?.focusRegion(city.regions[0].id);persistCamera();}}>District overview</button>}
+          <button onClick={()=>camera('reset')}>Show all</button>
+          {onOpenEvidence&&<button className="city3d-inspect" onClick={onOpenEvidence}>Selected evidence ↓</button>}
+        </div>}
       </div>
       {!embedded&&<aside className="city3d-inspector" aria-label="City entity inspector">
         <p className="city3d-kicker">SELECT & EXPLORE</p>
@@ -123,7 +131,9 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
         {!!city?.clusters.length&&<p className="city3d-note">Aggregated residents: {city.clusters.map(c=>`${c.name}: ${c.count}`).join(' · ')}. Individual locations are not exposed.</p>}
       </aside>}
     </div>
-    <div className="city3d-notes">{city?.warnings.filter((_,index)=>historical||index<city.warnings.length-1).map(text=><p key={text}>{text}</p>)}
+    <div className="city3d-notes">
+      {embedded&&<p>Original Manyworld illustration · Selectable labels show a few landmarks; the keyboard explorer includes every visible entity.</p>}
+      {city?.warnings.filter((_,index)=>historical||index<city.warnings.length-1).map(text=><p key={text}>{text}</p>)}
       <details><summary>Projection and rendering evidence</summary><code>{city?.envelope.snapshot_version||'No snapshot'} · layout {city?.city_layout_version} · {stats?`${stats.calls} draw calls / ${stats.triangles.toLocaleString()} triangles / ${stats.geometries} geometries / ${stats.textures} textures`: 'Renderer initializing'}</code></details>
     </div>
     {!embedded&&<UrbanDevelopment runId={runId} tick={tick} fork={params.get('fork')} stale={stale} onPreview={preview}/>}

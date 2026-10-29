@@ -13,9 +13,9 @@ export function buildCityScenery(instances:CityInstance[]):Group {
     shapes.forEach((p,i)=>{matrix.makeScale(p.w,p.h,p.d);matrix.setPosition(p.x,p.y,p.z);mesh.setMatrixAt(i,matrix);});
     mesh.instanceMatrix.needsUpdate=true;mesh.computeBoundingSphere();group.add(mesh);
   };
-  boxes('#c1c4b8',plan.lots.map(p=>({x:p.x,y:-.06,z:p.z,w:6,h:.12,d:6})));
-  boxes('#b8bdb8',plan.roads.map(p=>({x:p.x,y:-.07,z:p.z,w:p.width+.9,h:.10,d:p.depth+.9})));
-  boxes('#697678',plan.roads.map(p=>({x:p.x,y:-.015,z:p.z,w:p.width,h:.035,d:p.depth})));
+  boxes('#e2dfcb',plan.lots.map(p=>({x:p.x,y:-.06,z:p.z,w:6,h:.12,d:6})));
+  boxes('#f4f0dd',plan.roads.map(p=>({x:p.x,y:-.07,z:p.z,w:p.width+.9,h:.10,d:p.depth+.9})));
+  boxes('#8c9b91',plan.roads.map(p=>({x:p.x,y:-.015,z:p.z,w:p.width,h:.035,d:p.depth})));
   const markings:Shape[]=[];
   for(const road of plan.roads){
     const horizontal=road.width>road.depth,length=horizontal?road.width:road.depth;
@@ -23,11 +23,11 @@ export function buildCityScenery(instances:CityInstance[]):Group {
       markings.push({x:road.x+(horizontal?offset:0),y:.008,z:road.z+(horizontal?0:offset),w:horizontal?1:.09,h:.008,d:horizontal?.09:1});
     }
   }
-  boxes('#d8d6ba',markings);
+  boxes('#f7f3df',markings);
   if(plan.trees.length){
     const matrix=new Matrix4();
     const trunks=new InstancedMesh(new CylinderGeometry(.10,.15,1,5),new MeshLambertMaterial({color:'#75614b'}),plan.trees.length);
-    const crowns=new InstancedMesh(new SphereGeometry(.75,7,5),new MeshLambertMaterial({color:'#557e56',flatShading:true}),plan.trees.length);
+    const crowns=new InstancedMesh(new SphereGeometry(.75,7,5),new MeshLambertMaterial({color:'#60876b',flatShading:true}),plan.trees.length);
     plan.trees.forEach((p,i)=>{
       matrix.makeScale(1,p.height,1);matrix.setPosition(p.x,p.height/2,p.z);trunks.setMatrixAt(i,matrix);
       matrix.makeScale(1,p.height*.65,1);matrix.setPosition(p.x,p.height,p.z);crowns.setMatrixAt(i,matrix);
