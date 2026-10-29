@@ -48,7 +48,7 @@ for(const width of [390,768,1440])test(`recognizable citizens and playback contr
 
 test('reduced motion and hidden tabs stop continuous movement',async({page})=>{
   await page.emulateMedia({reducedMotion:'reduce'});await open(page);
-  await expect(page.getByText(/Reduced motion: recorded placements/)).toBeVisible();
+  await expect(page.getByText(/Reduced motion: outside-place positions/)).toBeVisible();
   const initial=await probe(page);
   await page.getByRole('button',{name:'Play recorded day',exact:true}).click();
   await expect.poll(async()=>(await probe(page)).elapsed).toBeGreaterThan(1000);
@@ -114,4 +114,29 @@ test('300 moving citizens retain bounded geometry and report measured frame time
   const evidence=await probe(page);expect(evidence.citizens).toHaveLength(300);
   expect(evidence.citizens.filter((c:any)=>c.distance>0).length).toBe(225);
   await info.attach('300-citizen-frame-times',{body:JSON.stringify(evidence),contentType:'application/json'});
+});
+
+test('rendered citizens turn along roads and clear every building throughout a day',async({page},info)=>{
+  await open(page);
+  await expect(page.getByText(/Citizens follow illustrative roads between recorded places/)).toBeVisible();
+  await page.getByLabel('Playback speed',{exact:true}).selectOption('4');
+  await page.getByRole('button',{name:'Play recorded day',exact:true}).click();
+  const samples=await page.evaluate(async()=>{
+    const frames=[];
+    for(let i=0;i<64;i++){
+      frames.push((window as any).__city3dProbe());
+      await new Promise(resolve=>setTimeout(resolve,200));
+    }
+    return frames;
+  });
+  await page.getByRole('button',{name:'Pause recorded day',exact:true}).click();
+  const first=samples[0];
+  for(const frame of samples)for(const citizen of frame.citizens){
+    const [x,,z]=citizen.position;
+    expect(first.roads.some((r:any)=>Math.abs(x-r.x)<=r.width/2+1e-6&&Math.abs(z-r.z)<=r.depth/2+1e-6)).toBe(true);
+    for(const b of first.footprints)expect(Math.hypot(Math.max(Math.abs(x-b.x)-b.half,0),Math.max(Math.abs(z-b.z)-b.half,0))).toBeGreaterThanOrEqual(2.6-1e-6);
+  }
+  expect(samples.at(-1).elapsed-samples[0].elapsed).toBeGreaterThan(45000);
+  expect(new Set(samples.map(frame=>frame.citizens.find((c:any)=>c.id===1).heading)).size).toBeGreaterThan(1);
+  await info.attach('road-day-samples',{body:JSON.stringify(samples),contentType:'application/json'});
 });

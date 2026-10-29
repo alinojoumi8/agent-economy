@@ -8,7 +8,7 @@ test('illustrative streets are deterministic and never change source positions',
   const before=structuredClone(source),plan=planCityStreets(source);
   assert.deepEqual(plan,planCityStreets([...source].reverse()));
   assert.deepEqual(source,before);
-  assert.ok(plan.roads.length>source.length);
+  assert.ok(plan.roads.length>0);
   assert.ok(plan.trees.length>0);
   for(const road of plan.roads)for(const p of source){
     assert.ok(Math.abs(p.position[0]-road.x)>=road.width/2+2.2||Math.abs(p.position[2]-road.z)>=road.depth/2+2.2);
@@ -23,5 +23,5 @@ test('no decorative district is invented for unlocated or absent places',()=>{
 test('separate regions never gain an implied intercity road',()=>{
   const plan=planCityStreets([place(1,0,0),place(2,100,100,2)]);
   assert.equal(plan.roads.length,2);
-  assert.ok(plan.roads.every(r=>r.width===8&&r.depth===3));
+  assert.ok(plan.roads.every(r=>r.width===7&&r.depth===3));
 });

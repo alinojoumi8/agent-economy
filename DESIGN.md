@@ -208,12 +208,19 @@ positions. Streets, buildings, trees and marker offsets remain illustrative.
 
 The surrounding controls respect the saved light/dark theme; the city uses a
 daylit civic palette. Selected labels use cobalt and white, and controls target
-44px. No idle travel animation is introduced; existing outcome pulses obey
-reduced-motion preferences. Run/fork/tick context and evidence keep their shared
-observer contract. Atlas remains the default and WebGL fallback.
+44px. Recorded-day playback uses an independent display clock with Play/Pause,
+Restart and speed controls. Citizens follow a shared, deterministic illustrative
+road graph between authorized daily places, turning at corners and clearing
+building footprints even at their largest display scale. Waiting positions are
+outside buildings on that graph. Unknown, private, incomplete or disconnected
+itineraries stay still; no random journey is invented. The roads do not claim
+measured routes or travel time. Reduced motion uses discrete outside-place
+positions without gait; hidden tabs pause. Run/fork/tick context and evidence
+keep their shared observer contract. Atlas remains the default and WebGL fallback.
 
 See [the redesign plan](docs/plans/2026-10-28-starnet-ui-redesign.md) and
-[verification](docs/plans/2026-10-29-district-preview-verification.md).
+[verification](docs/plans/2026-10-29-district-preview-verification.md), plus
+[road movement evidence](docs/qa/2026-10-29-road-walking.md).
 
 ## Elevation & Depth
 

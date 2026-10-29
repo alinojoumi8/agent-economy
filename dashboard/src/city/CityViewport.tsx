@@ -17,7 +17,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
   const [layer,setLayer]=useState('all'),[region,setRegion]=useState('all'),[search,setSearch]=useState('');
   const preview=useCallback((proposal:CityProposal)=>scene.current?.preview(proposal),[]);
   const [stats,setStats]=useState<SceneStats|null>(null);
-  const [playback,setPlayback]=useState<CityPlaybackState>({playing:false,speed:1,phase:'',movers:0,available:0,reduced:false});
+  const [playback,setPlayback]=useState<CityPlaybackState>({playing:false,speed:1,phase:'',movers:0,available:0,blocked:0,reduced:false});
   const pickRef=useRef<(key:string)=>void>(()=>{});
   const cameraChangeRef=useRef<(value:string)=>void>(()=>{});
   const displayState=embedded?observerState:undefined;
@@ -86,8 +86,9 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
           {[.5,1,2,4].map(speed=><option key={speed} value={speed}>{speed}×</option>)}</select></label>
         <span>{playback.movers?`${playback.phase} · ${playback.movers} moving citizens`:'No complete moving itineraries for this day'}</span>
       </div>
-      <p>{playback.reduced?'Reduced motion: recorded placements change in steps. ':'Walking interpolates recorded places. '}
-        World time stays fixed. Incomplete itineraries stay still.</p>
+      <p>{playback.reduced?'Reduced motion: outside-place positions change in steps. ':'Citizens follow illustrative roads between recorded places. '}
+        World time stays fixed. Incomplete itineraries stay still.
+        {playback.blocked>0&&` ${playback.blocked} citizens have no safe road connection and stay still.`}</p>
     </div>;
   return <section className={'city3d'+(embedded?' city3d--embedded':'')} aria-label="Manyworld 3D city">
     {!embedded&&<header className="city3d-heading"><div><p>MANYWORLD / CITY 3D</p><h2>A city with an economy.</h2></div>
@@ -150,7 +151,7 @@ export default function CityViewport({envelope,snapshot,runId,tick,status,stale,
     <div className="city3d-notes">
       {embedded&&<p>Original Manyworld illustration · Selectable labels show a few landmarks; the keyboard explorer includes every visible entity.</p>}
       {city?.warnings.filter((_,index)=>historical||index<city.warnings.length-1).map(text=><p key={text}>{text}</p>)}
-      <details><summary>Projection and rendering evidence</summary><p>Walking connections interpolate daily placements; they do not reconstruct measured street routes. Playback pauses when this tab is hidden. Character sizes and spacing are illustrative.</p><code>{city?.envelope.snapshot_version||'No snapshot'} · layout {city?.city_layout_version} · {stats?`${stats.calls} draw calls / ${stats.triangles.toLocaleString()} triangles / ${stats.geometries} geometries / ${stats.textures} textures`: 'Renderer initializing'}</code></details>
+      <details><summary>Projection and rendering evidence</summary><p>Roads and outside-place waiting positions are illustrative routes between daily placements, not measured travel. Citizens avoid building footprints; unavailable routes stay still. Playback pauses when this tab is hidden. Character sizes and spacing are illustrative.</p><code>{city?.envelope.snapshot_version||'No snapshot'} · layout {city?.city_layout_version} · {stats?`${stats.calls} draw calls / ${stats.triangles.toLocaleString()} triangles / ${stats.geometries} geometries / ${stats.textures} textures`: 'Renderer initializing'}</code></details>
     </div>
     {!embedded&&<UrbanDevelopment runId={runId} tick={tick} fork={params.get('fork')} stale={stale} onPreview={preview}/>}
     {!embedded&&!historical&&<CityControls runId={runId} selectedAgentId={selected?.entityType==='agent'?selected.entityId:null} stale={stale}/>}

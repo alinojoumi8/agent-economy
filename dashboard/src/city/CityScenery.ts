@@ -3,8 +3,8 @@ import type { CityInstance } from './cityProjection';
 import { planCityStreets } from './cityStreets';
 
 /** Batched presentation geometry. These roads imply no travel or land ownership. */
-export function buildCityScenery(instances:CityInstance[]):Group {
-  const group=new Group(), plan=planCityStreets(instances);
+export function buildCityScenery(instances:CityInstance[], plan=planCityStreets(instances)):Group {
+  const group=new Group();
   type Shape={x:number;y:number;z:number;w:number;h:number;d:number};
   const boxes=(color:string,shapes:Shape[])=>{
     if(!shapes.length)return;
@@ -13,7 +13,7 @@ export function buildCityScenery(instances:CityInstance[]):Group {
     shapes.forEach((p,i)=>{matrix.makeScale(p.w,p.h,p.d);matrix.setPosition(p.x,p.y,p.z);mesh.setMatrixAt(i,matrix);});
     mesh.instanceMatrix.needsUpdate=true;mesh.computeBoundingSphere();group.add(mesh);
   };
-  boxes('#e2dfcb',plan.lots.map(p=>({x:p.x,y:-.06,z:p.z,w:6,h:.12,d:6})));
+  boxes('#e2dfcb',plan.lots.map((p:{x:number;z:number})=>({x:p.x,y:-.06,z:p.z,w:6,h:.12,d:6})));
   boxes('#f4f0dd',plan.roads.map(p=>({x:p.x,y:-.07,z:p.z,w:p.width+.9,h:.10,d:p.depth+.9})));
   boxes('#8c9b91',plan.roads.map(p=>({x:p.x,y:-.015,z:p.z,w:p.width,h:.035,d:p.depth})));
   const markings:Shape[]=[];

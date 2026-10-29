@@ -11,7 +11,7 @@ import { createCityDay } from './cityMotion.js';
 import { dayClock } from '../lib/liveCity.js';
 import { playbackElapsed, updatePlayback } from '../lib/recordedPlayback.js';
 export type SceneStats={calls:number;triangles:number;geometries:number;textures:number;frames:number};
-export type CityPlaybackState={playing:boolean;speed:number;phase:string;movers:number;available:number;reduced:boolean};
+export type CityPlaybackState={playing:boolean;speed:number;phase:string;movers:number;available:number;blocked:number;reduced:boolean};
 export class CityScene {
   private renderer:WebGLRenderer;
   private scene=new Scene();
@@ -190,12 +190,14 @@ export class CityScene {
     const ids=new Set(this.filtered.filter(i=>i.entityType==='agent').map(i=>i.entityId));
     const agents=this.day?.agents.filter(a=>ids.has(a.id))||[];
     const state:CityPlaybackState={playing:this.clock.startedAt!==null,speed:this.clock.speed,
-      phase:clock?`${clock.slot} → ${clock.nextSlot}`:'',movers:agents.filter(a=>a.moves).length,available:agents.length,reduced:this.reduced.matches};
+      phase:clock?`${clock.slot} → ${clock.nextSlot}`:'',movers:agents.filter(a=>a.moves).length,available:agents.length,
+      blocked:agents.filter(a=>a.routeBlocked).length,reduced:this.reduced.matches};
     const signature=JSON.stringify(state);if(signature!==this.playbackState){this.playbackState=signature;this.onPlayback?.(state);}
   }
   private probe=()=>({tick:this.projection?.envelope.tick,identity:this.projection?.identity,
     playing:this.clock.startedAt!==null,speed:this.clock.speed,elapsed:this.lastElapsed,
     frameTimes:[...this.frameTimes],drawTimes:[...this.drawTimes],
+    roads:this.day?.navigation.scenery.roads,footprints:this.day?.navigation.footprints,
     citizens:this.citizens.evidence(this.camera,this.host.clientWidth,this.host.clientHeight)});
   update(projection:CityProjection,instances:CityInstance[],selected:string|null,events:CityActivity[],running:boolean){
     if(this.failed)return;
@@ -249,7 +251,7 @@ export class CityScene {
     const ground=new Mesh(new BoxGeometry(extent*2,1,extent*2),new MeshLambertMaterial({color:'#c5d2b1'}));
     ground.position.y=-.6;this.ground.add(ground);
     // Base streets remain stable when the entity filter changes.
-    const scenery=buildCityScenery(this.projection.instances);
+    const scenery=buildCityScenery(this.projection.instances,this.day?.navigation.scenery);
     // Worlds without recorded places can legitimately have no scenery.
     for(const child of [...scenery.children])this.scenery.add(child);
     this.updateMarkers();

@@ -5,7 +5,8 @@ import { createCityDay, citizenPose } from '../src/city/cityMotion.js';
 const citizen = id => ({entityType:'agent',entityId:id,key:`agent:${id}`,position:[8,0,9]});
 const row = (id,slot,place,x=.5) => ({agent_id:id,slot,place_id:place,x,y:.5});
 const rows = id => [row(id,'morning',1),row(id,'business',2,.6),row(id,'evening',1)];
-const city = presence => ({envelope:{data:{presence}},instances:[citizen(1),citizen(2)]});
+const city = presence => ({envelope:{data:{presence}},instances:[citizen(1),citizen(2),
+  ...[1,2].map(id=>({entityType:'place',entityId:id,regionId:1,provenance:'observed',position:[(id-1)*16,0,0]}))]});
 
 test('recorded day translates a citizen and changes gait without changing the source',()=>{
   const source=city([...rows(1),...['morning','business','evening'].map(slot=>row(2,slot,1))]);
@@ -35,4 +36,14 @@ test('reduced motion uses only anchor placements and has no gait; a new day star
   assert.equal(later.stride,0);
   assert.ok([1,2].includes(later.placeId));
   assert.deepEqual(citizenPose(createCityDay(city(rows(1))),citizen(1),0).position,start.position);
+});
+
+test('an unknown or disconnected leg holds the entire itinerary without teleporting',()=>{
+  for(const disconnected of [false,true]){
+    const source=city(rows(1));
+    if(disconnected)source.instances.at(-1).regionId=2;else source.instances.pop();
+    const day=createCityDay(source),start=citizenPose(day,citizen(1),0);
+    assert.equal(day.movers,0);assert.equal(day.byId.get(1).routeBlocked,true);
+    for(let elapsed=0;elapsed<90000;elapsed+=500)assert.deepEqual(citizenPose(day,citizen(1),elapsed),start);
+  }
 });

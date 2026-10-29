@@ -2,6 +2,8 @@
 
 Status: accepted; the first citizen readability and recorded walking increment
 is implemented. See [implementation evidence](../qa/2026-10-29-citizen-walking.md).
+The user subsequently requested road following and building avoidance; that
+increment is tracked in [road movement evidence](../qa/2026-10-29-road-walking.md).
 Tracking: MW-33, still In Progress. Branch: `codex/starnet-ui-redesign`.
 
 ## Finding
@@ -126,8 +128,9 @@ by this review.
 
 The original comparison screenshots and receipt remain under the task artifact
 directory `starnet-district/agent-motion-review`. New implementation evidence is
-separate under `starnet-district/citizen-walking-20day`. Activity poses, street
-routing, distant aggregation and the broader MW-33 acceptance remain later work.
+separate under `starnet-district/citizen-walking-20day`. The approved road-routing
+increment uses `starnet-district/road-walking-20day`. Activity poses, distant
+aggregation and the broader MW-33 acceptance remain later work.
 
 - [Gait and travel heading](https://github.com/androoAGI/starnet/blob/74fcd5040ba0eb93c8f9fa07b2d0a9fcfddd1475/frontend/app/world.js#L545-L562).
 - [Crew movement and work state](https://github.com/androoAGI/starnet/blob/74fcd5040ba0eb93c8f9fa07b2d0a9fcfddd1475/frontend/app/world.js#L3323-L3450).
